@@ -2,7 +2,11 @@
 
 This fork adds an x86_64 Windows desktop build of factorai. It runs directly on Windows and does not require WSL. The existing macOS, Linux, and WSL 2 distribution paths remain available.
 
-## Requirements
+## Install the desktop app
+
+Run the generated `factorai_0.55.0_x64-setup.exe` and follow the setup wizard. The installed application runs directly on Windows with WebView2. The installer can download WebView2 when needed. Install the native Claude Code or Codex CLI separately to start agent sessions; Git is needed for command-line worktree operations, and SOPS is optional for encrypted files.
+
+## Build requirements
 
 - Windows 10 version 1809 (October 2018 Update) or later, x86_64
 - Node.js 24 or newer and pnpm 10 or newer
@@ -26,6 +30,7 @@ pnpm dev:windows
 Build the NSIS setup executable with:
 
 ```powershell
+$env:CARGO_BUILD_JOBS = '2'
 pnpm build:windows
 ```
 

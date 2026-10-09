@@ -12,6 +12,8 @@ jobs:
   quality-and-bundle:
     name: Windows (x86_64)
     runs-on: windows-latest
+    env:
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -40,6 +42,10 @@ jobs:
         run: pnpm typecheck
       - name: Test
         run: pnpm test
+      - name: Install browser test runtime
+        run: pnpm exec playwright install chromium
+      - name: Test desktop interface
+        run: pnpm e2e
       - name: Check dependency versions
         run: pnpm deps:check
       - name: Check unused dependencies

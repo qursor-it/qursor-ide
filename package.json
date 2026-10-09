@@ -9,6 +9,7 @@
 		"build": "turbo build",
 		"build:windows": "pnpm --filter @factorai/desktop build:windows",
 		"windows:check": "node scripts/windows-native.mjs check",
+		"windows:smoke": "node scripts/windows-smoke.mjs",
 		"lint": "turbo lint",
 		"format": "oxfmt .",
 		"format:check": "oxfmt --check .",
