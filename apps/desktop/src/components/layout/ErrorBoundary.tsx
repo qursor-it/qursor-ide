@@ -86,7 +86,7 @@ function CrashScreen({ error, componentStack }: CrashScreenProps) {
 				<div className="flex flex-col gap-1">
 					<h1 className="font-semibold text-foreground text-lg">Something crashed</h1>
 					<p className="text-muted-foreground text-sm">
-						factorai hit an error it could not render through. Your sessions are still running.
+						Qursor IDE hit an error it could not render through. Your sessions are still running.
 					</p>
 				</div>
 

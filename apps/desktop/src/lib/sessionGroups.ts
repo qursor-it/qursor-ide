@@ -52,7 +52,7 @@ export function groupSessions(sessions: SessionSummary[]): SessionGroup[] {
  * working session resolves itself and a waiting one never does. Ranking
  * `working` first — which this did until a screenshot showed it — makes a project
  * with four blocked sessions and one busy one read as "busy", hiding every
- * session that wants you. The reverse mistake is milder: a project shown amber
+ * session that wants you. The reverse mistake is milder: a project shown blue
  * while four sessions hammer away still points at the one to act on.
  *
  * Same shape as F13's folder dots — a parent row has one dot and several

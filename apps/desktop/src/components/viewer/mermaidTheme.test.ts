@@ -52,7 +52,7 @@ describe('mermaidThemeVariables', () => {
 	it('does not paint every node the brand colour', () => {
 		// A diagram is content. Content coloured like chrome reads as chrome.
 		const vars = mermaidThemeVariables(palette, 'Inter, sans-serif');
-		expect(vars.primaryColor).not.toBe('#ffb020');
+		expect(vars.primaryColor).not.toBe('#7193c8');
 	});
 
 	it('carries the font through', () => {

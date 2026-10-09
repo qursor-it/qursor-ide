@@ -98,7 +98,7 @@ export function RoutinesView({
 			{(routines.length > 0 || editing !== null) && (
 				<p className="text-muted-foreground text-sm">
 					A routine starts a session in this project on a schedule, with its prompt as the first
-					message. Routines run while factorai is open.
+					message. Routines run while Qursor IDE is open.
 				</p>
 			)}
 
@@ -123,7 +123,7 @@ export function RoutinesView({
 				<EmptyHero
 					icon={<ClockFading />}
 					title="No routines yet"
-					description="A routine starts a session in this project on a schedule, with its prompt as the first message. They run while factorai is open."
+					description="A routine starts a session in this project on a schedule, with its prompt as the first message. They run while Qursor IDE is open."
 					action={
 						<Button
 							size="sm"

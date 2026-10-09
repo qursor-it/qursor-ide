@@ -15,12 +15,12 @@ import { fnv1a } from '@lib/hash';
  * workspace allocator has room), which is why a bumped project moves several
  * hues on rather than to the next one.
  *
- * **The band around 75 is deliberately empty.** Amber is the One Amber Rule
+ * **The band around 259 is deliberately empty.** Blue is the One Accent Rule
  * (DESIGN.md): the `waiting` badge sits on this tile's own corner, and a tile
- * that was itself amber would be a tile that always looked like your turn.
+ * that was itself blue would be a tile that always looked like your turn.
  */
 export const PROJECT_HUES = [
-	10, 32, 50, 100, 120, 140, 160, 180, 200, 220, 245, 270, 295, 320, 345,
+	10, 32, 50, 65, 75, 100, 120, 140, 160, 180, 200, 220, 295, 320, 345,
 ] as const;
 
 /**

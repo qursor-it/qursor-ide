@@ -50,7 +50,7 @@ export function QuitConfirm() {
 				<DialogHeader>
 					<DialogTitle className="flex items-center gap-2">
 						<AlertTriangle className="size-5 text-destructive" />
-						Quit factorai?
+						Quit Qursor IDE?
 					</DialogTitle>
 					<DialogDescription>
 						{quitConfirmSentence(counts, 'Quitting')} This cannot be undone.

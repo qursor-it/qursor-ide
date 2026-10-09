@@ -20,7 +20,7 @@ import Shot from '@site/src/components/Shot';
 | `Mod + PageDown` | Next tab |
 | `Mod + PageUp` | Previous tab |
 | `Mod + ,` | Open settings |
-| `Mod + Q` | Quit factorai |
+| `Mod + Q` | Quit Qursor IDE |
 
 On macOS, Quit is the app menu's `Cmd+Q` and is not listed in Settings.
 

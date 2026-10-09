@@ -51,8 +51,8 @@ export function RestartConfirm() {
 						Restart to update?
 					</DialogTitle>
 					<DialogDescription>
-						factorai {version} is ready. {quitConfirmSentence({ live, working }, 'Restarting')} This
-						cannot be undone — the update will also apply on its own the next time you quit and
+						Qursor IDE {version} is ready. {quitConfirmSentence({ live, working }, 'Restarting')}{' '}
+						This cannot be undone — the update will also apply on its own the next time you quit and
 						reopen.
 					</DialogDescription>
 				</DialogHeader>

@@ -366,7 +366,7 @@ export function SidebarProject({
 								// so it would typecheck nowhere and render nothing.
 								<span
 									className="shrink-0"
-									title={`${project.realPath} is on the Windows drive. New sessions will not appear until factorai rescans, and git is slow here. Move the folder inside the Linux distribution.`}
+									title={`${project.realPath} is on the Windows drive. New sessions will not appear until Qursor IDE rescans, and git is slow here. Move the folder inside the Linux distribution.`}
 								>
 									<AlertTriangle className="size-3.5 text-muted-foreground/70" />
 								</span>
@@ -960,7 +960,7 @@ function SessionRow({ session, projectId, mark, subagentCount, clock24, pad }: S
 							{/* Where it went, not "this cannot be undone": the sentence is
 							    true, and a true sentence that names the way back is less
 							    frightening than a warning that overstates the loss. */}
-							you can restore it from there, and factorai will list the session again when you do.
+							you can restore it from there, and Qursor IDE will list the session again when you do.
 							{subagentCount > 0 &&
 								` ${subagentCount} sub-agent transcript${subagentCount === 1 ? '' : 's'} go with it.`}
 						</DialogDescription>

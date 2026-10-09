@@ -62,6 +62,6 @@ jobs:
       - name: Retain Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: factorai-windows-x64-installer
+          name: qursor-ide-windows-x64-installer
           path: target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error

@@ -1,6 +1,6 @@
 # Native Windows smoke validation
 
-`pnpm windows:smoke` drives the real Windows WebView2, Tauri IPC and PowerShell ConPTY paths. It uses no browser automation package, model, or provider CLI. The script first calls the read-only `plugin:app|identifier` command and requires `dev.factorai-windows-smoke`; until that succeeds it creates no fixture, registers no event listener, and sends no mutating command. It uses `__TAURI_INTERNALS__.invoke` and `transformCallback` with `withGlobalTauri` left `false`.
+`pnpm windows:smoke` drives the real Windows WebView2, Tauri IPC and PowerShell ConPTY paths. It uses no browser automation package, model, or provider CLI. The script first calls the read-only `plugin:app|identifier` command and requires `dev.factorai-windows-smoke`; until that succeeds it creates no fixture, registers no event listener, and sends no mutating command. This FactorAI-namespaced identifier is a stable internal smoke boundary, separate from the release app identity. It uses `__TAURI_INTERNALS__.invoke` and `transformCallback` with `withGlobalTauri` left `false`.
 
 ## Launch an isolated smoke app
 
@@ -34,7 +34,9 @@ The harness unregisters its event listener, kills the shell, removes the tempora
 
 The smoke Tauri overlay is [tauri.windows.smoke.conf.json](../apps/desktop/src-tauri/tauri.windows.smoke.conf.json). The harness checks the app identity before touching its isolated database or filesystem, so pointing port `9230` at another WebView fails closed.
 
-## Local validation — 2026-10-09
+## Historical FactorAI validation — 2026-10-09
+
+The following records validation of the FactorAI-named native build before the Qursor IDE product rename. It is evidence for that historical build only; it does not verify the Qursor IDE package or its installer.
 
 The native x86_64 MSVC build was tested with Node 24, Rust stable and WebView2:
 
@@ -47,4 +49,4 @@ The native x86_64 MSVC build was tested with Node 24, Rust stable and WebView2:
 
 The tests use temporary projects and isolated agent data roots. Live model calls and signed updater delivery were not exercised. The native installer uses manual upgrades until the fork supplies its own signing key and update feed.
 
-The release build produced `factorai_0.55.0_x64-setup.exe` (9,583,194 bytes). The extracted application is a valid x86_64 PE and matches the release executable apart from Tauri's expected three-byte NSIS bundle-type marker (`UNK` to `NSS`). The setup is an unsigned local build. Packaging and payload extraction were verified; installation and uninstallation through the wizard remain available for a manual user trial.
+The historical release build produced `factorai_0.55.0_x64-setup.exe` (9,583,194 bytes). The extracted application is a valid x86_64 PE and matches the release executable apart from Tauri's expected three-byte NSIS bundle-type marker (`UNK` to `NSS`). The setup is an unsigned local build. Packaging and payload extraction were verified; installation and uninstallation through the wizard remain available for a manual user trial.

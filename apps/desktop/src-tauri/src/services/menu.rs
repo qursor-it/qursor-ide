@@ -29,7 +29,7 @@ pub const CLOSE_WINDOW: &str = "factorai:close-window";
 
 /// Build the menu. Called from the builder, once, before the window exists.
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
-	let quit = MenuItemBuilder::with_id(QUIT, "Quit factorai").accelerator("Cmd+Q").build(app)?;
+	let quit = MenuItemBuilder::with_id(QUIT, "Quit Qursor IDE").accelerator("Cmd+Q").build(app)?;
 	// The move that this whole module is for. `Cmd+Shift+W` rather than no
 	// accelerator at all, so closing the window from the keyboard is still
 	// possible for somebody who has always done it that way.
@@ -37,7 +37,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 		.accelerator("Cmd+Shift+W")
 		.build(app)?;
 
-	let app_menu = SubmenuBuilder::new(app, "factorai")
+	let app_menu = SubmenuBuilder::new(app, "Qursor IDE")
 		.about(None)
 		.separator()
 		.hide()

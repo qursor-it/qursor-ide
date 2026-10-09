@@ -1,6 +1,11 @@
 <div align="center">
 
-<a href="https://factorai.build"><img src="assets/brand/factorai-lockup.png" alt="factorai" width="200"></a>
+<h1>Qursor IDE</h1>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apps/desktop/public/qursor-lockup-dark.png">
+  <img src="apps/desktop/public/qursor-lockup-light.png" alt="Qursor" width="220">
+</picture>
 
 ### IDE is dead. Long live the ADE
 
@@ -20,12 +25,12 @@ Agentic Development Environment for the AI era
 > **Early, and used daily by several senior engineers.** Two update channels,
 > switched in **Settings → Advanced**: **Stable** (default) gets a release once
 > alpha users have run it; **Alpha** gets every passing change on `main`, often
-> several a day. Leaving alpha never downgrades. Point factorai at work your
+> several a day. Leaving alpha never downgrades. Point Qursor IDE at work your
 > version control can recover.
 
 You stopped writing most of the code. Your editor never noticed.
 
-factorai is built the other way round: **the unit of work is a session, not a
+Qursor IDE is built the other way round: **the unit of work is a session, not a
 file.** You supervise, decide, review, and set the rules. Agents do the rest.
 Free, open source, community-driven: no company, no paid tier.
 
@@ -40,7 +45,7 @@ you* or *stopped*.
 ### Agents on a schedule
 
 A routine is a saved prompt on a cron, per project. It runs in the background
-without taking a tab, and catches up on runs missed while factorai was closed.
+without taking a tab, and catches up on runs missed while Qursor IDE was closed.
 
 ![A project's Routines tab: a nightly triage, a weekly dependency bump and a disabled monthly job, each with its schedule and next run](assets/images/factorai-routines.png)
 
@@ -68,18 +73,18 @@ an agent mid-edit.
 
 ### Local and private
 
-No telemetry, no account, no server. factorai drives the CLIs you already
+No telemetry, no account, no server. Qursor IDE drives the CLIs you already
 logged into and never touches your credentials. Closing the window kills every
 agent it started.
 
 ## Install
 
-Download from [factorai.build](https://factorai.build/#download) or
-[Releases](https://github.com/Nightbr/factorai/releases): `.dmg` for macOS,
-`.AppImage` for Linux (glibc 2.39+), `factorai-setup.exe` for Windows, which
-installs the Linux build into WSL 2. This fork also supports a native Windows
-build from source; see [Windows native build](docs/windows-native.md). The WSL
-app updates itself and asks before restarting. You need
+The existing [FactorAI releases](https://github.com/Nightbr/factorai/releases)
+provide `.dmg` for macOS, `.AppImage` for Linux (glibc 2.39+), and
+`factorai-setup.exe` for Windows, which installs the Linux build into WSL 2.
+This fork's native Windows build is named
+`qursor-ide_0.55.0_x64-setup.exe`; see [Windows native build](docs/windows-native.md).
+The WSL app updates itself and asks before restarting. You need
 [Claude Code](https://claude.com/claude-code) or
 [Codex](https://developers.openai.com/codex/cli), already logged in.
 

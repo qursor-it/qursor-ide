@@ -20,7 +20,7 @@ describe('crashReport', () => {
 		const body = crashReport(ctx());
 		expect(body).toContain('TypeError: Cannot read properties of undefined');
 		expect(body).toContain('at SessionHeader (session.tsx:118)');
-		expect(body).toContain('factorai 0.1.0');
+		expect(body).toContain('Qursor IDE 0.1.0');
 		expect(body).toContain('channel: alpha');
 		expect(body).toContain('AppleWebKit');
 	});

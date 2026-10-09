@@ -68,18 +68,18 @@
 	--font-family-mono: "JetBrains Mono", "Fira Code", monospace;
 
 	/* Session status palette (F10). Three states, and the ramp is deliberate:
-	   green is fine, amber is your move, and grey is inert. `stopped` held the
+	   green is fine, blue is your move, and grey is inert. `stopped` held the
 	   red at hue 25 until 2026-08-18 — it was the loudest colour in the app,
 	   spent on the one state that asks nothing of you, so it took over the grey
 	   that `-idle` left behind when F10 deleted that state.
 
 	   `waiting` is the accent's exact value and moves with it — "your move" is
-	   the same signal the accent carries everywhere else, and two ambers three
+	   the same signal the accent carries everywhere else, and two blues three
 	   percent apart would read as a mistake rather than a distinction. */
 	--color-status-working: var(--status-working);
 	/* The accent itself rather than a copy of its value, so the light theme's
-	   darker amber (`DESIGN.md` § Primary) reaches the dot too: the brand
-	   `#FFB020` on a 98% ground is a dot you have to look for. */
+	   darker blue (`DESIGN.md` § Primary) reaches the dot too: the brand
+	   `#7193c8` on a 98% ground is a dot you have to look for. */
 	--color-status-waiting: var(--primary);
 	--color-status-stopped: oklch(55% 0.01 250);
 	/* A fourth colour and **not** a fourth state (F22): it is `working` for a
@@ -191,36 +191,29 @@
 	   `data-theme`. */
 	color-scheme: dark;
 
-	--background: oklch(16% 0.008 250);
-	--foreground: oklch(96% 0.004 250);
-	--card: oklch(18% 0.008 250);
-	--card-foreground: oklch(96% 0.004 250);
-	--popover: oklch(18% 0.008 250);
-	--popover-foreground: oklch(96% 0.004 250);
+	--background: oklch(14.5% 0 0);
+	--foreground: oklch(94.6% 0 0);
+	--card: oklch(17.8% 0 0);
+	--card-foreground: oklch(94.6% 0 0);
+	--popover: oklch(17.8% 0 0);
+	--popover-foreground: oklch(94.6% 0 0);
 
-	/* The amber is the brand's, exactly: oklch(81.3% 0.165 75) round-trips to
-	   #FFB020, which is what `assets/brand/factorai-icon.svg` fills the F with.
-	   It used to be oklch(78% 0.17 75) — #F5A400 — while `specs/09-branding.md`
-	   B4 claimed the brand "adopted the colour that was there". It hadn't; the
-	   two were a visible 3% apart in lightness, and the icon beside the header
-	   proved it. Corrected 2026-08-19 by moving the app, not the mark, since
-	   the mark is the thing that ships in other people's docks.
-
-	   The light theme's amber is deliberately NOT this value — #FFB020 on a 98%
-	   ground is unreadable. A light theme needs its own darker step, and that
-	   is roadmap item 32 (#28)'s problem, not this token's. */
-	--primary: oklch(81.3% 0.165 75);
-	--primary-foreground: oklch(16% 0.008 250);
-	--secondary: oklch(22% 0.008 250);
-	--secondary-foreground: oklch(82% 0.006 250);
-	--muted: oklch(20% 0.008 250);
-	--muted-foreground: oklch(56% 0.006 250);
-	--accent: oklch(81.3% 0.165 75);
-	--accent-foreground: oklch(16% 0.008 250);
+	/* Qursor blue #7193c8 (oklch(65.9% 0.088 259)), taken from the Qursor
+	   website. 6.3:1 against --background; --primary-foreground is near-black
+	   and holds the same ratio on it. The light theme needs a darker step of the
+	   same hue, since #7193c8 on white is only 3:1. */
+	--primary: oklch(65.9% 0.088 259);
+	--primary-foreground: oklch(14.5% 0 0);
+	--secondary: oklch(21.8% 0 0);
+	--secondary-foreground: oklch(87% 0 0);
+	--muted: oklch(19.1% 0 0);
+	--muted-foreground: oklch(65% 0 0);
+	--accent: oklch(65.9% 0.088 259);
+	--accent-foreground: oklch(14.5% 0 0);
 	--destructive: oklch(58% 0.22 25);
-	--border: oklch(25% 0.008 250);
-	--input: oklch(22% 0.008 250);
-	--ring: oklch(81.3% 0.165 75);
+	--border: oklch(26% 0 0);
+	--input: oklch(21.8% 0 0);
+	--ring: oklch(65.9% 0.088 259);
 	--radius: 0.5rem;
 
 	/* Development-build marker. Violet on purpose: it is the one hue the rest
@@ -228,7 +221,7 @@
 	   release one at a glance rather than read. One value, no `-foreground`
 	   pair: the badge is a chip in F18's shape — border, 12% tint and text all
 	   mixed from this hue — so nothing is ever set *on* solid violet. */
-	--dev: oklch(68% 0.19 300);
+	--dev: oklch(67.2% 0.122 295);
 
 	/* The terminal's own ground and text: the agent's PTY, a shell, and the
 	   transcript that stands in for a PTY. A step deeper than `--background` in
@@ -236,8 +229,8 @@
 	   than as chrome. Read by `components/terminal/themes.ts` for xterm, which
 	   cannot take a CSS variable, and by `bg-terminal` around it so the padding
 	   matches the canvas (Q8, roadmap item 32 (#28)). */
-	--terminal: oklch(16.3% 0.009 264);
-	--terminal-foreground: oklch(87.1% 0.005 286);
+	--terminal: oklch(12% 0 0);
+	--terminal-foreground: oklch(87% 0 0);
 
 	/* Two of the status hues (F10), per theme now that there are two. Their
 	   meaning and ramp are documented with `--color-status-*` in the theme block
@@ -245,7 +238,7 @@
 	   lightness is a pale smudge as text on white. `stopped` and `unknown` are
 	   mid-grey and hold in both, so they stay where they are. */
 	--status-working: oklch(68% 0.17 150);
-	--status-background: oklch(68% 0.16 255);
+	--status-background: oklch(68% 0.12 200);
 
 	/* Git's own colours for a path's state — `M`, `A`/`U`, `D`/`C`, `R` — in the
 	   Files and Changes panels, and the graph's remote and tag chips (F12, F18).
@@ -297,31 +290,31 @@
 	   tokens below already override — see the note there for what this controls. */
 	color-scheme: light;
 
-	--background: oklch(98% 0.004 250);
-	--foreground: oklch(18% 0.008 250);
+	--background: oklch(98.5% 0 0);
+	--foreground: oklch(20.5% 0 0);
 	--card: oklch(100% 0 0);
-	--card-foreground: oklch(18% 0.008 250);
+	--card-foreground: oklch(20.5% 0 0);
 	--popover: oklch(100% 0 0);
-	--popover-foreground: oklch(18% 0.008 250);
-	--primary: oklch(58% 0.17 75);
-	--primary-foreground: oklch(98% 0.004 250);
-	--secondary: oklch(94% 0.006 250);
-	--secondary-foreground: oklch(22% 0.008 250);
-	--muted: oklch(94% 0.006 250);
-	--muted-foreground: oklch(45% 0.008 250);
-	--accent: oklch(58% 0.17 75);
-	--accent-foreground: oklch(98% 0.004 250);
+	--popover-foreground: oklch(20.5% 0 0);
+	--primary: oklch(48.9% 0.102 262);
+	--primary-foreground: oklch(100% 0 0);
+	--secondary: oklch(95% 0 0);
+	--secondary-foreground: oklch(26% 0 0);
+	--muted: oklch(95% 0 0);
+	--muted-foreground: oklch(44% 0 0);
+	--accent: oklch(48.9% 0.102 262);
+	--accent-foreground: oklch(100% 0 0);
 	--destructive: oklch(58% 0.22 25);
-	--border: oklch(88% 0.006 250);
-	--input: oklch(94% 0.006 250);
-	--ring: oklch(58% 0.17 75);
-	--dev: oklch(52% 0.21 300);
+	--border: oklch(90% 0 0);
+	--input: oklch(95% 0 0);
+	--ring: oklch(48.9% 0.102 262);
+	--dev: oklch(49.1% 0.121 297);
 	/* White paper, a step above the 98% chrome — the light theme's well goes up,
 	   not down, the way `--card` does. */
 	--terminal: oklch(100% 0 0);
-	--terminal-foreground: oklch(24% 0.008 250);
+	--terminal-foreground: oklch(26% 0 0);
 	--status-working: oklch(55% 0.17 150);
-	--status-background: oklch(55% 0.16 255);
+	--status-background: oklch(55% 0.11 200);
 	/* Roughly the 700 steps: on white the 500s fall under 3:1, and an `M` you
 	   have to look for is an `M` you miss. Amber moves toward orange as it
 	   darkens, the way the accent does, so it stays a warm "changed". */

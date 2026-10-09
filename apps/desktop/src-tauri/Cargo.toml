@@ -1,12 +1,16 @@
 [package]
-name = "factorai"
+name = "qursor-ide"
 version = "0.55.0"
-description = "Agentic Development Environment (ADE) for the AI era"
+description = "Qursor IDE"
 edition = "2021"
 
 [lib]
 name = "factorai_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "qursor-ide"
+path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

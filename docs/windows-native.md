@@ -1,10 +1,10 @@
-# Native Windows build
+# Qursor IDE for native Windows
 
-This fork adds an x86_64 Windows desktop build of factorai. It runs directly on Windows and does not require WSL. The existing macOS, Linux, and WSL 2 distribution paths remain available.
+This fork adds an x86_64 Windows desktop build of Qursor IDE. It runs directly on Windows and does not require WSL. The existing macOS, Linux, and WSL 2 distribution paths remain available.
 
 ## Install the desktop app
 
-Run the generated `factorai_0.55.0_x64-setup.exe` and follow the setup wizard. The installed application runs directly on Windows with WebView2. The installer can download WebView2 when needed. Install the native Claude Code or Codex CLI separately to start agent sessions; Git is needed for command-line worktree operations, and SOPS is optional for encrypted files.
+Run the generated `qursor-ide_0.55.0_x64-setup.exe` and follow the setup wizard. The installed application runs directly on Windows with WebView2. The installer can download WebView2 when needed. Install the native Claude Code or Codex CLI separately to start agent sessions; Git is needed for command-line worktree operations, and SOPS is optional for encrypted files.
 
 ## Build requirements
 
@@ -25,7 +25,7 @@ pnpm install
 pnpm dev:windows
 ```
 
-`dev:windows` combines the Windows configuration with the existing development configuration, so the development app keeps its separate `dev.factorai-dev` identifier.
+`dev:windows` combines the Windows configuration with the existing development configuration, so the development app keeps its separate `dev.factorai-dev` identifier. The release identifier remains `dev.factorai` to preserve the existing app data location and upgrade path.
 
 Build the NSIS setup executable with:
 
@@ -34,7 +34,7 @@ $env:CARGO_BUILD_JOBS = '2'
 pnpm build:windows
 ```
 
-The output is under the workspace `target\release\bundle\nsis` directory. The command keeps the factorai product name and existing application identity. Its Windows configuration selects NSIS and disables updater artifacts, the upstream update endpoint, and the upstream signing key. Local Windows builds therefore need to be updated by installing a newer setup executable.
+The output is under the workspace `target\release\bundle\nsis` directory. The product and executable use the `qursor-ide` name, and version 0.55.0 produces `qursor-ide_0.55.0_x64-setup.exe`. The existing `dev.factorai` application identity keeps the current data location available. The Windows configuration selects NSIS and disables updater artifacts, the upstream update endpoint, and the upstream signing key. Local Windows builds therefore need to be updated by installing a newer setup executable.
 
 Run `pnpm windows:check` to verify the native bundle defaults before packaging.
 

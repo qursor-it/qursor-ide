@@ -218,8 +218,8 @@ export function ImportProjects({ open, onOpenChange, agent }: ImportProjectsProp
 								return (
 									<li key={`${row.agent}:${row.key}`}>
 										<div
-											// `secondary`, not `accent`: accent is the amber primary in this
-											// theme, and a full-width amber bar under the cursor reads as a
+											// `secondary`, not `accent`: accent is the blue primary in this
+											// theme, and a full-width blue bar under the cursor reads as a
 											// selection rather than a hover. The sidebar's rows settled this.
 											className={`flex items-center gap-3 rounded px-1 py-1.5 text-sm ${
 												row.alreadyOpen ? 'opacity-50' : 'hover:bg-secondary/50'

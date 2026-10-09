@@ -41,7 +41,7 @@ export function StatusDot({
 	 *  opens it (F22).
 	 *
 	 *  A modifier on `working`, not a fourth status: where a session runs is
-	 *  orthogonal to what it is doing, and `waiting_input` keeps its amber
+	 *  orthogonal to what it is doing, and `waiting_input` keeps its blue
 	 *  wherever it runs, because "your move" is true either way. */
 	background?: boolean;
 }) {

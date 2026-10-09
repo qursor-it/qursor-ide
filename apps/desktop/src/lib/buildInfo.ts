@@ -128,7 +128,7 @@ export function formatBuildDate(builtAt: string): string {
  * would cost a platform plugin, and an issue template can ask.
  */
 export function buildLine(info: BuildInfo | null): string {
-	if (!info) return `factorai ${__APP_VERSION__}, built locally`;
+	if (!info) return `Qursor IDE ${__APP_VERSION__}, built locally`;
 	const commit = info.commit ? ` (${info.commit})` : '';
-	return `factorai ${info.version}${commit}, built ${info.builtAt.slice(0, 10)}`;
+	return `Qursor IDE ${info.version}${commit}, built ${info.builtAt.slice(0, 10)}`;
 }

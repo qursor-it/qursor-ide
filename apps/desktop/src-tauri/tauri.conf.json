@@ -1,7 +1,7 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
 	"identifier": "dev.factorai",
-	"productName": "factorai",
+	"productName": "qursor-ide",
 	"version": "0.55.0",
 	"build": {
 		"beforeDevCommand": "pnpm vite:dev",
@@ -13,7 +13,7 @@
 		"withGlobalTauri": false,
 		"windows": [
 			{
-				"title": "factorai",
+				"title": "Qursor IDE",
 				"width": 1400,
 				"height": 900,
 				"minWidth": 1100,
@@ -26,9 +26,9 @@
 	},
 	"bundle": {
 		"active": true,
-		"shortDescription": "Agentic Development Environment (ADE) for the AI era",
+		"shortDescription": "Qursor IDE",
 		"copyright": "© 2026 Titouan BENOIT and contributors",
-		"longDescription": "One place to build software with agents, rather than an editor with an agent bolted into a pane. The unit of work is a session, not a file: launch, watch, resume and kill Claude Code sessions, search everything they have ever said, and review what they changed in git.",
+		"longDescription": "Qursor IDE is a local agentic development environment. Supervise AI coding sessions, review their changes, and keep your work on your own machine.",
 		"targets": [
 			"app",
 			"dmg",

@@ -146,8 +146,8 @@ function RootLayout() {
 	// place.
 	//
 	// **A request for a session you are not looking at does nothing, and the
-	// agent is told so.** It briefly put an amber dot on that session's tab,
-	// which was wrong twice over: amber is `--color-status-waiting`'s exact
+	// agent is told so.** It briefly put an blue dot on that session's tab,
+	// which was wrong twice over: blue is `--color-status-waiting`'s exact
 	// value, so it was indistinguishable from "this session is waiting for you",
 	// and that dot could sit beside the status badge already on the same tab.
 	// Where such a request should land is an open question — probably the toast

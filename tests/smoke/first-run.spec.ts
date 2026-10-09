@@ -4,7 +4,7 @@ import { installMockBridge } from './fixtures';
 /**
  * The first-run hero (specs/05-features.md F1 § "The empty state", ADR-0067):
  * an empty workspace is said in the middle of the window, with the two doors
- * as two amber buttons of one size.
+ * as two accent buttons of one size.
  */
 test.describe('first run', () => {
 	const claude = { installed: true, binaryPath: '/usr/bin/claude', version: '2.1.4' };

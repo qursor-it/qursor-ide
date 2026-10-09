@@ -62,7 +62,7 @@ export function crashReport(ctx: CrashContext): string {
 		'',
 		'**Environment**',
 		'',
-		`- factorai ${ctx.version}`,
+		`- Qursor IDE ${ctx.version}`,
 		`- channel: ${ctx.channel ?? 'unknown'}`,
 		`- ${ctx.userAgent}`,
 	].join('\n');

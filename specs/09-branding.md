@@ -1,5 +1,7 @@
 # Branding
 
+> **Rebrand note:** the product is now Qursor IDE. The palette (B4) and the in-app mark are Qursor's; the factorai housing/F construction in B1–B3 and B5+ is retired and kept for history.
+
 The mark, how it is built, and how the shipped assets are produced. This is a
 contract like every other spec: if the code and this file disagree, one of them
 is wrong and gets fixed.
@@ -104,28 +106,33 @@ derived from a glyph, but "most" is not a thing to build a trademark on.
 
 ## B4 — Palette
 
+The product is **Qursor IDE** and the palette is the Qursor website's
+(`qursor-website`, dark-only). The old factorai housing/F mark and its amber are
+retired; B1–B3 and B5 onward describe that retired mark and are kept only as
+history until they are rewritten.
+
 | Token | Hex | Use |
 |---|---|---|
-| Housing | `#272B31` | the icon's ground |
-| Amber | `#FFB020` | the mark, and the app's existing accent |
-| Mercury | `#F4F5F8` | the mark on dark, in one-colour contexts |
+| Black | `#000000` | website ground; the app uses the step below |
+| Ground | `#0a0a0a` | the app ground and website surface |
+| Border | `#242424` | hairlines (`#383838` for strong borders) |
+| Text | `#ededed` | focused text |
+| Muted | `#8f8f8f` | metadata (`#a1a1a1` for secondary text) |
+| Qursor blue | `#7193c8` | the accent, `--primary`, `--accent`, `--ring`, `waiting` |
+| Qursor violet | `#694f9c` | the mark's gradient end; light-theme `--dev` |
+| Light violet | `#9b86d9` | dark-theme `--dev` |
 
-The amber is the accent the app uses — `--primary`, `--accent`, `--ring` and
-`--color-status-waiting` in `packages/ui/src/styles/globals.css`, all
-`oklch(81.3% 0.165 75)`, which round-trips to `#FFB020` exactly.
+The mark is the Qursor Q-with-cursor symbol (`apps/desktop/public/qursor-mark.svg`,
+from `qursor-website/public/simbolo gradiente.svg`), a blue-to-violet gradient
+`linear-gradient(118deg, #7193c8 0%, #694f9c 100%)`. It is full-colour only; the
+in-app `Brand` components render that file as an image.
 
-**That sentence used to say the brand "adopted the colour that was there", and
-it was not true.** The app's amber was `oklch(78% 0.17 75)` — `#F5A400` — a
-visible three percent darker than the mark it sat next to in the header. Nobody
-noticed until the lockup (B5a) had to pick one and the two turned out to
-disagree. Fixed 2026-08-19 by moving **the app** to the brand value rather than
-the reverse: the mark is the half that ships inside other people's docks and
-release pages, where it cannot be corrected later.
-
-The **light theme keeps its own darker amber** (`oklch(58% 0.17 75)`) and should.
-`#FFB020` on a 98% ground fails contrast; a light theme needs a separate step,
-which is roadmap item 32 (#28)'s job. One brand amber does not mean one token value in
-every theme.
+In `packages/ui/src/styles/globals.css` the accent is `oklch(65.9% 0.088 259)`
+(`#7193c8`) in the dark theme: 6.3:1 against `--background`, with near-black
+`--primary-foreground` at the same ratio on it. The **light theme keeps its own
+darker blue** (`oklch(48.9% 0.102 262)`, `#3f5f9a`, 6.3:1 against white), because
+`#7193c8` on white is only about 3:1. One brand blue does not mean one token
+value in every theme.
 
 ---
 

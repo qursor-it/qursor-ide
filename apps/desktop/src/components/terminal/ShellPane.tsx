@@ -310,7 +310,7 @@ function PaneHost({
 			<div className="h-full w-full overflow-hidden p-2">
 				<div ref={containerRef} className="relative h-full w-full" />
 			</div>
-			{/* **Focus is a 1px amber line on the pane's top edge**, only while a
+			{/* **Focus is a 1px blue line on the pane's top edge**, only while a
 			    shell in this pane has DOM focus (F24). Amber because this is the
 			    focus ring, one of the four uses `DESIGN.md` grants it — and absent
 			    when the agent has the caret, so the row says nothing then. */}

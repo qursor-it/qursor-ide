@@ -52,7 +52,7 @@ export function DevBadge() {
 	return (
 		<span
 			data-testid="dev-badge"
-			title="Development build — not your installed factorai"
+			title="Development build — not your installed Qursor IDE"
 			className={`${CHIP_SHAPE} shrink-0 border-dev/30 bg-dev/12 text-dev uppercase tracking-wider`}
 		>
 			dev

@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WINDOWS_CONFIG = resolve(ROOT, 'apps/desktop/src-tauri/tauri.windows.conf.json');
+const APP_CONFIG = resolve(ROOT, 'apps/desktop/src-tauri/tauri.conf.json');
 
-/** Validate the Windows bundle defaults from ADR-0074 before packaging. */
-export function windowsConfigProblems(config) {
+/** Validate the Windows bundle defaults from ADR-0074 and product identity from ADR-0075. */
+export function windowsConfigProblems(config, appConfig) {
 	const problems = [];
 	const bundle = config?.bundle;
 	const targets = bundle?.targets;
@@ -24,17 +25,35 @@ export function windowsConfigProblems(config) {
 	if (updater?.pubkey !== '') {
 		problems.push('plugins.updater.pubkey must be empty');
 	}
+	if (config?.productName !== undefined && config.productName !== 'qursor-ide') {
+		problems.push('Windows productName override must be "qursor-ide"');
+	}
+	if (config?.identifier !== undefined && config.identifier !== 'dev.factorai') {
+		problems.push('Windows identifier override must remain "dev.factorai"');
+	}
+	if (appConfig?.productName !== 'qursor-ide') {
+		problems.push('Tauri productName must be "qursor-ide"');
+	}
+	if (appConfig?.identifier !== 'dev.factorai') {
+		problems.push('Tauri identifier must remain "dev.factorai"');
+	}
+	if (!appConfig?.app?.windows?.some((window) => window.title === 'Qursor IDE')) {
+		problems.push('Tauri window title must be "Qursor IDE"');
+	}
 
 	return problems;
 }
 
-export async function checkWindowsConfig(configPath = WINDOWS_CONFIG) {
-	const config = JSON.parse(await readFile(configPath, 'utf8'));
-	const problems = windowsConfigProblems(config);
+export async function checkWindowsConfig(configPath = WINDOWS_CONFIG, appConfigPath = APP_CONFIG) {
+	const [config, appConfig] = await Promise.all([
+		readFile(configPath, 'utf8').then(JSON.parse),
+		readFile(appConfigPath, 'utf8').then(JSON.parse),
+	]);
+	const problems = windowsConfigProblems(config, appConfig);
 	if (problems.length > 0) {
 		throw new Error(`Invalid Windows native configuration:\n- ${problems.join('\n- ')}`);
 	}
-	return 'Windows native NSIS defaults are valid.';
+	return 'Qursor IDE Windows native NSIS defaults are valid.';
 }
 
 const invokedFile = process.argv[1] ? resolve(process.argv[1]) : null;

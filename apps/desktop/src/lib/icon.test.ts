@@ -30,11 +30,11 @@ describe('projectSwatch', () => {
 		}
 	});
 
-	it('keeps the amber band empty', () => {
-		// The One Amber Rule (DESIGN.md): the waiting badge sits on this tile's
+	it('keeps the accent band empty', () => {
+		// The One Accent Rule (DESIGN.md): the waiting badge sits on this tile's
 		// corner, so the tile itself must never be the colour that means "your
-		// turn". Factorio Amber is hue 75.
-		for (const h of PROJECT_HUES) expect(Math.abs(h - 75)).toBeGreaterThanOrEqual(25);
+		// turn". Qursor blue is hue 259.
+		for (const h of PROJECT_HUES) expect(Math.abs(h - 259)).toBeGreaterThanOrEqual(25);
 	});
 
 	it('puts enough lightness between fill and ink to carry initials', () => {

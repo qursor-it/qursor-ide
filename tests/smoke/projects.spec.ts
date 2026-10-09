@@ -5,7 +5,7 @@ test.describe('projects sidebar', () => {
 	test('@smoke renders the empty state when no projects', async ({ page }) => {
 		await installMockBridge(page, { projects: [] });
 		await page.goto('/');
-		await expect(page.getByText('factorai').first()).toBeVisible();
+		await expect(page.getByText('Qursor').first()).toBeVisible();
 		await expect(page.getByTestId('sidebar-empty')).toHaveText('No projects yet.');
 		await expect(page.getByTestId('first-run')).toBeVisible();
 	});
@@ -34,7 +34,7 @@ test.describe('projects sidebar', () => {
 		await installMockBridge(page, fx);
 		await page.goto('/');
 
-		// Project name shows up in the sidebar list. There's also "factorai"
+		// Project name shows up in the sidebar list. There's also "Qursor IDE"
 		// in the header, so filter to the list region.
 		const sidebar = page.locator('aside');
 		await expect(sidebar.getByText('foo')).toBeVisible();

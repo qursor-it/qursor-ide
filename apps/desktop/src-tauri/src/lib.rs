@@ -305,7 +305,7 @@ pub fn run() {
 			// DevBadge.tsx) for when the window itself is in front of you.
 			#[cfg(debug_assertions)]
 			if let Some(window) = app.get_webview_window("main") {
-				let _ = window.set_title("factorai DEV");
+				let _ = window.set_title("Qursor IDE DEV");
 			}
 
 			// Devtools is opt-in via FACTORAI_DEVTOOLS=1 so screenshot-driven

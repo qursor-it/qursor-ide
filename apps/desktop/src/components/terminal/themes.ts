@@ -23,12 +23,12 @@ const FALLBACK: Record<Theme, Record<string, string>> = {
 	dark: {
 		'--terminal': 'oklch(16.3% 0.009 264)',
 		'--terminal-foreground': 'oklch(87.1% 0.005 286)',
-		'--primary': 'oklch(81.3% 0.165 75)',
+		'--primary': 'oklch(65.9% 0.088 259)',
 	},
 	light: {
 		'--terminal': 'oklch(100% 0 0)',
 		'--terminal-foreground': 'oklch(24% 0.008 250)',
-		'--primary': 'oklch(58% 0.17 75)',
+		'--primary': 'oklch(48.9% 0.102 262)',
 	},
 };
 

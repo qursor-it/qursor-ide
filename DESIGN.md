@@ -1,26 +1,26 @@
 ---
-name: factorai
+name: Qursor IDE
 description: A calm dark control room for supervising coding agents.
 colors:
-  background: "oklch(16% 0.008 250)"
-  foreground: "oklch(96% 0.004 250)"
-  card: "oklch(18% 0.008 250)"
-  popover: "oklch(18% 0.008 250)"
-  secondary: "oklch(22% 0.008 250)"
-  secondary-foreground: "oklch(82% 0.006 250)"
-  muted: "oklch(20% 0.008 250)"
-  muted-foreground: "oklch(56% 0.006 250)"
-  border: "oklch(25% 0.008 250)"
-  input: "oklch(22% 0.008 250)"
-  primary: "oklch(81.3% 0.165 75)"
-  primary-foreground: "oklch(16% 0.008 250)"
+  background: "oklch(14.5% 0 0)"
+  foreground: "oklch(94.6% 0 0)"
+  card: "oklch(17.8% 0 0)"
+  popover: "oklch(17.8% 0 0)"
+  secondary: "oklch(21.8% 0 0)"
+  secondary-foreground: "oklch(87% 0 0)"
+  muted: "oklch(19.1% 0 0)"
+  muted-foreground: "oklch(65% 0 0)"
+  border: "oklch(26% 0 0)"
+  input: "oklch(21.8% 0 0)"
+  primary: "oklch(65.9% 0.088 259)"
+  primary-foreground: "oklch(14.5% 0 0)"
   destructive: "oklch(58% 0.22 25)"
-  dev: "oklch(68% 0.19 300)"
+  dev: "oklch(67.2% 0.122 295)"
   status-working: "oklch(68% 0.17 150)"
-  status-waiting: "oklch(81.3% 0.165 75)"
-  status-stopped: "oklch(55% 0.01 250)"
-  status-background: "oklch(68% 0.16 255)"
-  status-unknown: "oklch(55% 0.01 250)"
+  status-waiting: "oklch(65.9% 0.088 259)"
+  status-stopped: "oklch(55% 0 0)"
+  status-background: "oklch(68% 0.12 200)"
+  status-unknown: "oklch(55% 0 0)"
   lane-0: "oklch(70% 0.15 255)"
   lane-1: "oklch(72% 0.16 145)"
   lane-2: "oklch(68% 0.19 25)"
@@ -29,8 +29,8 @@ colors:
   lane-5: "oklch(78% 0.15 65)"
   lane-6: "oklch(72% 0.17 340)"
   lane-7: "oklch(76% 0.16 115)"
-  terminal: "oklch(16.3% 0.009 264)"
-  terminal-foreground: "oklch(87.1% 0.005 286)"
+  terminal: "oklch(12% 0 0)"
+  terminal-foreground: "oklch(87% 0 0)"
   git-added: "oklch(69.6% 0.17 162.48)"
   git-modified: "oklch(76.9% 0.188 70.08)"
   git-deleted: "oklch(64.5% 0.246 16.439)"
@@ -155,8 +155,8 @@ without reading, which sessions are still working, which one wants them, and
 which stopped. That is why the surface is quiet almost everywhere: a control
 room where every panel glows is a control room where nothing means anything.
 
-The system is built from four near-black lightness steps at one hue (250) and a
-single warm accent. Colour is spent, not applied. Amber means *your move* —
+The system is built from four near-black neutral lightness steps and a
+single blue accent. Colour is spent, not applied. Blue means *your move* —
 it is the accent, the ring, the brand mark and the `waiting` status, all at the
 same value, so the one thing that asks for the human always looks the same.
 Green means working, grey means inert, violet means this is the development
@@ -182,17 +182,17 @@ different, chunkier application borrowed from elsewhere.
 
 ## Colors
 
-A single near-neutral cool-grey ramp at hue 250, cut once by a warm amber, with
+A single pure-neutral near-black ramp (the Qursor website's), cut once by Qursor blue (`#7193C8`), with
 a small set of signal and categorical hues that never leave their jobs.
 
 ### Primary
 
-- **Factorio Amber** (`oklch(81.3% 0.165 75)` / `#FFB020`): the accent, the focus
-  ring, the brand mark's `F`, and the `waiting` status — one value for all four
+- **Qursor Blue** (`oklch(65.9% 0.088 259)` / `#7193C8`): the accent, the focus
+  ring, the brand mark's gradient, and the `waiting` status — one value for all four
   on purpose. It appears on primary buttons, on the icon that has just been
   hovered, on a selected item's marker, and on the session that wants you. The
-  light theme uses a darker step (`oklch(58% 0.17 75)`) because `#FFB020` on a
-  98% ground is unreadable; **one brand amber does not mean one token value in
+  light theme uses a darker step (`oklch(48.9% 0.102 262)`) because `#7193C8` on a
+  98% ground is unreadable; **one brand blue does not mean one token value in
   every theme.**
 
 ### Secondary
@@ -201,7 +201,7 @@ a small set of signal and categorical hues that never leave their jobs.
   in a busy sidebar, and the only one that may animate — a 1.5s opacity pulse,
   opt-in, granted to the single dot in a session header and withheld from the
   dozen in the sidebar and tab strip.
-- **Inert Slate** (`oklch(55% 0.01 250)`): `stopped`. Nearly colourless by
+- **Inert Slate** (`oklch(55% 0 0)`): `stopped`. Nearly colourless by
   design. This state asks nothing of you, so it gets the least colour in the app
   — it took over the grey that the deleted `idle` state left behind, after
   spending a year as the loudest red on screen.
@@ -221,8 +221,8 @@ a small set of signal and categorical hues that never leave their jobs.
   oklch hues, each at a deep weight (`oklch(45% 0.12 h)`) and a vivid one
   (`oklch(56% 0.17 h)`), both with near-white initials. Picked by hashing the display
   name, so the same name draws the same tile in every checkout. The band
-  around amber is empty on purpose: the `waiting` badge sits on the tile's
-  corner, and a tile that was itself amber would always look like your turn.
+  around blue is empty on purpose: the `waiting` badge sits on the tile's
+  corner, and a tile that was itself blue would always look like your turn.
   Fill and ink are fixed values, not tokens, so the pair holds in both themes.
   Within one workspace two projects never share a tile while the palette has
   room: a collision bumps the later project, by `id`, seven slots on
@@ -230,19 +230,19 @@ a small set of signal and categorical hues that never leave their jobs.
 
 ### Neutral
 
-- **Console Black** (`oklch(16% 0.008 250)`): the app ground.
-- **Panel Charcoal** (`oklch(18% 0.008 250)`): raised chrome — the sidebar, the
+- **Console Black** (`oklch(14.5% 0 0)`): the app ground.
+- **Panel Charcoal** (`oklch(17.8% 0 0)`): raised chrome — the sidebar, the
   top bar, popovers and menus. Two lightness points above the ground is the whole
   elevation cue.
-- **Pressed Graphite** (`oklch(22% 0.008 250)`): a selected row, an active tab,
+- **Pressed Graphite** (`oklch(21.8% 0 0)`): a selected row, an active tab,
   an input's field.
-- **Hairline** (`oklch(25% 0.008 250)`): every divider and border in the app, and
+- **Hairline** (`oklch(26% 0 0)`): every divider and border in the app, and
   the shell's own outline against the desktop.
-- **Mercury** (`oklch(96% 0.004 250)`): focused text — a selected row, a hovered
+- **Mercury** (`oklch(94.6% 0 0)`): focused text — a selected row, a hovered
   row, the thing you are reading now.
-- **Resting Text** (`oklch(82% 0.006 250)`): repeated text at rest — a commit
+- **Resting Text** (`oklch(87% 0 0)`): repeated text at rest — a commit
   subject, a filename in a list.
-- **Metadata Grey** (`oklch(56% 0.006 250)`): counts, SHAs, timestamps, section
+- **Metadata Grey** (`oklch(65% 0 0)`): counts, SHAs, timestamps, section
   headers, and every icon affordance at rest.
 - **Terminal Well** (`oklch(16.3% 0.009 264)`, text `oklch(87.1% 0.005 286)`):
   the agent's PTY, a shell and the sub-agent transcript. A hair deeper and cooler
@@ -263,10 +263,9 @@ Selected in Settings → Appearance (`system` by default, following the OS). It 
 a translation of everything above, never a tint: every token has its own value
 on `[data-theme="light"]`.
 
-- **Ground and chrome** go up rather than down: the ground is `oklch(98% 0.004
-  250)`, while card, popover and the terminal well are white. Depth is still
-  steps of lightness and a hairline (`oklch(88% 0.006 250)`).
-- **Amber** is `oklch(58% 0.17 75)` (`#B36600`) — see § Primary. `waiting` takes
+- **Ground and chrome** go up rather than down: the ground is `oklch(98.5% 0 0)`, while card, popover and the terminal well are white. Depth is still
+  steps of lightness and a hairline (`oklch(90% 0 0)`).
+- **Blue** is `oklch(48.9% 0.102 262)` (`#3F5F9A`) — see § Primary. `waiting` takes
   it too, because it *is* the accent.
 - **Status, git and lane hues** drop roughly 15–20 lightness points: `working`
   and `background` to 55%, the git hues to about the Tailwind 700 steps, the
@@ -280,10 +279,10 @@ on `[data-theme="light"]`.
 
 ### Named Rules
 
-**The One Amber Rule.** Amber means *the human's turn*. It is the accent, the
+**The One Accent Rule.** Blue means *the human's turn*. It is the accent, the
 ring, the mark and the `waiting` status at a single value, and it must not be
 spent on decoration, on a chart series, or on a state that resolves itself. If
-two ambers would ever sit three percent apart on screen, one of them is wrong.
+two blues would ever sit three percent apart on screen, one of them is wrong.
 
 **The Focus-Not-Default Rule.** Full `foreground` is a focus, not a default. Text
 repeated down a list rests at `secondary-foreground` and takes `foreground` from
@@ -513,15 +512,15 @@ exactly once.
 
 - **Shape:** gently rounded (6px), 32px tall at default, 28px at `sm`, 36px at
   `lg`. Icons inside are 14px.
-- **Primary:** amber ground, near-black text (`{components.button-primary}`),
+- **Primary:** blue ground, near-black text (`{components.button-primary}`),
   12px horizontal padding.
 - **Hover / Focus:** primary and secondary darken their own ground by 10–20%;
-  focus is a **1px** amber ring with a 1px offset in the surface colour.
+  focus is a **1px** blue ring with a 1px offset in the surface colour.
   Transitions are colour-only.
 - **Secondary / Outline / Ghost / Link:** secondary is a `22%` ground; outline is
-  a bordered transparent field; ghost fills with accent on hover; link is amber
+  a bordered transparent field; ghost fills with accent on hover; link is blue
   text with an offset underline.
-- **Quiet:** muted text and glyph going to **amber** on hover, with no ground in
+- **Quiet:** muted text and glyph going to **blue** on hover, with no ground in
   any state. It is the **labelled sibling of the Icon Button** and carries that
   section's rule for the same reason: in a chrome strip a filled hover block
   outweighs the content beside it. Reach for it when a control needs a word but
@@ -551,7 +550,7 @@ The house style for every icon-only control, and **not** a ghost button.
 
 - **Shape:** 4px radius, 2px padding around a 14px glyph (`sm`), 4px around 16px
   (`md`).
-- **Rest / Hover:** muted grey at 70% opacity, going to **amber**. It paints no
+- **Rest / Hover:** muted grey at 70% opacity, going to **blue**. It paints no
   background in any state.
 - **Why:** at 14px a filled hover block is bigger than the thing it highlights
   and reads as a widget rather than an affordance.
@@ -612,14 +611,14 @@ too loud for a mark repeated once per expanded project.
 
 - **Style:** 32px tall, 6px radius, 1px `input` border, app-ground fill, 14px
   text, muted placeholder.
-- **Focus:** **1px** amber ring at a 1px offset — the same ring every control
+- **Focus:** **1px** blue ring at a 1px offset — the same ring every control
   uses. It was 2px until 2026-08-29, when a user called it heavy: at this
   density a 2px ring plus a 2px offset is 4px of new geometry around a 32px
   field, which reads as the control resizing rather than as focus moving.
 - **Disabled:** 50% opacity and a not-allowed cursor.
 - **The embedded editor's own widgets are the exception**, and the find widget
   is the one that exists (F7). Monaco draws a 24px field and 20px buttons inside
-  it. Its **colours** are restated here — app ground, hairline border, the amber
+  it. Its **colours** are restated here — app ground, hairline border, the blue
   ring on focus, the accent for a match — because those are documented theme
   keys; its **metrics** are not reachable without styling Monaco's internal
   class names, which are not API and change under an upgrade. So this widget
@@ -692,7 +691,7 @@ agent session.
 
 ### Status Dot (signature)
 
-An 8px round mark in `working` green, `waiting` amber, or `stopped` grey, with
+An 8px round mark in `working` green, `waiting` blue, or `stopped` grey, with
 the state's name as its title.
 
 **A fifth mark, `unknown`: hollow, `status-unknown` grey, 1px ring, no fill.**
@@ -710,7 +709,7 @@ session running with **no tab**, which today means a routine's until somebody
 opens it (F22). Blue because the ramp is a scale of how involved you are, and
 this is one step further out than green: work you scheduled rather than work you
 started. It sits at the green's lightness and chroma so the two read as the same
-kind of mark. `waiting` amber still wins over it, because "your move" is true
+kind of mark. `waiting` blue still wins over it, because "your move" is true
 wherever the session runs. **Still by default** — the pulse is opt-in,
 because the dot appears in the sidebar's project rows, its session rows and the
 tab strip at once, and a dozen things breathing at their own rate is a christmas
@@ -795,11 +794,11 @@ above and below, because a block at the true middle of a pane reads low.
 ### Door Tile
 
 A choice between ways to start, where a button would be a command (ADR-0068).
-240px wide, `rounded-lg`, the panel tone, a 1px amber edge at 60%. Inside, left
-aligned on 16px padding: a 20px amber mark, then a `text-sm` semibold title and a
+240px wide, `rounded-lg`, the panel tone, a 1px blue edge at 60%. Inside, left
+aligned on 16px padding: a 20px blue mark, then a `text-sm` semibold title and a
 `text-xs` muted hint. A tile that opens a menu carries a 16px muted chevron in its
-top-right corner. Hover steps the fill to `secondary` and the edge to full amber —
-never the amber fill `outline` gives, because the edge already says whose move it
+top-right corner. Hover steps the fill to `secondary` and the edge to full blue —
+never the blue fill `outline` gives, because the edge already says whose move it
 is. Built on `Button`, so focus and disabled are the primitive's. Used only by the
 First-Run hero today; a second use should be the same kind of fork in the road.
 
@@ -808,12 +807,12 @@ First-Run hero today; a second use should be the same kind of fork in the road.
 The one glow in the app (ADR-0067), and the exception the elevation model names.
 It rings the two Door Tiles of the empty workspace and nothing else, ever: an empty
 workspace is the moment the human's move is the *only* move, and the rest of the
-product is built on amber meaning exactly that.
+product is built on blue meaning exactly that.
 
 - **A ring, not a blur.** A spread `box-shadow` in the primary, 1px at 10% at
   rest to 4px at 22% with a faint 16px bloom at the peak, on a 3s ease-in-out
-  loop. A wide blur at high opacity turns amber brown on this ground; a tight
-  ring stays amber. One animation shared by both tiles.
+  loop. A wide blur at high opacity turns blue brown on this ground; a tight
+  ring stays blue. One animation shared by both tiles.
 - **Its own layer.** The halo is a span behind the tile, not the tile's
   shadow, so it never stops: hovering or focusing a tile fades *its* layer out
   and the other keeps breathing in step. A restarted animation falls out of
@@ -821,7 +820,7 @@ product is built on amber meaning exactly that.
 - **Reduced motion holds it still** at a resting glow rather than removing it —
   the emphasis is the point, the motion is not.
 - **Never copy it.** A second glowing thing makes both mean nothing; a surface
-  that wants attention gets amber, and one that wants more is asking for this
+  that wants attention gets blue, and one that wants more is asking for this
   rule to be superseded.
 
 ### Graph Rail (signature)
@@ -840,7 +839,7 @@ without that constant would simply never be drawn.
   status and section headers.
 - **Do** give every chrome row an explicit height, and let its children truncate.
 - **Do** use `IconButton` for every icon-only control, and let its hover be the
-  icon taking amber.
+  icon taking blue.
 - **Do** keep repeated text at `secondary-foreground` and let hover or selection
   promote it to `foreground`.
 - **Do** import the chip shape from its constant rather than re-deriving its
@@ -856,7 +855,7 @@ without that constant would simply never be drawn.
 
 ### Don't:
 
-- **Don't** spend amber on anything that is not the human's turn to act.
+- **Don't** spend blue on anything that is not the human's turn to act.
 - **Don't** paint a background behind an icon button in any state, including
   hover, active and toggled-on.
 - **Don't** brighten a chrome icon to show it is toggled on — the surface it

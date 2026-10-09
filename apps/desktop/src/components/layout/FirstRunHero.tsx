@@ -98,9 +98,9 @@ export function FirstRunHero() {
 
 /**
  * One door (DESIGN.md § Door Tile): a mark, a title and a one-line hint on the
- * panel tone, edged in amber. A `Button` underneath, so focus, disabled and the
+ * panel tone, edged in blue. A `Button` underneath, so focus, disabled and the
  * keyboard are the primitive's; `forwardRef` and the rest props so a Radix
- * trigger can wrap it. The hover is a tonal step, not the amber fill `outline`
+ * trigger can wrap it. The hover is a tonal step, not the blue fill `outline`
  * would give — the edge already says whose move it is.
  */
 const DoorTile = forwardRef<

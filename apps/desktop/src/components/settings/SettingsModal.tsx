@@ -451,7 +451,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 							<SettingRow
 								label="Run missed routines for up to"
 								htmlFor="settings-routines-catchup"
-								description="How late a routine may still run when factorai was closed at its scheduled time. Missed runs coalesce into one. A routine can override this, and 0 means never run late."
+								description="How late a routine may still run when Qursor IDE was closed at its scheduled time. Missed runs coalesce into one. A routine can override this, and 0 means never run late."
 							>
 								<div className="flex items-center gap-1.5">
 									<Input

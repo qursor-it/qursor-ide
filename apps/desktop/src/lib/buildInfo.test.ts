@@ -47,11 +47,11 @@ describe('parseBuildInfo', () => {
 
 describe('buildLine', () => {
 	it('names the build a bug report is about', () => {
-		expect(buildLine(RELEASE)).toBe('factorai 0.3.0 (a6ac769), built 2026-09-16');
+		expect(buildLine(RELEASE)).toBe('Qursor IDE 0.3.0 (a6ac769), built 2026-09-16');
 	});
 
 	it('drops the parenthesis when there is no commit', () => {
-		expect(buildLine({ ...RELEASE, commit: null })).toBe('factorai 0.3.0, built 2026-09-16');
+		expect(buildLine({ ...RELEASE, commit: null })).toBe('Qursor IDE 0.3.0, built 2026-09-16');
 	});
 
 	it('says so rather than inventing a release for a local build', () => {

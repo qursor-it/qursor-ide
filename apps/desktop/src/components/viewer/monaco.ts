@@ -170,17 +170,17 @@ export function ensureTheme(): void {
 			// A surface that appears over the app and will be dismissed gets a
 			// shadow and no tonal step of its own — The Flat-By-Default Rule.
 			'widget.shadow': '#00000059',
-			// App-ground fill, hairline border, amber ring on focus: the field
+			// App-ground fill, hairline border, accent ring on focus: the field
 			// rule every input in the app follows.
 			'input.background': '#14171c',
 			'input.foreground': '#d4d4d8',
 			'input.border': '#2b3038',
-			focusBorder: '#ffb020',
-			// Aa / ab / .* pressed. Amber at 16% behind, the hue itself as
+			focusBorder: '#7193c8',
+			// Aa / ab / .* pressed. Accent at 16% behind, the hue itself as
 			// text — the chip treatment, which is what these toggles are.
-			'inputOption.activeBackground': '#ffb02029',
-			'inputOption.activeForeground': '#ffb020',
-			'inputOption.activeBorder': '#ffb02066',
+			'inputOption.activeBackground': '#7193c829',
+			'inputOption.activeForeground': '#7193c8',
+			'inputOption.activeBorder': '#7193c866',
 			// "No results", which Monaco renders as input validation.
 			'inputValidation.errorBackground': '#2a1418',
 			'inputValidation.errorBorder': '#df202e',
@@ -190,14 +190,14 @@ export function ensureTheme(): void {
 			// hue as its border; every other match is the same tint at 16%, so
 			// "where I am" and "where else it is" are one colour at two weights
 			// and the syntax underneath still reads through both.
-			'editor.findMatchBackground': '#ffb02057',
-			'editor.findMatchBorder': '#ffb020',
-			'editor.findMatchHighlightBackground': '#ffb02029',
-			'editor.findMatchHighlightBorder': '#ffb0204d',
+			'editor.findMatchBackground': '#7193c857',
+			'editor.findMatchBorder': '#7193c8',
+			'editor.findMatchHighlightBackground': '#7193c829',
+			'editor.findMatchHighlightBorder': '#7193c84d',
 			// Find-in-selection dims everything outside the scope rather than
-			// tinting the scope amber, which would compete with the matches.
+			// tinting the scope with the accent, which would compete with the matches.
 			'editor.findRangeHighlightBackground': '#8b919c1a',
-			'editorOverviewRuler.findMatchForeground': '#ffb020b3',
+			'editorOverviewRuler.findMatchForeground': '#7193c8b3',
 			'toolbar.hoverBackground': '#23272e',
 			'icon.foreground': '#8b919c',
 		},
@@ -206,8 +206,8 @@ export function ensureTheme(): void {
 	// The same roles as the dark theme above, restated against the light
 	// palette rather than inverted: `#ffffff` is `--card`, `#f6f9fb` the
 	// `--background` step, `#e8ebef` / `#d5d8db` the two hairline steps, `#52565a`
-	// metadata, `#0f1215` text, `#b36600` the light theme's darker amber (the
-	// brand `#ffb020` is unreadable on white — DESIGN.md § Primary).
+	// metadata, `#0f1215` text, `#3f5f9a` the light theme's darker blue (the
+	// brand `#7193c8` is unreadable on white — DESIGN.md § Primary).
 	monaco.editor.defineTheme(MONACO_THEMES.light, {
 		base: 'vs',
 		inherit: true,
@@ -231,22 +231,22 @@ export function ensureTheme(): void {
 			'input.background': '#f6f9fb',
 			'input.foreground': '#0f1215',
 			'input.border': '#d5d8db',
-			focusBorder: '#b36600',
-			'inputOption.activeBackground': '#b3660021',
-			'inputOption.activeForeground': '#b36600',
-			'inputOption.activeBorder': '#b3660066',
+			focusBorder: '#3f5f9a',
+			'inputOption.activeBackground': '#3f5f9a21',
+			'inputOption.activeForeground': '#3f5f9a',
+			'inputOption.activeBorder': '#3f5f9a66',
 			'inputValidation.errorBackground': '#ffe7e4',
 			'inputValidation.errorBorder': '#df202e',
 			'inputValidation.errorForeground': '#0f1215',
 			errorForeground: '#df202e',
-			// A darker amber needs less weight to show: the dark theme's 34% fill
-			// would turn the matched text brown.
-			'editor.findMatchBackground': '#b366003d',
-			'editor.findMatchBorder': '#b36600',
-			'editor.findMatchHighlightBackground': '#b366001f',
-			'editor.findMatchHighlightBorder': '#b366004d',
+			// A darker blue needs less weight to show: the dark theme's 34% fill
+			// would turn the matched text muddy.
+			'editor.findMatchBackground': '#3f5f9a3d',
+			'editor.findMatchBorder': '#3f5f9a',
+			'editor.findMatchHighlightBackground': '#3f5f9a1f',
+			'editor.findMatchHighlightBorder': '#3f5f9a4d',
 			'editor.findRangeHighlightBackground': '#52565a14',
-			'editorOverviewRuler.findMatchForeground': '#b36600b3',
+			'editorOverviewRuler.findMatchForeground': '#3f5f9ab3',
 			'toolbar.hoverBackground': '#e8ebef',
 			'icon.foreground': '#52565a',
 			// The diff (F8/F13). `vs` ships a saturated lime for an added line,

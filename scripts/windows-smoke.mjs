@@ -1,5 +1,6 @@
 // Smoke the real native Windows WebView2 bridge and PowerShell ConPTY path.
 // See ADR-0074 and docs/windows-native-validation.md for the isolated launch.
+// The FactorAI-namespaced smoke identifier is an internal safety boundary; ADR-0075 keeps it stable.
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';

@@ -141,7 +141,7 @@ export const SHORTCUT_SPECS: readonly ShortcutSpec[] = [
 	},
 	{
 		action: 'quit',
-		label: 'Quit factorai',
+		label: 'Quit Qursor IDE',
 		defaultHotkey: 'Mod+Q',
 		overTerminal: true,
 		linuxOnly: true,

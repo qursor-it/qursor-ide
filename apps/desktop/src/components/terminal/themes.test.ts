@@ -5,12 +5,12 @@ import { xtermTheme } from './themes';
 const DARK: Record<string, string> = {
 	'--terminal': 'oklch(16.3% 0.009 264)',
 	'--terminal-foreground': 'oklch(87.1% 0.005 286)',
-	'--primary': 'oklch(81.3% 0.165 75)',
+	'--primary': 'oklch(65.9% 0.088 259)',
 };
 const LIGHT: Record<string, string> = {
 	'--terminal': 'oklch(100% 0 0)',
 	'--terminal-foreground': 'oklch(24% 0.008 250)',
-	'--primary': 'oklch(58% 0.17 75)',
+	'--primary': 'oklch(48.9% 0.102 262)',
 };
 
 const reader = (tokens: Record<string, string>) => (name: string) => tokens[name] ?? '';
@@ -20,8 +20,8 @@ describe('xtermTheme', () => {
 		const theme = xtermTheme(reader(DARK), 'dark');
 		expect(theme.background).toBe('#0c0e12');
 		expect(theme.foreground).toBe('#d4d4d8');
-		// The brand amber, exactly — the cursor is the accent.
-		expect(theme.cursor).toBe('#ffb020');
+		// The brand blue, exactly — the cursor is the accent.
+		expect(theme.cursor).toBe('#7193c8');
 		// A block cursor draws the glyph under it in this colour.
 		expect(theme.cursorAccent).toBe(theme.background);
 	});
