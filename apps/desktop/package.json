@@ -6,7 +6,9 @@
 	"type": "module",
 	"scripts": {
 		"dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
+		"dev:windows": "tauri dev --config src-tauri/tauri.windows.conf.json --config src-tauri/tauri.dev.conf.json",
 		"build": "tauri build",
+		"build:windows": "tauri build --config src-tauri/tauri.windows.conf.json",
 		"tauri": "tauri",
 		"vite:dev": "vite",
 		"vite:build": "tsc --noEmit && vite build",

@@ -1,0 +1,61 @@
+name: Windows native
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality-and-bundle:
+    name: Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x86_64
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check Windows bundle defaults
+        run: pnpm windows:check
+      - name: Check formatting
+        run: pnpm format:check
+      - name: Check text bytes
+        run: pnpm bytes:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Test
+        run: pnpm test
+      - name: Check dependency versions
+        run: pnpm deps:check
+      - name: Check unused dependencies
+        run: pnpm deps:unused
+      - name: Check Rust formatting
+        run: cargo fmt --check
+      - name: Lint Rust
+        run: cargo clippy --locked --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml -- -D warnings
+      - name: Run Rust tests
+        run: cargo test --locked --all-targets --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Build native NSIS installer
+        run: pnpm build:windows
+
+      - name: Retain Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: factorai-windows-x64-installer
+          path: target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

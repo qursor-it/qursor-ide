@@ -64,7 +64,9 @@ export default defineConfig({
 		port: 1420,
 		strictPort: true,
 		watch: {
-			ignored: ['**/src-tauri/**'],
+			// PDF sidecars are staged once at startup, not edited source. Watching
+			// copied binary assets races their Windows file handles (ADR-0074).
+			ignored: ['**/src-tauri/**', '**/public/pdfjs/**'],
 		},
 	},
 	resolve: {

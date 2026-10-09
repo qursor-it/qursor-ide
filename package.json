@@ -5,7 +5,10 @@
 	"license": "MIT",
 	"scripts": {
 		"dev": "turbo dev",
+		"dev:windows": "pnpm --filter @factorai/desktop dev:windows",
 		"build": "turbo build",
+		"build:windows": "pnpm --filter @factorai/desktop build:windows",
+		"windows:check": "node scripts/windows-native.mjs check",
 		"lint": "turbo lint",
 		"format": "oxfmt .",
 		"format:check": "oxfmt --check .",
