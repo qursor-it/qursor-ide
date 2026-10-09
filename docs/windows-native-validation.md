@@ -46,3 +46,5 @@ The native x86_64 MSVC build was tested with Node 24, Rust stable and WebView2:
 - After the smoke run, closing the main window through Tauri exited the native application process normally. The isolated app's sidebar and empty state rendered correctly.
 
 The tests use temporary projects and isolated agent data roots. Live model calls and signed updater delivery were not exercised. The native installer uses manual upgrades until the fork supplies its own signing key and update feed.
+
+The release build produced `factorai_0.55.0_x64-setup.exe` (9,583,194 bytes). The extracted application is a valid x86_64 PE and matches the release executable apart from Tauri's expected three-byte NSIS bundle-type marker (`UNK` to `NSS`). The setup is an unsigned local build. Packaging and payload extraction were verified; installation and uninstallation through the wizard remain available for a manual user trial.
