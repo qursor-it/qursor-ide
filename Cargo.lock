@@ -1011,6 +1011,7 @@ dependencies = [
  "croner",
  "dashmap",
  "dirs 5.0.1",
+ "dunce",
  "futures-util",
  "git2",
  "libc",
@@ -1040,6 +1041,7 @@ dependencies = [
  "tungstenite",
  "uuid",
  "webkit2gtk",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

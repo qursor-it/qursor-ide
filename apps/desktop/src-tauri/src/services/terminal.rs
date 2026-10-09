@@ -25,6 +25,29 @@ use tauri::{AppHandle, Emitter};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{
+	ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+	CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+	AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+	SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+	JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{
+	OpenProcess, CREATE_NO_WINDOW, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+};
+
 use crate::agents::{self, claude, codex, AgentDescriptor, IdSource};
 use crate::error::{AppError, AppResult};
 use crate::services::agent_cli::find_agent_binary;
@@ -357,6 +380,172 @@ pub struct WorktreeStore {
 	pub set: WorktreeSet,
 }
 
+/// Owns the Windows process tree for one ConPTY. The kill-on-close limit is a
+/// final backstop if factorai exits before its normal shutdown path can run.
+#[cfg(windows)]
+struct WinProcessJob {
+	handle: OwnedHandle,
+	root_pid: u32,
+}
+
+#[cfg(windows)]
+impl WinProcessJob {
+	fn attach(process: RawHandle, root_pid: u32) -> std::io::Result<Self> {
+		let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+		if raw.is_null() {
+			return Err(std::io::Error::last_os_error());
+		}
+		let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+		let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+		let set = unsafe {
+			SetInformationJobObject(
+				handle.as_raw_handle() as HANDLE,
+				JobObjectExtendedLimitInformation,
+				(&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+				std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+			)
+		};
+		if set == 0 {
+			return Err(std::io::Error::last_os_error());
+		}
+		let assigned = unsafe {
+			AssignProcessToJobObject(handle.as_raw_handle() as HANDLE, process as HANDLE)
+		};
+		if assigned == 0 {
+			return Err(std::io::Error::last_os_error());
+		}
+		let job = Self { handle, root_pid };
+		job.attach_existing_descendants()?;
+		Ok(job)
+	}
+
+	fn attach_existing_descendants(&self) -> std::io::Result<()> {
+		let mut assigned = HashSet::from([self.root_pid]);
+		loop {
+			let descendants = process_descendants(self.root_pid)?;
+			let mut found_new = false;
+			for pid in descendants {
+				if !assigned.insert(pid) {
+					continue;
+				}
+				found_new = true;
+				let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
+				if process.is_null() {
+					let error = std::io::Error::last_os_error();
+					// A process which exited between the snapshot and OpenProcess no
+					// longer needs to be owned by this job. Other failures mean we
+					// could leave a live descendant outside the job.
+					if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+						continue;
+					}
+					return Err(error);
+				}
+				let process = unsafe { OwnedHandle::from_raw_handle(process) };
+				let result = unsafe {
+					AssignProcessToJobObject(
+						self.handle.as_raw_handle() as HANDLE,
+						process.as_raw_handle() as HANDLE,
+					)
+				};
+				if result == 0 {
+					let error = std::io::Error::last_os_error();
+					if error.raw_os_error() != Some(ERROR_INVALID_PARAMETER as i32) {
+						return Err(error);
+					}
+				}
+			}
+			if !found_new {
+				break;
+			}
+		}
+		Ok(())
+	}
+
+	fn terminate(&self) -> std::io::Result<()> {
+		let result = unsafe { TerminateJobObject(self.handle.as_raw_handle() as HANDLE, 1) };
+		if result == 0 {
+			Err(std::io::Error::last_os_error())
+		} else {
+			Ok(())
+		}
+	}
+}
+
+#[cfg(windows)]
+fn process_descendants(root_pid: u32) -> std::io::Result<Vec<u32>> {
+	let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+	if snapshot == INVALID_HANDLE_VALUE {
+		return Err(std::io::Error::last_os_error());
+	}
+	let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+	let mut entry = PROCESSENTRY32W {
+		dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+		..Default::default()
+	};
+	let mut parents = Vec::new();
+	if unsafe { Process32FirstW(snapshot.as_raw_handle() as HANDLE, &mut entry) } == 0 {
+		return Err(std::io::Error::last_os_error());
+	}
+	loop {
+		parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
+		if unsafe { Process32NextW(snapshot.as_raw_handle() as HANDLE, &mut entry) } == 0 {
+			let error = std::io::Error::last_os_error();
+			if error.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+				break;
+			}
+			return Err(error);
+		}
+	}
+	let mut descendants = HashSet::from([root_pid]);
+	loop {
+		let old_len = descendants.len();
+		for (pid, parent_pid) in &parents {
+			if descendants.contains(parent_pid) {
+				descendants.insert(*pid);
+			}
+		}
+		if descendants.len() == old_len {
+			break;
+		}
+	}
+	descendants.remove(&root_pid);
+	Ok(descendants.into_iter().collect())
+}
+
+#[cfg(windows)]
+fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
+	let mut process_ids = process_descendants(root_pid).unwrap_or_default();
+	process_ids.push(root_pid);
+	process_ids.reverse();
+	let taskkill = std::env::var_os("SystemRoot")
+		.map(PathBuf::from)
+		.map(|root| root.join("System32/taskkill.exe"))
+		.filter(|path| path.is_file())
+		.unwrap_or_else(|| PathBuf::from("taskkill.exe"));
+	let mut last_error = None;
+	for pid in process_ids {
+		let result = std::process::Command::new(&taskkill)
+			.args(["/PID", &pid.to_string(), "/T", "/F"])
+			.stdin(std::process::Stdio::null())
+			.stdout(std::process::Stdio::null())
+			.stderr(std::process::Stdio::null())
+			.creation_flags(CREATE_NO_WINDOW)
+			.status();
+		match result {
+			Ok(status) if status.success() => {}
+			Ok(status) => {
+				last_error = Some(std::io::Error::other(format!("taskkill exited with {status}")));
+			}
+			Err(error) => last_error = Some(error),
+		}
+	}
+	match last_error {
+		Some(error) => Err(error),
+		None => Ok(()),
+	}
+}
+
 /// Reading and writing a project's routines, for the bridge's tool group
 /// (F22 slice 3, ADR-0028).
 ///
@@ -418,6 +607,21 @@ struct PtyRequest {
 }
 
 impl TerminalHandle {
+	fn kill_process_tree(&self) {
+		#[cfg(windows)]
+		if let Err(error) = self.process_job.terminate() {
+			warn!(pid = self.process_job.root_pid, error = %error, "Job Object termination failed; falling back to taskkill");
+			if let Err(kill_error) = kill_process_tree(self.process_job.root_pid) {
+				warn!(pid = self.process_job.root_pid, error = %kill_error, "taskkill could not terminate the terminal process tree");
+				if let Err(root_error) = self.killer.lock().kill() {
+					warn!(pid = self.process_job.root_pid, error = %root_error, "child killer could not terminate the terminal root process");
+				}
+			}
+		}
+		#[cfg(not(windows))]
+		let _ = self.killer.lock().kill();
+	}
+
 	/// The id this session answers to now: the agent's once adopted, else ours.
 	fn effective_id(&self) -> Option<String> {
 		self.adopted.lock().clone().or_else(|| self.session_id.clone())
@@ -468,6 +672,10 @@ struct TerminalHandle {
 	/// (StrictMode's spawn-race kill) and on quit (`kill_all`). A `ChildKiller`
 	/// signals the process without touching the waiter's `Child`.
 	killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+	/// On Windows, a kill-on-close Job Object owns the PTY root and every
+	/// descendant, including processes that were created just before attach.
+	#[cfg(windows)]
+	process_job: WinProcessJob,
 	status: Mutex<TerminalStatus>,
 	/// Set by [`TerminalManager::kill`] before it signals, and read by the
 	/// waiter when it reports the exit. See `TerminalExitEvent::killed`.
@@ -1220,18 +1428,22 @@ impl TerminalManager {
 
 	/// Spawn the user's own shell in the footer under a session (F23).
 	///
-	/// **Bare `$SHELL`, no flags.** A PTY with no arguments is already an
-	/// interactive shell, so `~/.zshrc` is sourced the way it is in any terminal
-	/// emulator; `-l` would re-source the profile and hand this shell a
-	/// different environment from the agent above it, which is the one thing a
-	/// shell sitting beside an agent must not have. `child_env` supplies the
-	/// login-shell `PATH` for both.
+	/// **Bare shell on Unix; -NoLogo on Windows.** A PTY with no
+	/// arguments is already an interactive shell, so ~/.zshrc is sourced the
+	/// way it is in any terminal emulator; -l would re-source the profile and
+	/// hand this shell a different environment from the agent above it, which
+	/// the shell sitting beside an agent must not have. Windows suppresses only
+	/// the PowerShell banner and keeps the user's profile. child_env supplies
+	/// the resolved shell PATH for both.
 	///
 	/// The session id is carried for one purpose — which footer this belongs to,
 	/// so closing that session kills its shells — and [`TerminalKind::Shell`]
 	/// keeps it out of every pass that would read it as a session (ADR-0031).
 	pub fn spawn_shell(&self, opts: ShellSpawnOpts) -> AppResult<TerminalId> {
 		let shell = crate::services::shell_path::user_shell();
+		let mut argv = vec![shell.to_string_lossy().into_owned()];
+		#[cfg(windows)]
+		argv.push("-NoLogo".into());
 		let id = self.spawn_inner(
 			PtyRequest {
 				session_id: None,
@@ -1244,7 +1456,7 @@ impl TerminalManager {
 				kind: TerminalKind::Shell,
 				agent: None,
 			},
-			Some(vec![shell.to_string_lossy().into_owned()]),
+			Some(argv),
 		)?;
 		// Nothing names the chip from here. It is labelled with this shell's
 		// basename, which the renderer asked `shell_name` for before it called
@@ -1435,9 +1647,13 @@ impl TerminalManager {
 			}
 		};
 
-		let mut cmd = CommandBuilder::new(&argv[0]);
-		for a in argv.iter().skip(1) {
-			cmd.arg(a);
+		let process_args: Vec<std::ffi::OsString> =
+			argv.iter().skip(1).map(std::ffi::OsString::from).collect();
+		let (program, process_args) =
+			crate::services::agent_cli::launch_command(Path::new(&argv[0]), &process_args)?;
+		let mut cmd = CommandBuilder::new(program);
+		for arg in process_args {
+			cmd.arg(arg);
 		}
 		// `CommandBuilder::cwd` does NOT fail on a directory that isn't there —
 		// the child simply starts somewhere else, which for us was $HOME. That is
@@ -1560,11 +1776,40 @@ impl TerminalManager {
 				pixel_height: 0,
 			})
 			.map_err(|e| AppError::Process(format!("openpty: {e}")))?;
-		let child =
+		let mut child =
 			pair.slave.spawn_command(cmd).map_err(|e| AppError::Process(format!("spawn: {e}")))?;
 		// Clone a killer now, before the child is moved into the waiter thread.
 		// See `TerminalHandle::killer` for why the child isn't shared.
 		let killer = child.clone_killer();
+		#[cfg(windows)]
+		let process_job = {
+			let Some(root_pid) = child.process_id() else {
+				let mut killer = killer;
+				let _ = killer.kill();
+				let _ = child.wait();
+				return Err(AppError::Process("ConPTY did not report its process id".into()));
+			};
+			let Some(process_handle) = child.as_raw_handle() else {
+				let mut killer = killer;
+				let _ = killer.kill();
+				let _ = child.wait();
+				return Err(AppError::Process("ConPTY did not expose its process handle".into()));
+			};
+			match WinProcessJob::attach(process_handle, root_pid) {
+				Ok(job) => job,
+				Err(error) => {
+					if let Err(kill_error) = kill_process_tree(root_pid) {
+						warn!(pid = root_pid, error = %kill_error, "taskkill could not clean up a process tree after Job Object attach failed");
+					}
+					let mut killer = killer;
+					let _ = killer.kill();
+					let _ = child.wait();
+					return Err(AppError::Process(format!(
+						"could not secure ConPTY process tree: {error}"
+					)));
+				}
+			}
+		};
 		drop(pair.slave); // close slave end in the parent so EOF works
 		let writer = pair
 			.master
@@ -1591,6 +1836,8 @@ impl TerminalManager {
 			master: Mutex::new(pair.master),
 			writer: Mutex::new(writer),
 			killer: Mutex::new(killer),
+			#[cfg(windows)]
+			process_job,
 			// `Working` until the first title says otherwise, which takes about
 			// 300ms. A spawning session genuinely is doing something — resolving
 			// MCP servers, replaying a transcript — and this is also what the
@@ -1692,7 +1939,7 @@ impl TerminalManager {
 		// Recorded before the signal, so the waiter cannot report the exit before
 		// this is true. The other order is a race with a fast-dying child.
 		handle.killed.store(true, Ordering::Relaxed);
-		let _ = handle.killer.lock().kill();
+		handle.kill_process_tree();
 		Ok(())
 	}
 
@@ -1753,8 +2000,9 @@ impl TerminalManager {
 		}
 	}
 
-	/// Kill every live terminal. SIGTERM via `child.kill()`, then a 500ms
-	/// grace period, then anything still alive gets force-killed by Drop.
+	/// Kill every live terminal. Unix uses the child killer and a 500ms grace
+	/// period; Windows terminates each ConPTY's Job Object, which covers its
+	/// descendants. Dropping a Windows job is also a kill-on-close backstop.
 	pub fn kill_all(&self) {
 		let ids: Vec<TerminalId> = self.terminals.iter().map(|e| e.key().clone()).collect();
 		debug!(count = ids.len(), "kill_all");
@@ -1765,7 +2013,7 @@ impl TerminalManager {
 		for id in &ids {
 			if let Some(entry) = self.terminals.remove(id) {
 				let (_, handle) = entry;
-				let _ = handle.killer.lock().kill();
+				handle.kill_process_tree();
 			}
 		}
 	}
@@ -1782,7 +2030,7 @@ impl Drop for TerminalManager {
 			let ids: Vec<TerminalId> = self.terminals.iter().map(|e| e.key().clone()).collect();
 			for id in &ids {
 				if let Some((_, handle)) = self.terminals.remove(id) {
-					let _ = handle.killer.lock().kill();
+					handle.kill_process_tree();
 				}
 			}
 		}
@@ -2104,6 +2352,8 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+	use super::*;
+	use std::sync::{Arc, Mutex as StdMutex};
 
 	#[test]
 	fn a_background_session_is_flushed_less_often_than_the_one_in_front() {
@@ -2122,8 +2372,6 @@ mod tests {
 		assert_eq!(flush_window(&UiState::default(), None), FLUSH_WINDOW);
 		assert_eq!(flush_window(&UiState::default(), Some("anything")), FLUSH_WINDOW);
 	}
-	use super::*;
-	use std::sync::{Arc, Mutex as StdMutex};
 
 	type DataLog = Arc<StdMutex<Vec<TerminalDataEvent>>>;
 	type ExitLog = Arc<StdMutex<Vec<TerminalExitEvent>>>;
@@ -2174,6 +2422,7 @@ mod tests {
 		std::fs::write(&path, "{}\n").unwrap();
 	}
 
+	#[cfg(unix)]
 	#[test]
 	fn spawn_runs_and_streams_output() {
 		let (mgr, data, exit) = make_manager();
@@ -2221,6 +2470,7 @@ mod tests {
 	/// started from inside the release app, so its answer arrives carrying ten
 	/// `.mount_*` entries from two different mounts, and this test failed on
 	/// exactly those when the strip was widened to catch them.
+	#[cfg(unix)]
 	#[test]
 	fn a_child_runs_with_the_login_shell_path() {
 		let (mgr, data, exit) = make_manager();
@@ -2280,6 +2530,7 @@ mod tests {
 	/// handled differently from `CLAUDE_CODE_SSE_PORT`, which a shell must *not*
 	/// get, so the two rules sit one line apart and a copy-paste that unifies
 	/// them fails here.
+	#[cfg(unix)]
 	#[test]
 	fn a_child_runs_under_its_projects_profile_directory() {
 		let profile = tempfile::TempDir::new().unwrap();
@@ -2356,6 +2607,7 @@ mod tests {
 	/// A leaked value is removed rather than left, so the answer does not depend
 	/// on what launched factorai. That is asserted by seeding the parent's own
 	/// environment with a value the child must not see.
+	#[cfg(unix)]
 	#[test]
 	fn the_ambient_profile_leaves_the_config_variable_unset() {
 		// SAFETY: single-threaded section of this test, and the value is removed
@@ -2412,6 +2664,7 @@ mod tests {
 		);
 	}
 
+	#[cfg(unix)]
 	#[test]
 	fn write_input_reaches_child_process() {
 		// Spawn a tiny shell script that reads one line and echoes it with a
@@ -2446,6 +2699,7 @@ mod tests {
 		assert!(merged.contains("GOT:hello"), "expected GOT:hello in stream, got: {merged:?}");
 	}
 
+	#[cfg(unix)]
 	#[test]
 	fn kill_terminates_long_running_process() {
 		let (mgr, _data, exit) = make_manager();
@@ -2467,6 +2721,7 @@ mod tests {
 		panic!("kill did not produce an exit event in time");
 	}
 
+	#[cfg(unix)]
 	#[test]
 	fn list_reflects_live_terminals() {
 		let (mgr, _data, _exit) = make_manager();
@@ -2496,6 +2751,7 @@ mod tests {
 	/// never called from the reader at all. That is the same failure this module
 	/// has shipped once already: a right rule that never reaches the process
 	/// (see `a_child_runs_with_the_login_shell_path`).
+	#[cfg(unix)]
 	#[test]
 	fn a_title_written_by_a_real_child_moves_the_status() {
 		let statuses: Arc<StdMutex<Vec<TerminalStatusEvent>>> = Arc::new(StdMutex::new(Vec::new()));
@@ -2546,6 +2802,7 @@ mod tests {
 
 	/// A shell's spawn request: a project, a pane key, and **no session id at
 	/// all** (ADR-0032).
+	#[cfg(unix)]
 	fn shell_req(project_id: &str) -> PtyRequest {
 		PtyRequest {
 			session_id: None,
@@ -2561,6 +2818,7 @@ mod tests {
 	}
 
 	/// An agent's, for the tests that need one beside a shell.
+	#[cfg(unix)]
 	fn agent_req(session_id: &str, project_id: &str) -> PtyRequest {
 		PtyRequest {
 			session_id: Some(session_id.into()),
@@ -2585,6 +2843,7 @@ mod tests {
 	/// **Since ADR-0032 a shell has no session id to be mistaken for**, and this
 	/// test is what says the `Option` is doing that work rather than a filter
 	/// somebody may forget on the fifth pass.
+	#[cfg(unix)]
 	#[test]
 	fn a_shell_is_never_mistaken_for_a_session() {
 		let (mut mgr, _d, _e) = make_manager();
@@ -2636,6 +2895,7 @@ mod tests {
 	/// the session's status alone. Nothing reads a shell's title any more, so
 	/// the test waits for the title's bytes on the data stream instead: the
 	/// assertion means nothing until the reader has seen them.
+	#[cfg(unix)]
 	#[test]
 	fn a_shells_title_never_moves_a_status() {
 		let statuses: Arc<StdMutex<Vec<TerminalStatusEvent>>> = Arc::new(StdMutex::new(Vec::new()));
@@ -2690,6 +2950,7 @@ mod tests {
 	/// dead. The exit code cannot tell them apart — a SIGTERM'd bash and
 	/// `exit 143` look the same — so the flag has to come from the side that
 	/// knows.
+	#[cfg(unix)]
 	#[test]
 	fn an_exit_says_whether_we_killed_it() {
 		let (mgr, _d, exit) = make_manager();
@@ -2726,6 +2987,7 @@ mod tests {
 	/// ADR-0032). `Remove project` sweeps its shells up; the agent in the same
 	/// project is killed by its own `terminal_kill` and must not be killed twice
 	/// from here; another project's shells are not this project's business.
+	#[cfg(unix)]
 	#[test]
 	fn removing_a_project_kills_its_shells_and_nothing_else() {
 		let (mgr, _d, _e) = make_manager();
@@ -2767,6 +3029,7 @@ mod tests {
 	/// `is_dir()` per indexer scan and it flips back when a folder returns, so
 	/// an unmounted volume would kill a build running fine in a linked checkout
 	/// somewhere else. The question is asked of the pane's own cwd instead.
+	#[cfg(unix)]
 	#[test]
 	fn a_shell_is_reaped_when_its_own_cwd_goes_and_not_before() {
 		let (mgr, _d, _e) = make_manager();
@@ -2805,10 +3068,12 @@ mod tests {
 	#[test]
 	fn spawn_refuses_a_cwd_that_does_not_exist() {
 		let (mgr, _d, _e) = make_manager();
+		let parent = tempfile::TempDir::new().unwrap();
+		let missing = parent.path().join("not-created");
 		let mut o = opts(80, 24);
-		o.cwd = Some("/definitely/not/a/directory".into());
+		o.cwd = Some(missing.to_string_lossy().into_owned());
 		let err = mgr
-			.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), "true".into()]))
+			.spawn_with_argv(o, Some(vec!["missing-agent-binary".into()]))
 			.expect_err("a missing cwd must not spawn");
 		// portable-pty starts the child elsewhere rather than failing, so without
 		// this guard a new session in a deleted project folder would be filed
@@ -2929,6 +3194,7 @@ mod tests {
 	/// every "new session" click reopened that worktree session instead of
 	/// minting a fresh one. Only the store-key probe finds the transcript here.
 	#[test]
+	#[cfg(unix)]
 	fn next_session_id_does_not_reuse_a_messaged_worktree_session() {
 		let store = tempfile::TempDir::new().unwrap();
 		let worktree = tempfile::TempDir::new().unwrap();
@@ -2976,6 +3242,7 @@ mod tests {
 	/// through a recorded location misses, so only a probe that asks the store
 	/// itself "is there a transcript with this id anywhere" can answer.
 	#[test]
+	#[cfg(unix)]
 	fn next_session_id_does_not_reuse_a_session_whose_transcript_moved() {
 		let store = tempfile::TempDir::new().unwrap();
 		let project_dir = tempfile::TempDir::new().unwrap();
@@ -3011,6 +3278,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn spawn_runs_in_the_recorded_folder_not_the_one_it_was_given() {
 		let store = tempfile::TempDir::new().unwrap();
 		let work = tempfile::TempDir::new().unwrap();
@@ -3106,6 +3374,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn a_codex_session_starts_unknown_and_is_listed_under_its_agent() {
 		// F30 § "Status": nothing reads Codex's title yet, so the honest launch
 		// state is `Unknown`, not the `Working` Claude's first title corrects.
@@ -3131,6 +3400,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn a_mention_into_an_unnamed_codex_session_is_refused_with_the_reason() {
 		// F30 § "Add to agent context": `codex queue` needs the thread's own id,
 		// which a session has only after its first turn (ADR-0062).
@@ -3160,6 +3430,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn a_codex_child_gets_no_claude_variables_and_an_ambient_codex_home_is_unset() {
 		// F30 § "Spawn": the variable is the agent's. Under the ambient
 		// directory it is removed, exactly as `CLAUDE_CONFIG_DIR` is for Claude;
@@ -3171,9 +3442,9 @@ mod tests {
 		o.agent = Some("codex".into());
 		o.cwd = Some(tmp.path().to_string_lossy().to_string());
 		let script = format!(
-			"printf 'CODEX[%s] CLAUDE[%s] SSE[%s]' \"${{CODEX_HOME:-}}\" \"${{CLAUDE_CONFIG_DIR:-}}\" \"${{CLAUDE_CODE_SSE_PORT:-}}\" > {}",
-			out.display()
-		);
+		"printf 'CODEX[%s] CLAUDE[%s] SSE[%s]' \"${{CODEX_HOME:-}}\" \"${{CLAUDE_CONFIG_DIR:-}}\" \"${{CLAUDE_CODE_SSE_PORT:-}}\" > {}",
+		out.display()
+	);
 		std::env::set_var("CODEX_HOME", mgr.codex_dir.to_string_lossy().to_string());
 		let _id = mgr
 			.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), script]))
@@ -3282,6 +3553,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn next_session_id_reuses_a_live_session_with_no_transcript() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
@@ -3305,6 +3577,7 @@ mod tests {
 	/// probed there: the project's current assignment names a store this
 	/// session's transcript was never written to.
 	#[test]
+	#[cfg(unix)]
 	fn next_session_id_probes_a_session_under_the_store_it_was_spawned_in() {
 		let spawned_in = tempfile::TempDir::new().unwrap();
 		let reassigned = tempfile::TempDir::new().unwrap();
@@ -3327,6 +3600,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn next_session_id_skips_a_live_session_that_has_been_messaged() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
@@ -3343,6 +3617,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn kill_all_drops_every_terminal() {
 		let (mgr, _data, _exit) = make_manager();
 		for _ in 0..3 {
@@ -3366,6 +3641,7 @@ mod tests {
 	/// leaves the header saying Claude has gone from a session it is driving,
 	/// and nothing else would notice.
 	#[test]
+	#[cfg(unix)]
 	fn resync_re_announces_a_bridge_that_has_a_client_on_it() {
 		use tungstenite::client::IntoClientRequest;
 
@@ -3431,5 +3707,177 @@ mod tests {
 		assert_eq!(events.len(), 1, "one announcement per bridge");
 		assert!(events[0].connected, "a bridge with a client on it must say so");
 		assert_eq!(events[0].session_id, opts(80, 24).session_id);
+	}
+}
+#[cfg(all(test, windows))]
+mod windows_tests {
+	use super::*;
+	use std::sync::{Arc, Mutex as StdMutex};
+
+	type DataLog = Arc<StdMutex<Vec<TerminalDataEvent>>>;
+
+	fn make_manager(claude_dir: &Path) -> (TerminalManager, DataLog) {
+		let data: DataLog = Arc::new(StdMutex::new(Vec::new()));
+		let data_callback = data.clone();
+		let manager = TerminalManager::with_callbacks(
+			claude_dir.to_path_buf(),
+			Arc::new(move |event| data_callback.lock().unwrap().push(event)),
+			Arc::new(|_| {}),
+			Arc::new(|_| {}),
+		);
+		(manager, data)
+	}
+
+	fn shell_request(cwd: &Path) -> PtyRequest {
+		PtyRequest {
+			session_id: None,
+			client_key: Some("windows-native-test".into()),
+			project_id: "windows-native-test".into(),
+			cwd: Some(cwd.to_string_lossy().into_owned()),
+			cols: 80,
+			rows: 24,
+			initial_prompt: None,
+			kind: TerminalKind::Shell,
+			agent: None,
+		}
+	}
+
+	fn powershell_literal(value: &str) -> String {
+		format!("'{}'", value.replace('\'', "''"))
+	}
+
+	fn spawn_powershell(
+		manager: &TerminalManager,
+		cwd: &Path,
+		script: &str,
+	) -> AppResult<TerminalId> {
+		let shell = crate::services::shell_path::user_shell();
+		let mut argv = vec![shell.to_string_lossy().into_owned()];
+		argv.extend([
+			"-NoLogo".into(),
+			"-NoProfile".into(),
+			"-NonInteractive".into(),
+			"-Command".into(),
+			script.into(),
+		]);
+		manager.spawn_inner(shell_request(cwd), Some(argv))
+	}
+
+	fn output_for(data: &DataLog, id: &str) -> Vec<u8> {
+		data.lock()
+			.unwrap()
+			.iter()
+			.filter(|event| event.id == id)
+			.flat_map(|event| B64.decode(&event.bytes_b64).unwrap_or_default())
+			.collect()
+	}
+
+	fn wait_for_output(data: &DataLog, id: &str, needle: &[u8], timeout: Duration) -> bool {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if output_for(data, id).windows(needle.len()).any(|window| window == needle) {
+				return true;
+			}
+			if Instant::now() >= deadline {
+				return false;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		}
+	}
+
+	fn wait_for_pid_file(path: &Path, timeout: Duration) -> Option<u32> {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if let Ok(contents) = std::fs::read_to_string(path) {
+				if let Ok(pid) = contents.trim().parse() {
+					return Some(pid);
+				}
+			}
+			if Instant::now() >= deadline {
+				return None;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		}
+	}
+
+	fn process_is_running(pid: u32) -> bool {
+		let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+		if snapshot == INVALID_HANDLE_VALUE {
+			return false;
+		}
+		let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+		let mut entry = PROCESSENTRY32W {
+			dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+			..Default::default()
+		};
+		let mut found =
+			unsafe { Process32FirstW(snapshot.as_raw_handle() as HANDLE, &mut entry) != 0 };
+		while found {
+			if entry.th32ProcessID == pid {
+				return true;
+			}
+			found = unsafe { Process32NextW(snapshot.as_raw_handle() as HANDLE, &mut entry) != 0 };
+		}
+		false
+	}
+
+	fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if !process_is_running(pid) {
+				return true;
+			}
+			if Instant::now() >= deadline {
+				return false;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		}
+	}
+
+	#[test]
+	fn powershell_runs_in_conpty_and_streams_output() {
+		let temp = tempfile::Builder::new()
+			.prefix("factorai ConPTY ü ")
+			.tempdir()
+			.expect("temporary directory");
+		let (manager, data) = make_manager(temp.path());
+		let id = spawn_powershell(
+			&manager,
+			temp.path(),
+			"Write-Output 'WINDOWS_CONPTY_OK'; Start-Sleep -Milliseconds 150",
+		)
+		.expect("spawn PowerShell in ConPTY");
+
+		assert!(
+			wait_for_output(&data, &id, b"WINDOWS_CONPTY_OK", Duration::from_secs(10)),
+			"PowerShell output did not reach the terminal data stream"
+		);
+		manager.kill_all();
+	}
+
+	#[test]
+	fn killing_a_conpty_terminates_a_real_child_process() {
+		let temp = tempfile::TempDir::new().expect("temporary directory");
+		let (manager, _data) = make_manager(temp.path());
+		let powershell = crate::services::shell_path::user_shell();
+		let pid_file = temp.path().join("child process pid.txt");
+		let script = format!(
+			"$child = Start-Process -FilePath {} -ArgumentList '-NoLogo -NoProfile -NonInteractive -Command Start-Sleep -Seconds 120' -PassThru -WindowStyle Hidden; [System.IO.File]::WriteAllText({}, [string]$child.Id); Start-Sleep -Seconds 120",
+			powershell_literal(&powershell.to_string_lossy()),
+			powershell_literal(&pid_file.to_string_lossy()),
+		);
+		let id = spawn_powershell(&manager, temp.path(), &script).expect("spawn process tree");
+
+		let child_pid = wait_for_pid_file(&pid_file, Duration::from_secs(10))
+			.expect("PowerShell child wrote its process id");
+		assert!(
+			process_is_running(child_pid),
+			"the synthetic child must still be alive before kill"
+		);
+		manager.kill(&id).expect("kill the ConPTY root");
+		assert!(
+			wait_for_process_exit(child_pid, Duration::from_secs(10)),
+			"the Job Object must terminate the child PowerShell process too"
+		);
 	}
 }

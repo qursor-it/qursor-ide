@@ -46,8 +46,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, OnceLock};
@@ -59,10 +65,11 @@ use tracing::{info, warn};
 const START: &str = "__FACTORAI_PATH_START__";
 const END: &str = "__FACTORAI_PATH_END__";
 
-/// Where to look when the shell cannot be asked. Both Homebrew prefixes are
+/// Where to look on Unix when the shell cannot be asked. Both Homebrew prefixes are
 /// here on purpose: Apple Silicon puts it in `/opt/homebrew`, Intel in
 /// `/usr/local`, and a floor that only knows one of them is a floor that drops
 /// half of macOS through it.
+#[cfg(unix)]
 pub const FALLBACK_PATH: &str =
 	"/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
@@ -75,7 +82,10 @@ const RESOLVE_TIMEOUT: Duration = Duration::from_secs(5);
 /// startup so the diagnosis is in the log rather than three layers down inside
 /// a hook error. `bash` is what hooks shell out to; `node` is what stdio MCP
 /// servers are.
+#[cfg(unix)]
 const EXPECTED: &[&str] = &["bash", "node"];
+#[cfg(windows)]
+const EXPECTED: &[&str] = &["powershell.exe", "node.exe"];
 
 static CHILD_PATH: OnceLock<OsString> = OnceLock::new();
 
@@ -107,6 +117,7 @@ pub fn warm() {
 	});
 }
 
+#[cfg(unix)]
 fn resolve() -> OsString {
 	let shell = user_shell();
 	match path_from_shell(&shell, RESOLVE_TIMEOUT) {
@@ -121,6 +132,21 @@ fn resolve() -> OsString {
 	}
 }
 
+#[cfg(windows)]
+fn resolve() -> OsString {
+	let shell = user_shell();
+	match path_from_shell(&shell, RESOLVE_TIMEOUT) {
+		Some(path) => {
+			info!(shell = %shell.display(), path = %path.to_string_lossy(), "resolved PowerShell PATH");
+			path
+		}
+		None => {
+			warn!(shell = %shell.display(), "could not read PATH from PowerShell; using the inherited Windows PATH");
+			fallback_path()
+		}
+	}
+}
+
 /// The shell the user actually runs: `$SHELL`, or `/bin/zsh` when it is unset.
 ///
 /// Public because F23's footer spawns this same shell for the user to type in,
@@ -129,6 +155,7 @@ fn resolve() -> OsString {
 /// see and everybody would feel.
 ///
 /// The single-guess rule is the module note's: no cascade past `/bin/zsh`.
+#[cfg(unix)]
 pub fn user_shell() -> PathBuf {
 	match std::env::var_os("SHELL") {
 		Some(s) if !s.is_empty() => PathBuf::from(s),
@@ -136,17 +163,36 @@ pub fn user_shell() -> PathBuf {
 	}
 }
 
+/// Windows ships Windows PowerShell with the OS, so a native footer has a
+/// stable shell even when PowerShell 7 is not installed or not on PATH.
+#[cfg(windows)]
+pub fn user_shell() -> PathBuf {
+	std::env::var_os("SystemRoot")
+		.map(PathBuf::from)
+		.map(|root| root.join("System32/WindowsPowerShell/v1.0/powershell.exe"))
+		.filter(|path| path.is_file())
+		.unwrap_or_else(|| PathBuf::from("powershell.exe"))
+}
+
 /// What a footer chip calls the shell `user_shell` names: its basename, `zsh`
 /// for `/bin/zsh` (`specs/05-features.md` § F23 as amended by F24). One value
 /// per app, asked once by the renderer, because the label is the same on every
 /// chip and never changes.
 pub fn shell_name() -> String {
-	shell_basename(&user_shell())
+	#[cfg(windows)]
+	{
+		"powershell".to_string()
+	}
+	#[cfg(not(windows))]
+	{
+		shell_basename(&user_shell())
+	}
 }
 
 /// The basename, or `shell` for a path that has none. `$SHELL=/` is not a shell
 /// anybody has, but a chip with no text on it is a worse answer than a generic
 /// one.
+#[cfg(not(windows))]
 fn shell_basename(shell: &Path) -> String {
 	shell
 		.file_name()
@@ -157,6 +203,7 @@ fn shell_basename(shell: &Path) -> String {
 /// Ask one shell. `None` for every failure mode — unspawnable, timed out, no
 /// sentinels, nothing usable between them — because they all mean the same
 /// thing to the caller.
+#[cfg(unix)]
 fn path_from_shell(shell: &Path, timeout: Duration) -> Option<OsString> {
 	let script = format!("printf '%s' \"{START}${{PATH}}{END}\"");
 	let mut child = Command::new(shell)
@@ -198,13 +245,102 @@ fn path_from_shell(shell: &Path, timeout: Duration) -> Option<OsString> {
 	extract(&out)
 }
 
+/// Ask the Windows PowerShell profile for PATH. The script writes its answer
+/// as UTF-16LE between sentinels directly to stdout, preserving native Windows
+/// path characters without touching factorai's own environment.
+#[cfg(windows)]
+fn path_from_shell(shell: &Path, timeout: Duration) -> Option<OsString> {
+	let script = format!(
+		"$value = '{START}' + $env:PATH + '{END}'; $bytes = [System.Text.Encoding]::Unicode.GetBytes($value); [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)"
+	);
+	let mut command = Command::new(shell);
+	command
+		.arg("-NoLogo")
+		.arg("-NonInteractive")
+		.arg("-Command")
+		.arg(script)
+		.stdin(Stdio::null())
+		.stdout(Stdio::piped())
+		.stderr(Stdio::null());
+	command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+	let mut child = command
+		.spawn()
+		.map_err(|e| warn!(shell = %shell.display(), error = %e, "could not run PowerShell"))
+		.ok()?;
+	let mut stdout = child.stdout.take()?;
+	let (tx, rx) = mpsc::channel();
+	std::thread::spawn(move || {
+		let mut buf = Vec::new();
+		let _ = stdout.read_to_end(&mut buf);
+		let _ = tx.send(buf);
+	});
+	let received = rx.recv_timeout(timeout);
+	let _ = child.kill();
+	let _ = child.wait();
+	let out = received
+		.map_err(|_| warn!(shell = %shell.display(), ?timeout, "PowerShell did not answer in time"))
+		.ok()?;
+	extract_windows(&out)
+}
+
 /// The bytes between the sentinels, sanitised. Bytes, not `str`: a `PATH` is
 /// not required to be UTF-8 and lossy-converting one would corrupt the entry
 /// it touched rather than fail.
+#[cfg(unix)]
 fn extract(out: &[u8]) -> Option<OsString> {
 	let after_start = &out[find(out, START.as_bytes())? + START.len()..];
 	let value = &after_start[..find(after_start, END.as_bytes())?];
 	sanitize(value)
+}
+
+#[cfg(windows)]
+fn extract_windows(out: &[u8]) -> Option<OsString> {
+	let start = utf16le(START);
+	let end = utf16le(END);
+	let after_start = &out[find(out, &start)? + start.len()..];
+	let value = &after_start[..find(after_start, &end)?];
+	if !value.len().is_multiple_of(2) {
+		return None;
+	}
+	let wide: Vec<u16> =
+		value.as_chunks::<2>().0.iter().map(|bytes| u16::from_le_bytes(*bytes)).collect();
+	sanitize_windows(&wide)
+}
+
+#[cfg(windows)]
+fn utf16le(value: &str) -> Vec<u8> {
+	value.encode_utf16().flat_map(u16::to_le_bytes).collect()
+}
+
+#[cfg(windows)]
+fn sanitize_windows(value: &[u16]) -> Option<OsString> {
+	let mut result = Vec::new();
+	for entry in value.split(|unit| *unit == u16::from(b';')).filter(|entry| !entry.is_empty()) {
+		if !result.is_empty() {
+			result.push(u16::from(b';'));
+		}
+		result.extend_from_slice(entry);
+	}
+	(!result.is_empty()).then(|| OsString::from_wide(&result))
+}
+
+#[cfg(windows)]
+fn fallback_path() -> OsString {
+	if let Some(path) = std::env::var_os("PATH") {
+		if let Some(path) = sanitize_windows(&path.encode_wide().collect::<Vec<_>>()) {
+			return path;
+		}
+	}
+	let root = std::env::var_os("SystemRoot")
+		.map(PathBuf::from)
+		.unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+	let entries = [
+		root.join("System32"),
+		root.clone(),
+		root.join("System32/Wbem"),
+		root.join("System32/WindowsPowerShell/v1.0"),
+	];
+	std::env::join_paths(entries).unwrap_or_default()
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -215,6 +351,7 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// entry means the current directory — a session's cwd is a project checkout,
 /// so that is a program-execution hazard rather than a cosmetic flaw, and
 /// `PATH=""` is worse than having asked nothing at all.
+#[cfg(unix)]
 fn sanitize(value: &[u8]) -> Option<OsString> {
 	let kept: Vec<&[u8]> = value.split(|b| *b == b':').filter(|e| !e.is_empty()).collect();
 	if kept.is_empty() {
@@ -229,13 +366,19 @@ fn which_in(path: &OsStr, name: &str) -> Option<PathBuf> {
 	std::env::split_paths(path).map(|dir| dir.join(name)).find(|p| is_executable(p))
 }
 
+#[cfg(unix)]
 fn is_executable(p: &Path) -> bool {
 	std::fs::metadata(p)
 		.map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 		.unwrap_or(false)
 }
 
-#[cfg(test)]
+#[cfg(windows)]
+fn is_executable(p: &Path) -> bool {
+	p.is_file()
+}
+
+#[cfg(all(test, unix))]
 mod tests {
 	use std::os::unix::ffi::OsStrExt;
 
@@ -355,5 +498,36 @@ mod tests {
 		assert_eq!(shell_basename(Path::new("/bin/zsh")), "zsh");
 		assert_eq!(shell_basename(Path::new("/opt/homebrew/bin/fish")), "fish");
 		assert_eq!(shell_basename(Path::new("/")), "shell");
+	}
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+	use super::*;
+
+	#[test]
+	fn windows_path_sanitizing_preserves_unicode_and_drive_colons() {
+		let value: Vec<u16> =
+			r"C:\Users\Zoë\AppData\Roaming\npm;;D:\tools\node".encode_utf16().collect();
+		assert_eq!(
+			sanitize_windows(&value),
+			Some(OsString::from(r"C:\Users\Zoë\AppData\Roaming\npm;D:\tools\node"))
+		);
+	}
+
+	#[test]
+	fn windows_shell_is_power_shell() {
+		assert_eq!(shell_name(), "powershell");
+		assert!(user_shell().to_string_lossy().to_ascii_lowercase().ends_with("powershell.exe"));
+	}
+
+	#[test]
+	fn windows_path_output_is_extracted_between_utf16_sentinels() {
+		let path = r"C:\Program Files\nodejs;C:\Users\Zoë\AppData\Roaming\npm";
+		let mut output = b"PowerShell profile chatter".to_vec();
+		output.extend(utf16le(START));
+		output.extend(path.encode_utf16().flat_map(u16::to_le_bytes));
+		output.extend(utf16le(END));
+		assert_eq!(extract_windows(&output), Some(OsString::from(path)));
 	}
 }

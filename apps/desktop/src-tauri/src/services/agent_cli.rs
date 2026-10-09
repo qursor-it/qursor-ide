@@ -1,10 +1,11 @@
 //! Locating an agent's CLI binary on disk — `claude`, `codex` (F30).
 //!
-//! Three-tier discovery — see specs/annex-A-cli-agent-patterns.md § A.1 for
-//! the rationale. Parameterised on the [`AgentDescriptor`]'s `binary_name`;
-//! the tiers and the candidate list are the same shape for every agent.
+//! Unix uses three-tier discovery — see specs/annex-A-cli-agent-patterns.md
+//! § A.1 for the rationale. Windows uses native PATH/PATHEXT resolution and
+//! common install locations. Both are parameterised on the
+//! [`AgentDescriptor`]'s `binary_name`.
 //!
-//! Order of attempts:
+//! Unix order of attempts:
 //!   0. The user's override, when the caller passes one (F11).
 //!   1. `which <name>` in the inherited process PATH.
 //!   2. `$SHELL -lc 'command -v <name>'` (then /bin/zsh, /bin/bash) — handles
@@ -18,14 +19,21 @@
 //! reaching the finder on its own is how the settings page would come to report
 //! "not installed" for the binary sessions are actually spawning from.
 //!
-//! The candidate list carries no Windows entries (Q1: no Windows support).
+//! Native Windows resolution uses the user PATH and PATHEXT, then common npm and Claude install locations.
 
+#[cfg(windows)]
+use std::ffi::OsStr;
+use std::ffi::OsString;
 use std::io::Read;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use base64::Engine;
 use serde::Serialize;
 use tracing::{debug, warn};
 
@@ -55,6 +63,12 @@ pub fn find_agent_binary(
 ) -> AppResult<PathBuf> {
 	let name = agent.binary_name;
 	if let Some(p) = override_path {
+		#[cfg(windows)]
+		if let Some(resolved) = windows_explicit_path(p) {
+			debug!(path = %resolved.display(), name, "using the configured binary");
+			return Ok(resolved);
+		}
+		#[cfg(not(windows))]
 		if p.is_file() {
 			debug!(?p, name, "using the configured binary");
 			return Ok(p.to_path_buf());
@@ -116,10 +130,22 @@ pub fn check_cli(override_path: Option<&Path>) -> ClaudeCliStatus {
 	check_agent_cli(claude(), override_path)
 }
 
-fn find_on_path(name: &str) -> Option<PathBuf> {
-	run_lookup("which", &[name])
+pub fn find_binary_on_path(name: &str) -> Option<PathBuf> {
+	#[cfg(windows)]
+	{
+		find_windows_executable(name, crate::services::shell_path::child_path())
+	}
+	#[cfg(not(windows))]
+	{
+		run_lookup("which", &[name])
+	}
 }
 
+fn find_on_path(name: &str) -> Option<PathBuf> {
+	find_binary_on_path(name)
+}
+
+#[cfg(not(windows))]
 fn find_in_user_shell(name: &str) -> Option<PathBuf> {
 	for shell in user_shell_candidates() {
 		if !shell.exists() {
@@ -132,6 +158,15 @@ fn find_in_user_shell(name: &str) -> Option<PathBuf> {
 	None
 }
 
+#[cfg(windows)]
+fn find_in_user_shell(_name: &str) -> Option<PathBuf> {
+	// The Windows shell-path probe already includes the user's PowerShell
+	// profile additions. Re-running a shell lookup here would resolve against a
+	// second, potentially different PATH.
+	None
+}
+
+#[cfg(not(windows))]
 fn user_shell_candidates() -> Vec<PathBuf> {
 	let mut shells = Vec::new();
 	if let Some(s) = std::env::var_os("SHELL") {
@@ -144,6 +179,7 @@ fn user_shell_candidates() -> Vec<PathBuf> {
 	shells
 }
 
+#[cfg(not(windows))]
 fn ask_shell(shell: &Path, name: &str) -> Option<PathBuf> {
 	let output = Command::new(shell).arg("-lc").arg(format!("command -v {name}")).output().ok()?;
 	if !output.status.success() {
@@ -153,6 +189,7 @@ fn ask_shell(shell: &Path, name: &str) -> Option<PathBuf> {
 	first_existing(&stdout)
 }
 
+#[cfg(not(windows))]
 fn run_lookup(cmd: &str, args: &[&str]) -> Option<PathBuf> {
 	let output = Command::new(cmd).args(args).output().ok()?;
 	if !output.status.success() {
@@ -162,6 +199,7 @@ fn run_lookup(cmd: &str, args: &[&str]) -> Option<PathBuf> {
 	first_existing(&stdout)
 }
 
+#[cfg(not(windows))]
 fn first_existing(stdout: &str) -> Option<PathBuf> {
 	for line in stdout.lines() {
 		let trimmed = line.trim();
@@ -177,12 +215,13 @@ fn first_existing(stdout: &str) -> Option<PathBuf> {
 }
 
 fn probe_known_candidates(name: &str) -> Option<PathBuf> {
-	candidate_paths(name).into_iter().find(|p| p.exists())
+	candidate_paths(name).into_iter().find(|p| p.is_file())
 }
 
 /// Where an install lands when it is not on `PATH`. The same list for every
 /// agent, plus the one place Claude's own installer uses; `~/.claude/local/`
 /// holds only `claude`, and a `codex` there would be someone's mistake.
+#[cfg(not(windows))]
 fn candidate_paths(name: &str) -> Vec<PathBuf> {
 	let mut out = Vec::new();
 	if let Some(home) = dirs::home_dir() {
@@ -217,6 +256,134 @@ fn candidate_paths(name: &str) -> Vec<PathBuf> {
 	out
 }
 
+#[cfg(windows)]
+fn candidate_paths(name: &str) -> Vec<PathBuf> {
+	let mut bases = Vec::new();
+	if let Some(home) = dirs::home_dir() {
+		bases.extend([home.join(".claude/local").join(name), home.join(".local/bin").join(name)]);
+	}
+	if let Some(app_data) = std::env::var_os("APPDATA") {
+		bases.push(PathBuf::from(app_data).join("npm").join(name));
+	}
+	let path = crate::services::shell_path::child_path();
+	let extensions = windows_pathext();
+	for dir in std::env::split_paths(path) {
+		bases.push(dir.join(name));
+	}
+	bases.into_iter().flat_map(|base| windows_variants(&base, &extensions)).collect()
+}
+
+#[cfg(windows)]
+fn windows_pathext() -> Vec<OsString> {
+	let configured =
+		std::env::var_os("PATHEXT").unwrap_or_else(|| OsString::from(".COM;.EXE;.BAT;.CMD"));
+	let extensions: Vec<OsString> = configured
+		.to_string_lossy()
+		.split(';')
+		.map(str::trim)
+		.filter(|extension| extension.starts_with('.') && extension.len() > 1)
+		.map(OsString::from)
+		.collect();
+	if extensions.is_empty() {
+		[".COM", ".EXE", ".BAT", ".CMD"].into_iter().map(OsString::from).collect()
+	} else {
+		extensions
+	}
+}
+
+#[cfg(windows)]
+fn windows_variants(base: &Path, extensions: &[OsString]) -> Vec<PathBuf> {
+	if base.extension().is_some() {
+		return vec![base.to_path_buf()];
+	}
+	let mut variants = Vec::with_capacity(extensions.len());
+	for extension in extensions {
+		let mut path = base.as_os_str().to_os_string();
+		path.push(extension);
+		variants.push(PathBuf::from(path));
+	}
+	variants
+}
+
+#[cfg(windows)]
+fn find_windows_executable(name: &str, path: &OsStr) -> Option<PathBuf> {
+	find_windows_executable_with_extensions(name, path, &windows_pathext())
+}
+
+#[cfg(windows)]
+fn find_windows_executable_with_extensions(
+	name: &str,
+	path: &OsStr,
+	extensions: &[OsString],
+) -> Option<PathBuf> {
+	let requested = Path::new(name);
+	if requested.components().count() > 1 || requested.is_absolute() {
+		return windows_variants(requested, extensions)
+			.into_iter()
+			.find(|candidate| candidate.is_file());
+	}
+	std::env::split_paths(path)
+		.flat_map(|dir| windows_variants(&dir.join(requested), extensions))
+		.find(|candidate| candidate.is_file())
+}
+
+#[cfg(windows)]
+fn windows_explicit_path(path: &Path) -> Option<PathBuf> {
+	if path.components().count() == 1 {
+		return find_windows_executable(
+			&path.to_string_lossy(),
+			crate::services::shell_path::child_path(),
+		);
+	}
+	windows_variants(path, &windows_pathext()).into_iter().find(|candidate| candidate.is_file())
+}
+
+/// Prepare a native process command. Batch wrappers cannot be passed directly
+/// to `CreateProcessW`; on Windows they run through PowerShell with the complete
+/// argv encoded as data, so prompts containing shell metacharacters remain one
+/// argument. Other executables keep the direct argv path on every platform.
+pub fn launch_command(binary: &Path, args: &[OsString]) -> AppResult<(OsString, Vec<OsString>)> {
+	#[cfg(windows)]
+	if is_batch_wrapper(binary) {
+		let payload = serde_json::json!({
+			"binary": binary.to_string_lossy(),
+			"arguments": args.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>(),
+		});
+		let payload = serde_json::to_vec(&payload).map_err(|error| {
+			AppError::Process(format!("could not encode Windows CLI arguments: {error}"))
+		})?;
+		let encoded_payload = base64::engine::general_purpose::STANDARD.encode(payload);
+		let script = format!(
+			"$ErrorActionPreference = 'Stop'\n$payload = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{encoded_payload}')) | ConvertFrom-Json\n$binary = [string]$payload.binary\n$percentVariable = 'FACTORAI_LITERAL_PERCENT_' + [guid]::NewGuid().ToString('N')\n[Environment]::SetEnvironmentVariable($percentVariable, '%', 'Process')\n$percentPlaceholder = '%' + $percentVariable + '%'\n$arguments = @($payload.arguments | ForEach-Object {{ $_.Replace('%', $percentPlaceholder) }})\ntry {{ & $binary @arguments; exit $LASTEXITCODE }} catch {{ [Console]::Error.WriteLine($_); exit 1 }}"
+		);
+		let powershell = std::env::var_os("SystemRoot")
+			.map(PathBuf::from)
+			.map(|root| root.join("System32/WindowsPowerShell/v1.0/powershell.exe"))
+			.filter(|path| path.is_file())
+			.unwrap_or_else(|| PathBuf::from("powershell.exe"));
+		return Ok((
+			powershell.into_os_string(),
+			[
+				OsString::from("-NoLogo"),
+				OsString::from("-NoProfile"),
+				OsString::from("-NonInteractive"),
+				OsString::from("-Command"),
+				OsString::from(script),
+			]
+			.into(),
+		));
+	}
+	Ok((binary.as_os_str().to_os_string(), args.to_vec()))
+}
+
+#[cfg(windows)]
+fn is_batch_wrapper(binary: &Path) -> bool {
+	binary.extension().is_some_and(|extension| {
+		let extension = extension.to_string_lossy();
+		extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat")
+	})
+}
+
 const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Best-effort version lookup. Runs `<bin> --version` with a real 2-second
@@ -227,11 +394,12 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
 /// like a semver (e.g. "0.2.34" out of "claude 0.2.34 (build abc)", "0.155.1"
 /// out of "codex-cli 0.155.1").
 fn version_for(bin: &Path) -> Option<String> {
-	let mut child = Command::new(bin)
-		.arg("--version")
-		.stdin(Stdio::null())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::null())
+	let (program, args) = launch_command(bin, &[OsString::from("--version")]).ok()?;
+	let mut command = Command::new(program);
+	command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+	#[cfg(windows)]
+	command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+	let mut child = command
 		.spawn()
 		.map_err(|e| warn!(error = %e, bin = %bin.display(), "--version failed"))
 		.ok()?;
@@ -296,7 +464,7 @@ fn is_version_like(s: &str) -> bool {
 	)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
 	use std::os::unix::fs::PermissionsExt;
 
@@ -422,5 +590,102 @@ mod tests {
 		// what it must not do is fail the way a missing override does.
 		let status = check_cli(None);
 		assert_eq!(status.installed, status.binary_path.is_some());
+	}
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+	use super::*;
+	use std::io::Write;
+
+	#[test]
+	fn path_resolution_honors_pathext_order_for_cmd_and_exe_files() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let cmd = dir.path().join("claude.CMD");
+		let exe = dir.path().join("claude.EXE");
+		std::fs::write(&cmd, "@echo off\r\n").unwrap();
+		std::fs::write(&exe, "fixture").unwrap();
+		let extensions = [OsString::from(".CMD"), OsString::from(".EXE"), OsString::from(".BAT")];
+		assert_eq!(
+			find_windows_executable_with_extensions(
+				"claude",
+				&OsString::from(dir.path()),
+				&extensions,
+			),
+			Some(cmd)
+		);
+	}
+
+	#[test]
+	fn batch_launch_arguments_are_encoded_as_data() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let batch = dir.path().join("fake cli.cmd");
+		let args = [
+			OsString::from("prompt %PATH% with spaces & pipes | redirects < >"),
+			OsString::from("100% `value` !PATH!"),
+			OsString::from("quote \" and apostrophe '"),
+			OsString::from("Zoë 東京"),
+			OsString::from("first prompt line\nsecond prompt line"),
+		];
+		let (program, launched) = launch_command(&batch, &args).unwrap();
+		assert!(program.to_string_lossy().to_ascii_lowercase().ends_with("powershell.exe"));
+		assert_eq!(launched[0], "-NoLogo");
+		assert_eq!(launched[1], "-NoProfile");
+		assert_eq!(launched[2], "-NonInteractive");
+		assert_eq!(launched[3], "-Command");
+		let script = launched[4].to_string_lossy();
+		let payload_start = script.find("FromBase64String('").unwrap() + "FromBase64String('".len();
+		let payload_end = script[payload_start..].find("')").unwrap() + payload_start;
+		let payload = base64::engine::general_purpose::STANDARD
+			.decode(&script[payload_start..payload_end])
+			.unwrap();
+		let payload: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+		assert_eq!(payload["binary"], batch.to_string_lossy().as_ref());
+		assert_eq!(
+			payload["arguments"],
+			serde_json::json!(args
+				.iter()
+				.map(|a| a.to_string_lossy().to_string())
+				.collect::<Vec<_>>())
+		);
+		assert!(args.iter().all(|arg| !script.contains(arg.to_string_lossy().as_ref())));
+	}
+
+	#[test]
+	fn a_fake_batch_cli_receives_arguments_as_separate_values() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let batch = dir.path().join("fake cli.cmd");
+		let capture = dir.path().join("argv.json");
+		let mut file = std::fs::File::create(&batch).unwrap();
+		writeln!(
+			file,
+			"@echo off\r\nsetlocal DisableDelayedExpansion\r\nset \"FACTORAI_TEST_ARG_1=%~1\"\r\nset \"FACTORAI_TEST_ARG_2=%~2\"\r\nset \"FACTORAI_TEST_ARG_3=%~3\"\r\nset \"FACTORAI_TEST_CAPTURE=%~dp0argv.json\"\r\npowershell.exe -NoLogo -NoProfile -NonInteractive -Command \"$values = @($env:FACTORAI_TEST_ARG_1, $env:FACTORAI_TEST_ARG_2, $env:FACTORAI_TEST_ARG_3); $json = ConvertTo-Json -InputObject $values -Compress; [System.IO.File]::WriteAllText($env:FACTORAI_TEST_CAPTURE, $json, [System.Text.UTF8Encoding]::new($false))\""
+		)
+		.unwrap();
+		drop(file);
+		let args = [
+			OsString::from("first value & pipe | <redirect> ü"),
+			OsString::from("literal %PATH% and !PATH!"),
+			OsString::from("quoted \"prompt\" 東京 🐈"),
+		];
+		let (program, launched) = launch_command(&batch, &args).unwrap();
+		let output = Command::new(program).args(launched).output().unwrap();
+		assert!(
+			output.status.success(),
+			"batch launch failed: stdout={} stderr={}",
+			String::from_utf8_lossy(&output.stdout),
+			String::from_utf8_lossy(&output.stderr)
+		);
+		assert!(
+			capture.is_file(),
+			"fake batch CLI did not write its argv: stdout={} stderr={}",
+			String::from_utf8_lossy(&output.stdout),
+			String::from_utf8_lossy(&output.stderr)
+		);
+		let actual: Vec<String> = serde_json::from_slice(&std::fs::read(capture).unwrap()).unwrap();
+		assert_eq!(
+			actual,
+			args.iter().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>()
+		);
 	}
 }

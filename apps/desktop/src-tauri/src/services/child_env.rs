@@ -76,8 +76,12 @@
 //! off in any `claude` that inherits it. See [`AGENT_MARKERS`].
 
 use std::ffi::{OsStr, OsString};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+
+#[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::{Path, PathBuf};
 
 use portable_pty::CommandBuilder;
 
@@ -87,10 +91,12 @@ use super::shell_path;
 /// are gone. Leaving `APPIMAGE` behind while `APPDIR` is dropped would be
 /// worse than either: a tool that checks one and uses the other would follow
 /// it straight into a directory we just removed from every search path.
+#[cfg(unix)]
 const APPIMAGE_MARKERS: &[&str] = &["APPDIR", "APPIMAGE", "ARGV0", "OWD"];
 
 /// What the AppImage runtime calls its squashfuse mountpoint, under `$TMPDIR`.
 /// See [`is_runtime_mount_entry`] for why a path component and not a full path.
+#[cfg(unix)]
 const RUNTIME_MOUNT_PREFIX: &[u8] = b".mount_";
 
 /// How Claude Code marks a process it spawned itself, and describes *us* rather
@@ -169,9 +175,10 @@ impl EnvChanges {
 	/// they are given rather than build a fresh one — so under an AppImage the
 	/// answer comes back with `$APPDIR/usr/bin` still on the front of it.
 	pub fn with_path(mut self, path: &OsStr, appdir: Option<&Path>) -> Self {
-		let key = OsStr::new("PATH");
-		self.remove.retain(|k| k != key);
-		self.set.retain(|(k, _)| k != key);
+		#[cfg(not(windows))]
+		self.remove.retain(|key| !env_key_eq(key, "PATH"));
+		self.set.retain(|(key, _)| !env_key_eq(key, "PATH"));
+		#[cfg(unix)]
 		// Unconditional, with no `$APPDIR` arm: a value with nothing to strip
 		// comes back byte for byte, and the mount a nested launch left behind is
 		// only visible to the shape half of the rule anyway. `None` means the
@@ -179,21 +186,43 @@ impl EnvChanges {
 		// which is not a `PATH` at all.
 		let value = strip_appimage_entries(path, usable_appdir(appdir))
 			.unwrap_or_else(|| OsString::from(shell_path::FALLBACK_PATH));
-		self.set.push((key.to_os_string(), value));
+		#[cfg(windows)]
+		let value = {
+			let _ = appdir;
+			path.to_os_string()
+		};
+		#[cfg(not(any(unix, windows)))]
+		let value = {
+			let _ = appdir;
+			path.to_os_string()
+		};
+		self.set.push((OsString::from("PATH"), value));
 		self
 	}
 }
 
 /// The changes for this process's environment.
 pub fn changes_for_current_env() -> EnvChanges {
-	let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
-	changes(std::env::vars_os(), appdir.as_deref())
-		.with_path(shell_path::child_path(), appdir.as_deref())
+	#[cfg(unix)]
+	{
+		let appdir = std::env::var_os("APPDIR").map(PathBuf::from);
+		changes(std::env::vars_os(), appdir.as_deref())
+			.with_path(shell_path::child_path(), appdir.as_deref())
+	}
+	#[cfg(windows)]
+	{
+		changes(std::env::vars_os(), None).with_path(shell_path::child_path(), None)
+	}
+	#[cfg(not(any(unix, windows)))]
+	{
+		changes(std::env::vars_os(), None).with_path(shell_path::child_path(), None)
+	}
 }
 
 /// The testable half of [`changes_for_current_env`]. `appdir` is `$APPDIR` —
 /// `None` when not running from an AppImage, which disables the path-based rule
 /// but not the by-name [`AGENT_MARKERS`] one.
+#[cfg(unix)]
 pub fn changes<I>(vars: I, appdir: Option<&Path>) -> EnvChanges
 where
 	I: IntoIterator<Item = (OsString, OsString)>,
@@ -215,7 +244,7 @@ where
 
 	let mut out = EnvChanges::default();
 	for (key, value) in vars {
-		if AGENT_MARKERS.iter().any(|m| key == OsStr::new(m)) {
+		if AGENT_MARKERS.iter().any(|marker| env_key_eq(&key, marker)) {
 			out.remove.push(key);
 			continue;
 		}
@@ -236,11 +265,57 @@ where
 	out
 }
 
+/// Windows environment variable names are case-insensitive. Remove only the
+/// inherited Claude marker here; AppImage path cleanup is Unix-specific, and
+/// Windows PATH values must retain their native semicolon-separated form.
+#[cfg(windows)]
+pub fn changes<I>(vars: I, _appdir: Option<&Path>) -> EnvChanges
+where
+	I: IntoIterator<Item = (OsString, OsString)>,
+{
+	let mut out = EnvChanges::default();
+	for (key, _) in vars {
+		if env_key_eq(&key, "PATH") {
+			out.remove.push(key);
+			continue;
+		}
+		if AGENT_MARKERS.iter().any(|marker| env_key_eq(&key, marker)) {
+			out.remove.push(key);
+		}
+	}
+	out
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn changes<I>(vars: I, _appdir: Option<&Path>) -> EnvChanges
+where
+	I: IntoIterator<Item = (OsString, OsString)>,
+{
+	let mut out = EnvChanges::default();
+	for (key, _) in vars {
+		if AGENT_MARKERS.iter().any(|marker| env_key_eq(&key, marker)) {
+			out.remove.push(key);
+		}
+	}
+	out
+}
+
+#[cfg(windows)]
+fn env_key_eq(key: &OsStr, expected: &str) -> bool {
+	key.to_string_lossy().eq_ignore_ascii_case(expected)
+}
+
+#[cfg(not(windows))]
+fn env_key_eq(key: &OsStr, expected: &str) -> bool {
+	key == OsStr::new(expected)
+}
+
 /// `$APPDIR` if it is one we are willing to match against.
 ///
 /// A blank or root `$APPDIR` would make "inside $APPDIR" true of the whole
 /// filesystem and strip the environment to nothing. It should never happen;
 /// treating it as "not an AppImage" means it can't be a catastrophe if it does.
+#[cfg(unix)]
 fn usable_appdir(appdir: Option<&Path>) -> Option<&Path> {
 	appdir.filter(|d| {
 		let bytes = d.as_os_str().as_bytes();
@@ -257,6 +332,7 @@ fn usable_appdir(appdir: Option<&Path>) -> Option<&Path> {
 /// rejoining would quietly rewrite anything that happens to contain one —
 /// `LS_COLORS`, a connection string, a `GTK_THEME=Adwaita:dark`. Only values we
 /// have actually found something to remove from get rebuilt.
+#[cfg(unix)]
 fn strip_appimage_entries(value: &OsStr, appdir: Option<&Path>) -> Option<OsString> {
 	let prefix = appdir.map(|d| d.as_os_str().as_bytes());
 	let ours = |entry: &&[u8]| is_appimage_entry(entry, prefix);
@@ -285,6 +361,7 @@ fn strip_appimage_entries(value: &OsStr, appdir: Option<&Path>) -> Option<OsStri
 /// that is not named like one — `--appimage-extract-and-run` sets it to a
 /// `squashfs-root` directory. The shape covers the mounts `$APPDIR` cannot know
 /// about, which is every layer of a nested launch but the newest.
+#[cfg(unix)]
 fn is_appimage_entry(entry: &[u8], appdir: Option<&[u8]>) -> bool {
 	if let Some(prefix) = appdir {
 		if is_inside(entry, prefix) {
@@ -299,6 +376,7 @@ fn is_appimage_entry(entry: &[u8], appdir: Option<&[u8]>) -> bool {
 /// The runtime names its squashfuse mountpoint `$TMPDIR/.mount_<prefix><rand>`,
 /// so a `.mount_*` path component is the tell. Matched on the component rather
 /// than on `/tmp/.mount_`, because `TMPDIR` is the user's to set.
+#[cfg(unix)]
 fn is_runtime_mount_entry(entry: &[u8]) -> bool {
 	entry.split(|b| *b == b'/').any(|c| c.starts_with(RUNTIME_MOUNT_PREFIX))
 }
@@ -310,11 +388,12 @@ fn is_runtime_mount_entry(entry: &[u8]) -> bool {
 /// sibling mount anyway, so this no longer decides that entry's fate — it
 /// decides *which* rule takes it, and keeps `$APPDIR` from over-reaching on a
 /// mountpoint that is not named like one at all.
+#[cfg(unix)]
 fn is_inside(entry: &[u8], prefix: &[u8]) -> bool {
 	entry.starts_with(prefix) && matches!(entry.get(prefix.len()), None | Some(b'/'))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
 	use super::*;
 
@@ -643,5 +722,58 @@ mod tests {
 		let original = env(&[("PATH", "/usr/bin"), ("HOME", "/home/me")]);
 		assert_eq!(changes(original.clone(), Some(Path::new("/"))), EnvChanges::default());
 		assert_eq!(changes(original, Some(Path::new(""))), EnvChanges::default());
+	}
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+	use super::*;
+
+	#[test]
+	fn windows_path_replaces_old_casing_without_unix_separator_rewrites() {
+		let before = std::env::var_os("PATH");
+		let inherited = [
+			(OsString::from("Path"), OsString::from(r"C:\Windows\System32;D:\tools")),
+			(OsString::from("claude_code_child_session"), OsString::from("nested")),
+			(OsString::from("USERPROFILE"), OsString::from(r"C:\Users\Zoë")),
+		];
+		let changes = changes(inherited, None).with_path(
+			OsStr::new(r"C:\Program Files\nodejs;C:\Users\Zoë\AppData\Roaming\npm"),
+			None,
+		);
+		assert_eq!(std::env::var_os("PATH"), before);
+		assert_eq!(
+			changes.remove,
+			vec![OsString::from("Path"), OsString::from("claude_code_child_session")]
+		);
+		assert_eq!(
+			changes.set,
+			vec![(
+				OsString::from("PATH"),
+				OsString::from(r"C:\Program Files\nodejs;C:\Users\Zoë\AppData\Roaming\npm")
+			)]
+		);
+	}
+
+	#[test]
+	fn windows_path_and_agent_marker_removals_reach_the_command_builder() {
+		let inherited = [
+			(OsString::from("Path"), OsString::from(r"C:\old\bin")),
+			(OsString::from("CLAUDE_CODE_CHILD_SESSION"), OsString::from("nested")),
+		];
+		let mut command = CommandBuilder::new("powershell.exe");
+		command.env_clear();
+		command.env("Path", r"C:\old\bin");
+		command.env("CLAUDE_CODE_CHILD_SESSION", "nested");
+		changes(inherited, None)
+			.with_path(OsStr::new(r"C:\new\bin;C:\Program Files\Node"), None)
+			.apply_to(&mut command);
+		assert_eq!(command.get_env("PATH"), Some(OsStr::new(r"C:\new\bin;C:\Program Files\Node")));
+		let configured_paths: Vec<_> = command
+			.iter_extra_env_as_str()
+			.filter(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+			.collect();
+		assert_eq!(configured_paths, vec![("PATH", r"C:\new\bin;C:\Program Files\Node")]);
+		assert_eq!(command.get_env("CLAUDE_CODE_CHILD_SESSION"), None);
 	}
 }

@@ -62,10 +62,9 @@ croner = "3"
 # Deleting a session moves its transcript to the OS trash rather than unlinking
 # it (F2, ADR-0027) — `~/.local/share/Trash` per the freedesktop spec on Linux,
 # Finder's Trash on macOS, both without a system dependency we do not already
-# link. Default features off on purpose: they are the Windows `coinit_*` pair,
-# which we do not build for, and `chrono`, which this path never asks for — the
-# crate uses it only to answer *what is in* the trash, and we only ever put
-# things there.
+# link. Default features stay off; the native Windows target explicitly enables
+# COM initialization below (ADR-0074). `chrono` is only used when listing trash
+# contents, whereas factorai only moves transcripts into it.
 trash = { version = "5.2.6", default-features = false }
 # The atomic half of `write_file` (F26): a named temp file in the target's own
 # directory, `persist`ed over it. Doing this by hand means inventing a unique
@@ -79,6 +78,12 @@ tempfile = "3"
 # method wry does not surface.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0.2"
+
+# Windows Recycle Bin calls initialize COM in native worker threads (ADR-0074).
+[target.'cfg(windows)'.dependencies]
+dunce = "1"
+trash = { version = "5.2.6", default-features = false, features = ["coinit_multithreaded"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization"] }
 
 [dev-dependencies]
 regex = "1.13.1"
