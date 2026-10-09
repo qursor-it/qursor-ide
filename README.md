@@ -8,7 +8,7 @@ Agentic Development Environment for the AI era
 
 [![site: factorai.build](https://img.shields.io/badge/site-factorai.build-FFB020?style=flat-square&labelColor=272B31)](https://factorai.build)
 [![status: alpha](https://img.shields.io/badge/status-alpha-FFB020?style=flat-square&labelColor=272B31)](https://github.com/Nightbr/factorai/releases)
-[![platform: macOS, Linux and Windows through WSL 2](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20WSL%202-3A4048?style=flat-square&labelColor=272B31)](#install)
+[![platform: macOS, Linux, native Windows and WSL 2](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows%20%28native%20%26%20WSL%202%29-3A4048?style=flat-square&labelColor=272B31)](#install)
 [![CI](https://img.shields.io/github/actions/workflow/status/Nightbr/factorai/quality.yml?branch=main&style=flat-square&labelColor=272B31&color=FFB020&label=CI)](https://github.com/Nightbr/factorai/actions/workflows/quality.yml)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-3A4048?style=flat-square&labelColor=272B31)](LICENSE)
 
@@ -77,8 +77,10 @@ agent it started.
 Download from [factorai.build](https://factorai.build/#download) or
 [Releases](https://github.com/Nightbr/factorai/releases): `.dmg` for macOS,
 `.AppImage` for Linux (glibc 2.39+), `factorai-setup.exe` for Windows, which
-installs the Linux build into WSL 2. It updates itself and asks before
-restarting. You need [Claude Code](https://claude.com/claude-code) or
+installs the Linux build into WSL 2. This fork also supports a native Windows
+build from source; see [Windows native build](docs/windows-native.md). The WSL
+app updates itself and asks before restarting. You need
+[Claude Code](https://claude.com/claude-code) or
 [Codex](https://developers.openai.com/codex/cli), already logged in.
 
 Something look broken? See [installation](https://factorai.build/docs/installation)
