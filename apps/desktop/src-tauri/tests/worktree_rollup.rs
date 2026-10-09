@@ -17,6 +17,12 @@ use factorai_lib::db::Db;
 use factorai_lib::services::indexer::Indexer;
 use tempfile::TempDir;
 
+/// Escape native separators as JSON data in synthetic transcripts (ADR-0074).
+fn json_path(path: &Path) -> String {
+	let json = serde_json::to_string(&path.to_string_lossy()).expect("serialize fixture path");
+	json[1..json.len() - 1].to_string()
+}
+
 fn open_db(tmp: &Path) -> Db {
 	Db::open(&tmp.join("data")).expect("open db")
 }
@@ -32,10 +38,10 @@ fn make_indexer(db: Db, claude_dir: PathBuf) -> Indexer {
 /// A `~/.claude/projects/<encoded>/<session>.jsonl` for `cwd`, as Claude would
 /// leave behind after a session there.
 fn write_claude_session(claude_dir: &Path, cwd: &Path, session_id: &str) {
-	let encoded = format!("-{}", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"));
+	let encoded = factorai_lib::agents::claude::encode_path(cwd);
 	let project_dir = claude_dir.join("projects").join(&encoded);
 	std::fs::create_dir_all(&project_dir).expect("mkdir project");
-	let cwd = cwd.to_string_lossy();
+	let cwd = json_path(cwd);
 	std::fs::write(
 		project_dir.join(format!("{session_id}.jsonl")),
 		format!(

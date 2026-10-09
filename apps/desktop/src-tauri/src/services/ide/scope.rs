@@ -71,7 +71,7 @@ pub fn resolve_within_any(roots: &[PathBuf], requested: &str) -> AppResult<PathB
 	}
 	let resolved = canonicalize_lexically_deep(requested)?;
 
-	if !roots.iter().any(|root| resolved.starts_with(root)) {
+	if !roots.iter().any(|root| path_is_within(root, &resolved)) {
 		// Deliberately terse, and deliberately the same message whether the path
 		// exists or not: a refusal that distinguishes the two is a probe for
 		// what is on this disk.
@@ -101,8 +101,55 @@ pub fn containing_root(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
 	roots
 		.iter()
 		.filter_map(|root| root.canonicalize().ok())
-		.filter(|root| path.starts_with(root))
+		.filter(|root| path_is_within(root, path))
 		.max_by_key(|root| root.as_os_str().len())
+}
+
+/// Whether `path` is at or below `root` by path components. Filesystem paths
+/// should be canonicalized by the caller first; callers checking a directory
+/// that does not exist yet can pass lexically cleaned paths.
+///
+/// Windows canonical paths can carry the `\\?\` long-path prefix, including
+/// its `UNC` spelling. Normalize those two forms before the component check so
+/// a protocol path and a project root name the same drive or share. Component
+/// comparison keeps a sibling such as `repo-old` outside `repo`.
+pub fn path_is_within(root: &Path, path: &Path) -> bool {
+	#[cfg(windows)]
+	{
+		let root = windows_comparison_path(root);
+		let path = windows_comparison_path(path);
+		let root_parts: Vec<String> = root
+			.components()
+			.map(|part| part.as_os_str().to_string_lossy().to_lowercase())
+			.collect();
+		let path_parts: Vec<String> = path
+			.components()
+			.map(|part| part.as_os_str().to_string_lossy().to_lowercase())
+			.collect();
+		path_parts.len() >= root_parts.len()
+			&& root_parts.iter().zip(&path_parts).all(|(root, path)| root == path)
+	}
+	#[cfg(not(windows))]
+	{
+		path.starts_with(root)
+	}
+}
+
+#[cfg(windows)]
+fn windows_comparison_path(path: &Path) -> PathBuf {
+	let path = path.as_os_str().to_string_lossy();
+	let lower = path.to_ascii_lowercase();
+	let ordinary = if lower.starts_with(r"\\?\unc\") {
+		format!(r"\{}", &path[7..])
+	} else if lower.starts_with(r"\\?\")
+		&& path.as_bytes().get(4).is_some_and(u8::is_ascii_alphabetic)
+		&& path.as_bytes().get(5) == Some(&b':')
+	{
+		path[4..].to_string()
+	} else {
+		path.into_owned()
+	};
+	PathBuf::from(ordinary.replace('/', r"\"))
 }
 
 /// Canonicalise as much of `path` as exists, then append the rest.
@@ -205,6 +252,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn a_symlink_pointing_out_of_the_project_is_refused() {
 		// The reason canonicalize is used at all. A textual check passes this.
 		let dir = tempdir().unwrap();
@@ -220,6 +268,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn a_symlink_inside_the_project_is_fine() {
 		let dir = tempdir().unwrap();
 		let root = dir.path().join("project");
@@ -273,6 +322,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn containing_root_matches_a_root_named_through_a_symlink() {
 		// The `/var -> /private/var` shape in miniature: the checkout is named to
 		// us through a symlink, while the request has already been canonicalised
@@ -286,5 +336,22 @@ mod tests {
 
 		let file = real.join("src").canonicalize().unwrap();
 		assert_eq!(containing_root(&[link], &file), Some(real.canonicalize().unwrap()));
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn windows_containment_handles_extended_drive_and_unc_paths() {
+		assert!(path_is_within(
+			Path::new(r"\\?\C:\Users\Alice\repo"),
+			Path::new(r"c:\users\alice\repo\src\main.rs")
+		));
+		assert!(!path_is_within(
+			Path::new(r"\\?\C:\Users\Alice\repo"),
+			Path::new(r"C:\Users\Alice\repo-old\src\main.rs")
+		));
+		assert!(path_is_within(
+			Path::new(r"\\?\UNC\server\share\repo"),
+			Path::new(r"\\server\share\repo\src\main.rs")
+		));
 	}
 }

@@ -634,7 +634,7 @@ fn validate_dir(conn: &Connection, raw: &str) -> AppResult<PathBuf> {
 			continue;
 		}
 		let existing = clean(Path::new(&other.config_dir));
-		if path.starts_with(&existing) || existing.starts_with(&path) {
+		if directories_overlap(&path, &existing) {
 			return Err(AppError::InvalidInput(format!(
 				"that directory overlaps the profile \"{}\" at {}",
 				other.name, other.config_dir
@@ -642,6 +642,21 @@ fn validate_dir(conn: &Connection, raw: &str) -> AppResult<PathBuf> {
 		}
 	}
 	Ok(path)
+}
+
+/// Whether two cleaned config paths overlap. Windows paths use the shared
+/// component-aware comparison, which folds case and extended drive/UNC forms
+/// while still rejecting sibling names that only share a textual prefix.
+fn directories_overlap(a: &Path, b: &Path) -> bool {
+	#[cfg(windows)]
+	{
+		crate::services::ide::scope::path_is_within(a, b)
+			|| crate::services::ide::scope::path_is_within(b, a)
+	}
+	#[cfg(not(windows))]
+	{
+		a.starts_with(b) || b.starts_with(a)
+	}
 }
 
 /// Drop `.` components and collapse `..`, without touching the filesystem.
@@ -859,6 +874,23 @@ mod tests {
 		// `work` wearing a disguise.
 		let disguised = db.with(|c| create(c, &input("Disguised", &dir.join("../work")), 5));
 		assert!(matches!(disguised, Err(AppError::InvalidInput(_))));
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn windows_profile_paths_compare_case_and_extended_prefixes() {
+		assert!(directories_overlap(
+			Path::new(r"C:\Users\Alice\profiles\work"),
+			Path::new(r"c:\users\alice\profiles\WORK\nested")
+		));
+		assert!(directories_overlap(
+			Path::new(r"\\?\UNC\server\share\profiles\work"),
+			Path::new(r"\\server\share\profiles\work\nested")
+		));
+		assert!(!directories_overlap(
+			Path::new(r"C:\Users\Alice\profiles\work"),
+			Path::new(r"C:\Users\Alice\profiles\work-old")
+		));
 	}
 
 	#[test]

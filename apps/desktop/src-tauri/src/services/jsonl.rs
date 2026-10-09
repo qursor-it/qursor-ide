@@ -228,7 +228,7 @@ pub fn tool_use_paths(content: &serde_json::Value) -> Vec<&str> {
 			let named = ["file_path", "notebook_path"]
 				.iter()
 				.find_map(|key| input.get(key).and_then(|v| v.as_str()))
-				.filter(|path| path.starts_with('/'));
+				.filter(|path| absolute_tool_path(path));
 			// `command` is `Bash`'s only input, and the one an agent driving another
 			// checkout by `git -C` and `cd` leaves its evidence in.
 			let commanded = input
@@ -239,6 +239,18 @@ pub fn tool_use_paths(content: &serde_json::Value) -> Vec<&str> {
 			named.into_iter().chain(commanded)
 		})
 		.collect()
+}
+
+// Recorded tool paths may come from native Windows or a POSIX agent profile.
+// Drive-relative paths (C:foo) must not count as absolute checkout evidence.
+fn absolute_tool_path(path: &str) -> bool {
+	let bytes = path.as_bytes();
+	path.starts_with('/')
+		|| path.starts_with(r"\\")
+		|| (bytes.len() >= 3
+			&& bytes[0].is_ascii_alphabetic()
+			&& bytes[1] == b':'
+			&& matches!(bytes[2], b'/' | b'\\'))
 }
 
 /// Every absolute-path-shaped token in a shell command, in order.
@@ -271,12 +283,25 @@ fn command_paths(command: &str) -> Vec<&str> {
 	let mut out = Vec::new();
 	let mut i = 0;
 	while i < bytes.len() {
-		if bytes[i] != b'/' || !starts_path(bytes, i) {
+		let drive = bytes[i].is_ascii_alphabetic()
+			&& bytes.get(i + 1) == Some(&b':')
+			&& matches!(bytes.get(i + 2), Some(b'/' | b'\\'));
+		let unc = bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'\\');
+		let forward_unc = cfg!(windows)
+			&& bytes[i] == b'/'
+			&& bytes.get(i + 1) == Some(&b'/')
+			&& (i == 0 || bytes[i - 1] != b':');
+		let extended = unc && bytes.get(i + 2) == Some(&b'?') && bytes.get(i + 3) == Some(&b'\\');
+		if !(bytes[i] == b'/' || drive || unc) || !starts_path(bytes, i) {
 			i += 1;
 			continue;
 		}
 		let start = i;
-		while i < bytes.len() && !ends_path(bytes[i]) {
+		while i < bytes.len()
+			&& (!ends_path(bytes[i])
+				|| ((drive || unc) && bytes[i] == b'\\')
+				|| (extended && i == start + 2))
+		{
 			i += 1;
 		}
 		// Trailing punctuation is sentence noise rather than part of the name — a
@@ -287,7 +312,7 @@ fn command_paths(command: &str) -> Vec<&str> {
 		// splits there, because `:` *is* a start boundary (`PATH=/a:/b`) — and a
 		// session that links an issue tracker would otherwise spend two of the kept
 		// slots on it.
-		if token.len() > 1 && !token.starts_with("//") {
+		if token.len() > 1 && (!token.starts_with("//") || forward_unc) {
 			out.push(token);
 		}
 	}
@@ -666,6 +691,44 @@ mod tests {
 			title_display("Why does [Image #1] appear? ").as_deref(),
 			Some("Why does [Image #1] appear?")
 		);
+	}
+
+	#[test]
+	fn native_windows_tool_paths_preserve_absolute_checkout_evidence() {
+		let content = serde_json::json!([
+			{"type":"tool_use","input":{"file_path":r"C:\Code Space\src\main.rs"}},
+			{"type":"tool_use","input":{"notebook_path":r"\\server\share\note.ipynb"}},
+			{"type":"tool_use","input":{"file_path":"D:/code/main.ts"}},
+			{"type":"tool_use","input":{"file_path":r"C:relative\main.rs"}},
+			{"type":"tool_use","input":{"file_path":r"relative\main.rs"}}
+		]);
+		assert_eq!(
+			tool_use_paths(&content),
+			vec![r"C:\Code Space\src\main.rs", r"\\server\share\note.ipynb", "D:/code/main.ts"]
+		);
+	}
+
+	#[test]
+	fn native_windows_shell_commands_offer_absolute_paths() {
+		assert_eq!(
+			command_paths(r"git -C C:\code\feature status && type D:/other/main.ts"),
+			vec![r"C:\code\feature", "D:/other/main.ts"]
+		);
+		assert_eq!(
+			command_paths(r"type \\server\share\file.txt"),
+			vec![r"\\server\share\file.txt"]
+		);
+		assert!(command_paths(r"type C:relative.txt").is_empty());
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn native_windows_shell_paths_distinguish_unc_from_urls() {
+		assert_eq!(
+			command_paths(r"type //server/share/file.txt && type \\?\C:\code\file.txt"),
+			vec!["//server/share/file.txt", r"\\?\C:\code\file.txt"]
+		);
+		assert!(command_paths("echo https://server/share/file.txt").is_empty());
 	}
 
 	// Real Claude events that the strict v1 parser was rejecting.

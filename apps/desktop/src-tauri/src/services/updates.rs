@@ -94,3 +94,74 @@ mod tests {
 		assert_eq!(channel(&db), Channel::Stable);
 	}
 }
+
+/// A native fork uses only the signed feed explicitly configured for its own
+/// Windows artifact. The upstream release channels have no native Windows build
+/// and must never replace this fork (ADR-0074).
+#[cfg(windows)]
+pub fn native_windows_endpoints(
+	config: Option<&serde_json::Value>,
+) -> crate::error::AppResult<Vec<tauri::Url>> {
+	use crate::error::AppError;
+	let not_configured = || {
+		AppError::InvalidInput(
+        "Automatic updates are not configured for this Windows build. Install a newer Windows installer manually.".into(),
+    )
+	};
+	let config = config.ok_or_else(not_configured)?;
+	if config.get("pubkey").and_then(|v| v.as_str()).is_none_or(|key| key.trim().is_empty()) {
+		return Err(not_configured());
+	}
+	let configured =
+		config.get("endpoints").and_then(|v| v.as_array()).ok_or_else(not_configured)?;
+	if configured.is_empty() {
+		return Err(not_configured());
+	}
+	configured
+		.iter()
+		.map(|value| {
+			let raw = value.as_str().ok_or_else(not_configured)?;
+			let url = tauri::Url::parse(raw)
+				.map_err(|e| AppError::InvalidInput(format!("update endpoint: {e}")))?;
+			if url.scheme() != "https" {
+				return Err(AppError::InvalidInput("Windows update feeds must use HTTPS.".into()));
+			}
+			if url.host_str() == Some("github.com")
+				&& url.path().to_ascii_lowercase().starts_with("/nightbr/factorai/")
+			{
+				return Err(AppError::InvalidInput(
+					"Configure this fork's own native Windows update feed.".into(),
+				));
+			}
+			Ok(url)
+		})
+		.collect()
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+	use super::native_windows_endpoints;
+	use serde_json::json;
+
+	#[test]
+	fn a_local_build_cannot_check_the_upstream_feed() {
+		assert!(native_windows_endpoints(None).is_err());
+		assert!(native_windows_endpoints(Some(&json!({"pubkey": "", "endpoints": []}))).is_err());
+		assert!(native_windows_endpoints(Some(
+			&json!({"pubkey": "synthetic", "endpoints": [super::STABLE_ENDPOINT]})
+		))
+		.is_err());
+	}
+
+	#[test]
+	fn explicit_https_fork_feed_is_used_without_channel_fallback() {
+		let config = json!({"pubkey": "synthetic", "endpoints": ["https://example.test/windows/latest.json"]});
+		let endpoints =
+			native_windows_endpoints(Some(&config)).expect("synthetic fork configuration");
+		assert_eq!(endpoints[0].as_str(), "https://example.test/windows/latest.json");
+		assert!(native_windows_endpoints(Some(
+			&json!({"pubkey": "synthetic", "endpoints": ["http://example.test/latest.json"]})
+		))
+		.is_err());
+	}
+}

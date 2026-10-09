@@ -20,6 +20,12 @@ use factorai_lib::services::indexer::Indexer;
 use rusqlite::params;
 use tempfile::TempDir;
 
+/// Escape native separators as JSON data in synthetic transcripts (ADR-0074).
+fn json_path(path: &Path) -> String {
+	let json = serde_json::to_string(&path.to_string_lossy()).expect("serialize fixture path");
+	json[1..json.len() - 1].to_string()
+}
+
 /// Write a synthetic .jsonl session file with the given event JSON strings,
 /// one per line. Returns the file path.
 fn write_session(project_dir: &Path, session_id: &str, lines: &[&str]) -> PathBuf {
@@ -37,7 +43,7 @@ fn make_folder(tmp: &Path, name: &str) -> PathBuf {
 
 /// Claude's store directory for a folder.
 fn store_dir(claude_dir: &Path, cwd: &Path) -> PathBuf {
-	let encoded = format!("-{}", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"));
+	let encoded = factorai_lib::agents::claude::encode_path(cwd);
 	let dir = claude_dir.join("projects").join(encoded);
 	std::fs::create_dir_all(&dir).expect("mkdir store");
 	dir
@@ -51,7 +57,7 @@ fn fixture_one_session(tmp: &Path, db: &Db) -> (PathBuf, PathBuf, PathBuf, Strin
 	let project_dir = store_dir(&claude_dir, &cwd);
 
 	let session_id = "11111111-2222-3333-4444-555555555555";
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 	let user_msg = format!(
 		r#"{{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","cwd":"{cwd_str}","message":{{"role":"user","content":"Help me with React hooks"}}}}"#
 	);
@@ -129,7 +135,7 @@ fn scan_indexes_the_sessions_of_a_folder_in_the_workspace() {
 	indexer.full_scan().expect("scan");
 
 	let project = only_project(&db);
-	assert_eq!(project.real_path, cwd.to_str().unwrap());
+	assert!(factorai_lib::agents::path_identity::same(&project.real_path, cwd.to_str().unwrap()));
 	assert_eq!(project.display_name, "foo");
 	assert_eq!(project.session_count, 1);
 
@@ -278,7 +284,7 @@ fn malformed_jsonl_line_is_skipped_not_fatal() {
 	let project_dir = store_dir(&claude_dir, &cwd);
 
 	let session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 	let good = format!(
 		r#"{{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","cwd":"{cwd_str}","message":{{"role":"user","content":"hi"}}}}"#
 	);
@@ -410,7 +416,7 @@ fn a_renamed_session_keeps_the_name_the_user_chose() {
 	let cwd = make_folder(tmp.path(), "renamed");
 	let project_dir = store_dir(&claude_dir, &cwd);
 	let session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 
 	write_session(
 		&project_dir,
@@ -458,7 +464,7 @@ fn the_latest_rename_is_the_one_that_shows() {
 	let cwd = make_folder(tmp.path(), "twice");
 	let project_dir = store_dir(&claude_dir, &cwd);
 	let session_id = "11112222-3333-4444-5555-666677778888";
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 
 	write_session(
 		&project_dir,
@@ -501,7 +507,7 @@ fn an_empty_custom_title_falls_back_instead_of_blanking_the_row() {
 	let cwd = make_folder(tmp.path(), "blank");
 	let project_dir = store_dir(&claude_dir, &cwd);
 	let session_id = "99998888-7777-6666-5555-444433332222";
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 
 	write_session(
 		&project_dir,
@@ -715,12 +721,13 @@ fn write_subagent(
 
 /// The events a sub-agent transcript opens with, taken from a real file.
 fn subagent_events(cwd: &str) -> Vec<String> {
+	let cwd_json = json_path(Path::new(cwd));
 	vec![
 		format!(
-			r#"{{"parentUuid":null,"isSidechain":true,"promptId":"p1","agentId":"agent-1111","type":"user","timestamp":"2026-08-15T19:02:00Z","cwd":"{cwd}","message":{{"role":"user","content":"Explore the repo"}}}}"#
+			r#"{{"parentUuid":null,"isSidechain":true,"promptId":"p1","agentId":"agent-1111","type":"user","timestamp":"2026-08-15T19:02:00Z","cwd":"{cwd_json}","message":{{"role":"user","content":"Explore the repo"}}}}"#
 		),
 		format!(
-			r#"{{"parentUuid":"u1","isSidechain":true,"agentId":"agent-1111","type":"assistant","timestamp":"2026-08-15T19:03:00Z","cwd":"{cwd}","message":{{"role":"assistant","content":[{{"type":"text","text":"Found it"}}]}}}}"#
+			r#"{{"parentUuid":"u1","isSidechain":true,"agentId":"agent-1111","type":"assistant","timestamp":"2026-08-15T19:03:00Z","cwd":"{cwd_json}","message":{{"role":"assistant","content":[{{"type":"text","text":"Found it"}}]}}}}"#
 		),
 	]
 }
@@ -737,7 +744,7 @@ fn the_last_absolute_path_an_agent_touched_is_recorded() {
 	let db = open_db(tmp.path());
 	let (claude_dir, cwd, project_dir, session_id) = fixture_one_session(tmp.path(), &db);
 
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 	let touched = format!(
 		r#"{{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-01-01T00:00:09Z","cwd":"{cwd_str}","message":{{"role":"assistant","content":[{{"type":"tool_use","name":"Edit","input":{{"file_path":"/wt/feature-x/switcher.ts"}}}}]}}}}"#
 	);
@@ -785,7 +792,7 @@ fn the_paths_a_shell_command_names_are_recorded() {
 	let db = open_db(tmp.path());
 	let (claude_dir, cwd, project_dir, session_id) = fixture_one_session(tmp.path(), &db);
 
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 	// Three real command shapes: the `cd` into the worktree, a `sed` whose own
 	// slashes must contribute nothing, and a redirect whose `/dev/null` is noise
 	// the renderer will skip past.
@@ -848,11 +855,12 @@ fn a_path_reached_by_another_name_is_resolved_for_the_renderer() {
 	let nested = cwd.join("src");
 	std::fs::create_dir_all(&nested).expect("mkdir src");
 	std::fs::write(nested.join("switcher.ts"), "export {}\n").expect("write file");
-	let indirect = format!("{}/src/../src/switcher.ts", cwd.to_string_lossy());
+	let indirect = cwd.join("src/../src/switcher.ts").to_string_lossy().to_string();
+	let indirect_json = json_path(Path::new(&indirect));
 
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 	let touched = format!(
-		r#"{{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-01-01T00:00:09Z","cwd":"{cwd_str}","message":{{"role":"assistant","content":[{{"type":"tool_use","name":"Edit","input":{{"file_path":"{indirect}"}}}}]}}}}"#
+		r#"{{"type":"assistant","uuid":"a2","parentUuid":"a1","timestamp":"2026-01-01T00:00:09Z","cwd":"{cwd_str}","message":{{"role":"assistant","content":[{{"type":"tool_use","name":"Edit","input":{{"file_path":"{indirect_json}"}}}}]}}}}"#
 	);
 	let path = project_dir.join(format!("{session_id}.jsonl"));
 	let existing = std::fs::read_to_string(&path).expect("read session");
@@ -1064,7 +1072,7 @@ fn the_first_session_in_a_freshly_added_folder_indexes_from_the_watcher() {
 	// after the project did.
 	let project_dir = store_dir(&claude_dir, &cwd);
 	let session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 	let user_msg = format!(
 		r#"{{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","cwd":"{cwd_str}","message":{{"role":"user","content":"Start here"}}}}"#
 	);
@@ -1128,7 +1136,7 @@ fn two_profiles_over_one_repository_both_index_into_the_same_project() {
 	add_project_in(&db, cwd.to_str().unwrap()).expect("add project");
 
 	// One session in each store, for the same folder.
-	let cwd_str = cwd.to_string_lossy();
+	let cwd_str = json_path(cwd.as_ref());
 	let line = |text: &str| {
 		format!(
 			r#"{{"type":"user","uuid":"u1","timestamp":"2026-01-01T00:00:00Z","cwd":"{cwd_str}","message":{{"role":"user","content":"{text}"}}}}"#
@@ -1223,7 +1231,7 @@ fn fixture_codex_store(tmp: &Path, db: &Db) -> (PathBuf, PathBuf, String) {
 		let body = std::fs::read_to_string(&src).expect("read rollout");
 		std::fs::write(
 			day.join(src.file_name().unwrap()),
-			body.replace("/home/alice/code/pong", cwd.to_str().unwrap()),
+			body.replace("/home/alice/code/pong", &json_path(&cwd)),
 		)
 		.expect("write rollout");
 		session_id = factorai_lib::agents::codex::session_id_of(&src).expect("rollout id");
@@ -1257,7 +1265,7 @@ fn a_codex_store_is_discovered_and_its_thread_indexed_with_codexs_own_name() {
 			)?)
 		})
 		.expect("discovered");
-	assert_eq!(Path::new(&key), cwd.as_path());
+	assert!(factorai_lib::agents::path_identity::same(&key, cwd.to_str().unwrap()));
 	assert_eq!(project_id.as_deref(), Some(only_project(&db).id.as_str()));
 
 	// The row: Codex's auto-title as `ai`, the rollout's path recorded, the
@@ -1277,7 +1285,10 @@ fn a_codex_store_is_discovered_and_its_thread_indexed_with_codexs_own_name() {
 		path.as_deref().is_some_and(|p| p.starts_with(codex_dir.to_str().unwrap())),
 		"{path:?}"
 	);
-	assert_eq!(row_cwd.as_deref(), cwd.to_str());
+	assert!(row_cwd.as_deref().is_some_and(|path| factorai_lib::agents::path_identity::same(
+		path,
+		cwd.to_str().unwrap()
+	)));
 	let bodies: Vec<(String, String)> = db
 		.with(|conn| {
 			let mut st = conn.prepare("SELECT role, body FROM messages WHERE session_id = ?1")?;

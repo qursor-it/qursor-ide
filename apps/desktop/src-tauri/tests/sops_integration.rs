@@ -9,18 +9,21 @@
 //! `services::sops` cover everything that does not need the binary.
 //!
 //! **The environment is shared, so the tests that set it take a lock.** Each
-//! case points `SOPS_AGE_KEY_FILE` and `HOME` at a temporary directory, the
+//! case points `SOPS_AGE_KEY_FILE`, `HOME`, and platform config directories at a temporary directory, the
 //! child inherits them through `child_env`, and cargo runs test functions on
 //! parallel threads — without [`ENV`] two of these would overwrite each other's
 //! variables and fail intermittently. Within one test the cases are sequenced
 //! for the same reason, which is why the first is one function and not five.
 
-use std::os::unix::fs::PermissionsExt;
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
-use factorai_lib::services::sops;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+use factorai_lib::services::{agent_cli, sops};
 
 /// A throwaway age identity, generated for this file and used nowhere else.
 ///
@@ -135,12 +138,13 @@ fn sops_decrypts_what_sops_encrypted_and_says_why_when_it_cannot() {
 fn encrypt_fixture(binary: &Path, path: &Path) {
 	let plain = path.with_extension("plain.yaml");
 	std::fs::write(&plain, PLAINTEXT).unwrap();
-	let out = Command::new(binary)
-		.args(["encrypt", "--age", TEST_AGE_RECIPIENT])
-		.arg(&plain)
-		.stdin(Stdio::null())
-		.output()
-		.expect("run sops encrypt");
+	let args = [
+		OsString::from("encrypt"),
+		OsString::from("--age"),
+		OsString::from(TEST_AGE_RECIPIENT),
+		plain.as_os_str().to_os_string(),
+	];
+	let out = sops_process(binary, &args).stdin(Stdio::null()).output().expect("run sops encrypt");
 	assert!(out.status.success(), "sops encrypt failed: {}", String::from_utf8_lossy(&out.stderr));
 	std::fs::write(path, out.stdout).unwrap();
 	std::fs::remove_file(&plain).unwrap();
@@ -154,6 +158,13 @@ fn encrypt_fixture(binary: &Path, path: &Path) {
 /// otherwise decrypt the "no key material" case successfully.
 fn set_env(home: &Path, key_file: Option<&Path>) {
 	std::env::set_var("HOME", home);
+	std::env::set_var("XDG_CONFIG_HOME", home);
+	#[cfg(windows)]
+	std::env::set_var("USERPROFILE", home);
+	#[cfg(windows)]
+	std::env::set_var("APPDATA", home);
+	#[cfg(windows)]
+	std::env::set_var("LOCALAPPDATA", home);
 	std::env::remove_var("SOPS_AGE_KEY");
 	std::env::remove_var("SOPS_AGE_KEY_CMD");
 	match key_file {
@@ -195,17 +206,21 @@ fn saving_keeps_the_recipients_the_file_had_not_the_ones_config_would_pick() {
 	let path = tmp.path().join("secrets.yaml");
 	let plain = tmp.path().join("plain.yaml");
 	std::fs::write(&plain, PLAINTEXT).unwrap();
-	let out = Command::new(&binary)
-		.args(["encrypt", "--age", &format!("{TEST_AGE_RECIPIENT},{OTHER_AGE_RECIPIENT}")])
-		.arg(&plain)
-		.stdin(Stdio::null())
-		.output()
-		.expect("run sops encrypt");
+	let args = [
+		OsString::from("encrypt"),
+		OsString::from("--age"),
+		OsString::from(format!("{TEST_AGE_RECIPIENT},{OTHER_AGE_RECIPIENT}")),
+		plain.as_os_str().to_os_string(),
+	];
+	let out = sops_process(&binary, &args).stdin(Stdio::null()).output().expect("run sops encrypt");
 	assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 	std::fs::write(&path, out.stdout).unwrap();
 	std::fs::remove_file(&plain).unwrap();
 	// `0600`, which is what a secrets file is, and what the write has to keep.
+	#[cfg(unix)]
 	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+	#[cfg(windows)]
+	let (dacl_before, _) = dacl_snapshot(&path);
 
 	let edited = "api_key: sk-live-rotated\nnested:\n    token: hunter3\n";
 	let written = sops::encrypt(path.to_str().unwrap(), edited).expect("encrypt and save");
@@ -224,10 +239,106 @@ fn saving_keeps_the_recipients_the_file_had_not_the_ones_config_would_pick() {
 	assert_eq!(after, expected, "re-encrypting must not drop a recipient the file had");
 
 	// The mode survived — `write_file`'s promise, and it matters most here.
+	#[cfg(unix)]
 	assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+	#[cfg(windows)]
+	let (dacl_after, dacl_protected) = dacl_snapshot(&path);
+	#[cfg(windows)]
+	assert_eq!(
+		dacl_semantic_bytes(&dacl_before),
+		dacl_semantic_bytes(&dacl_after),
+		"the replaced secret keeps its effective DACL"
+	);
+	#[cfg(windows)]
+	assert!(dacl_protected, "the replacement DACL must be protected from parent inheritance");
 
 	// And the round trip is exact: what decrypts is what was typed.
 	assert_eq!(sops::decrypt(path.to_str().unwrap()).unwrap(), edited);
+}
+
+/// Construct a child with the same wrapper handling used by production SOPS
+/// calls. Windows PATH entries may resolve to .cmd/.bat launchers.
+fn sops_process(binary: &Path, args: &[OsString]) -> Command {
+	let (program, args) = agent_cli::launch_command(binary, args).expect("prepare sops argv");
+	let mut command = Command::new(program);
+	command.args(args);
+	command
+}
+
+#[cfg(windows)]
+fn dacl_snapshot(path: &Path) -> (Vec<u8>, bool) {
+	use std::os::windows::ffi::OsStrExt;
+	use std::ptr::null_mut;
+	use windows_sys::Win32::Security::{
+		GetFileSecurityW, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
+		DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+	};
+
+	let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+	let mut needed = 0;
+	unsafe {
+		GetFileSecurityW(
+			wide_path.as_mut_ptr(),
+			DACL_SECURITY_INFORMATION,
+			null_mut(),
+			0,
+			&mut needed,
+		);
+	}
+	assert_ne!(needed, 0, "the source file must have a readable security descriptor");
+	let mut descriptor = vec![0; needed as usize];
+	let result = unsafe {
+		GetFileSecurityW(
+			wide_path.as_mut_ptr(),
+			DACL_SECURITY_INFORMATION,
+			descriptor.as_mut_ptr().cast(),
+			needed,
+			&mut needed,
+		)
+	};
+	assert_ne!(result, 0, "read the file DACL");
+
+	let mut present = 0;
+	let mut defaulted = 0;
+	let mut dacl = null_mut();
+	let result = unsafe {
+		GetSecurityDescriptorDacl(
+			descriptor.as_ptr().cast_mut().cast(),
+			&mut present,
+			&mut dacl,
+			&mut defaulted,
+		)
+	};
+	assert_ne!(result, 0, "read the DACL from its descriptor");
+	assert_ne!(present, 0, "the DACL must be present");
+	assert!(!dacl.is_null(), "the DACL must be non-null");
+	let size = unsafe { (*dacl).AclSize as usize };
+	let bytes = unsafe { std::slice::from_raw_parts(dacl.cast::<u8>(), size).to_vec() };
+
+	let mut control = 0;
+	let mut revision = 0;
+	let result = unsafe {
+		GetSecurityDescriptorControl(
+			descriptor.as_ptr().cast_mut().cast(),
+			&mut control,
+			&mut revision,
+		)
+	};
+	assert_ne!(result, 0, "read the security descriptor control flags");
+	(bytes, control & SE_DACL_PROTECTED != 0)
+}
+
+#[cfg(windows)]
+fn dacl_semantic_bytes(acl: &[u8]) -> Vec<u8> {
+	let mut acl = acl.to_vec();
+	let ace_count = u16::from_le_bytes([acl[4], acl[5]]) as usize;
+	let mut offset = 8;
+	for _ in 0..ace_count {
+		let ace_size = u16::from_le_bytes([acl[offset + 2], acl[offset + 3]]) as usize;
+		acl[offset + 1] &= !(windows_sys::Win32::Security::INHERITED_ACE as u8);
+		offset += ace_size;
+	}
+	acl
 }
 
 /// A file whose keys are split into groups cannot be re-made from flags, so the

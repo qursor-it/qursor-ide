@@ -22,7 +22,7 @@ use tempfile::TempDir;
 const SID: &str = "11111111-2222-3333-4444-555555555555";
 
 fn store_dir(claude_dir: &Path, cwd: &Path) -> PathBuf {
-	let encoded = format!("-{}", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"));
+	let encoded = factorai_lib::agents::claude::encode_path(cwd);
 	let dir = claude_dir.join("projects").join(encoded);
 	std::fs::create_dir_all(&dir).expect("mkdir store");
 	dir
@@ -39,7 +39,7 @@ fn make_indexer(db: Db, claude_dir: PathBuf) -> Indexer {
 }
 
 /// A store with one project and a transcript of exactly `lines`, scanned once.
-fn fixture(tmp: &Path) -> (Db, Indexer, PathBuf) {
+fn fixture(tmp: &Path) -> (Db, Indexer, PathBuf, PathBuf) {
 	let claude_dir = tmp.join(".claude");
 	let cwd = tmp.join("code").join("foo");
 	std::fs::create_dir_all(&cwd).unwrap();
@@ -48,18 +48,20 @@ fn fixture(tmp: &Path) -> (Db, Indexer, PathBuf) {
 	let db = Db::open(&tmp.join("data")).expect("open db");
 	add_project_in(&db, cwd.to_str().unwrap()).expect("add project");
 	let indexer = make_indexer(db.clone(), claude_dir);
-	(db, indexer, store.join(format!("{SID}.jsonl")))
+	(db, indexer, store.join(format!("{SID}.jsonl")), cwd)
 }
 
-fn user(uuid: &str, ts: &str, text: &str) -> String {
+fn user(cwd: &Path, uuid: &str, ts: &str, text: &str) -> String {
+	let cwd_json = serde_json::to_string(&cwd.to_string_lossy()).unwrap();
 	format!(
-		r#"{{"type":"user","uuid":"{uuid}","timestamp":"{ts}","message":{{"role":"user","content":"{text}"}}}}"#
+		r#"{{"type":"user","uuid":"{uuid}","timestamp":"{ts}","cwd":{cwd_json},"message":{{"role":"user","content":"{text}"}}}}"#
 	)
 }
 
-fn assistant(uuid: &str, ts: &str, text: &str) -> String {
+fn assistant(cwd: &Path, uuid: &str, ts: &str, text: &str) -> String {
+	let cwd_json = serde_json::to_string(&cwd.to_string_lossy()).unwrap();
 	format!(
-		r#"{{"type":"assistant","uuid":"{uuid}","timestamp":"{ts}","message":{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}]}}}}"#
+		r#"{{"type":"assistant","uuid":"{uuid}","timestamp":"{ts}","cwd":{cwd_json},"message":{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}]}}}}"#
 	)
 }
 
@@ -98,12 +100,12 @@ fn message_bodies(db: &Db) -> Vec<String> {
 #[test]
 fn an_appended_turn_is_added_without_re_reading_the_prefix() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
 	let first = format!(
 		"{}\n{}\n",
-		user("u1", "2026-01-01T00:00:00Z", "help me with react hooks"),
-		assistant("a1", "2026-01-01T00:00:05Z", "here is a useEffect example")
+		user(&cwd, "u1", "2026-01-01T00:00:00Z", "help me with react hooks"),
+		assistant(&cwd, "a1", "2026-01-01T00:00:05Z", "here is a useEffect example")
 	);
 	write(&path, &first);
 	indexer.full_scan().expect("first scan");
@@ -120,7 +122,8 @@ fn an_appended_turn_is_added_without_re_reading_the_prefix() {
 	// which is the next test.
 	let tampered = first.replace("help me with react hooks", "PREFIX WAS RE-READ!!!!!!");
 	assert_eq!(tampered.len(), first.len(), "the tamper must not move the offsets");
-	let second = format!("{tampered}{}\n", user("u2", "2026-01-01T00:00:10Z", "and now tailwind"));
+	let second =
+		format!("{tampered}{}\n", user(&cwd, "u2", "2026-01-01T00:00:10Z", "and now tailwind"));
 	write(&path, &second);
 	indexer.full_scan().expect("second scan");
 
@@ -138,12 +141,18 @@ fn an_appended_turn_is_added_without_re_reading_the_prefix() {
 #[test]
 fn a_half_written_last_line_is_indexed_once_when_it_is_finished() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
 	// What the watcher actually catches: Claude is part-way through writing the
 	// line. It is not valid JSON, so nothing can be made of it yet.
-	let whole = user("u1", "2026-01-01T00:00:00Z", "the first question");
-	let half = &whole[..whole.len() / 2];
+	let whole = user(&cwd, "u1", "2026-01-01T00:00:00Z", "the first question");
+	let midpoint = whole
+		.char_indices()
+		.map(|(index, _)| index)
+		.take_while(|index| *index <= whole.len() / 2)
+		.last()
+		.unwrap_or(0);
+	let half = &whole[..midpoint];
 	write(&path, &format!("{whole}\n{half}"));
 	indexer.full_scan().expect("first scan");
 	assert_eq!(row::<i64>(&db, "turn_count"), 1, "the truncated line is not an event yet");
@@ -154,7 +163,8 @@ fn a_half_written_last_line_is_indexed_once_when_it_is_finished() {
 	);
 
 	// The rest of it lands.
-	let finished = format!("{whole}\n{}\n", user("u2", "2026-01-01T00:00:05Z", "the second one"));
+	let finished =
+		format!("{whole}\n{}\n", user(&cwd, "u2", "2026-01-01T00:00:05Z", "the second one"));
 	write(&path, &finished);
 	indexer.full_scan().expect("second scan");
 
@@ -166,17 +176,17 @@ fn a_half_written_last_line_is_indexed_once_when_it_is_finished() {
 #[test]
 fn a_line_that_parsed_without_its_newline_is_not_read_twice() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
 	// The other half of the same race: the JSON object is complete but the
 	// newline has not been written yet. It parses, so it is indexed — and the
 	// newline arriving must not make it arrive a second time.
-	let one = user("u1", "2026-01-01T00:00:00Z", "complete but unterminated");
+	let one = user(&cwd, "u1", "2026-01-01T00:00:00Z", "complete but unterminated");
 	write(&path, &one);
 	indexer.full_scan().expect("first scan");
 	assert_eq!(message_bodies(&db).len(), 1);
 
-	write(&path, &format!("{one}\n{}\n", user("u2", "2026-01-01T00:00:05Z", "the next one")));
+	write(&path, &format!("{one}\n{}\n", user(&cwd, "u2", "2026-01-01T00:00:05Z", "the next one")));
 	indexer.full_scan().expect("second scan");
 
 	assert_eq!(
@@ -190,10 +200,10 @@ fn a_line_that_parsed_without_its_newline_is_not_read_twice() {
 #[test]
 fn a_rename_earlier_in_the_file_outranks_a_later_ai_title() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
 	let rename = r#"{"type":"custom-title","uuid":"t1","timestamp":"2026-01-01T00:00:01Z","customTitle":"What I called it"}"#;
-	let first = format!("{}\n{rename}\n", user("u1", "2026-01-01T00:00:00Z", "hello"));
+	let first = format!("{}\n{rename}\n", user(&cwd, "u1", "2026-01-01T00:00:00Z", "hello"));
 	write(&path, &first);
 	indexer.full_scan().expect("first scan");
 	assert_eq!(row::<String>(&db, "title"), "What I called it");
@@ -217,9 +227,9 @@ fn a_rename_earlier_in_the_file_outranks_a_later_ai_title() {
 #[test]
 fn a_rename_in_the_tail_still_wins() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
-	let first = format!("{}\n", user("u1", "2026-01-01T00:00:00Z", "hello there"));
+	let first = format!("{}\n", user(&cwd, "u1", "2026-01-01T00:00:00Z", "hello there"));
 	write(&path, &first);
 	indexer.full_scan().expect("first scan");
 	assert_eq!(row::<String>(&db, "title_kind"), "derived");
@@ -239,28 +249,36 @@ fn a_rename_in_the_tail_still_wins() {
 #[test]
 fn a_first_message_in_the_tail_replaces_the_id_fallback() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
-	let header = concat!(
-		r#"{"type":"mode","mode":"normal","sessionId":"11111111-2222-3333-4444-555555555555"}"#,
-		"\n",
-		r#"{"type":"attachment","uuid":"a1","timestamp":"2026-01-01T00:00:00Z","attachment":{"type":"hook_success"}}"#,
-		"\n",
-	);
-	write(&path, header);
+	let mode = serde_json::json!({
+		"type": "mode",
+		"mode": "normal",
+		"sessionId": SID,
+		"cwd": cwd.to_string_lossy(),
+	});
+	let attachment = serde_json::json!({
+		"type": "attachment",
+		"uuid": "a1",
+		"timestamp": "2026-01-01T00:00:00Z",
+		"cwd": cwd.to_string_lossy(),
+		"attachment": { "type": "hook_success" },
+	});
+	let header = format!("{mode}\n{attachment}\n");
+	write(&path, &header);
 	indexer.full_scan().expect("first scan");
 	assert_eq!(row::<String>(&db, "title"), "11111111");
 	assert_eq!(row::<String>(&db, "title_kind"), "derived");
 
 	let slash = "<command-message>review</command-message>\\n<command-name>/review</command-name>\\n<command-args>PR 42</command-args>";
-	let second = format!("{header}{}\n", user("u1", "2026-01-01T00:00:01Z", slash));
+	let second = format!("{header}{}\n", user(&cwd, "u1", "2026-01-01T00:00:01Z", slash));
 	write(&path, &second);
 	indexer.full_scan().expect("second scan");
 	assert_eq!(row::<String>(&db, "title"), "/review PR 42");
 	assert_eq!(row::<String>(&db, "title_kind"), "derived");
 
 	// Once a message has titled it, a later one does not.
-	write(&path, &format!("{second}{}\n", user("u2", "2026-01-01T00:00:02Z", "go")));
+	write(&path, &format!("{second}{}\n", user(&cwd, "u2", "2026-01-01T00:00:02Z", "go")));
 	indexer.full_scan().expect("third scan");
 	assert_eq!(row::<String>(&db, "title"), "/review PR 42");
 }
@@ -268,12 +286,12 @@ fn a_first_message_in_the_tail_replaces_the_id_fallback() {
 #[test]
 fn a_transcript_that_shrank_is_parsed_in_full_again() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
 	let first = format!(
 		"{}\n{}\n",
-		user("u1", "2026-01-01T00:00:00Z", "the original first line"),
-		assistant("a1", "2026-01-01T00:00:05Z", "and a reply")
+		user(&cwd, "u1", "2026-01-01T00:00:00Z", "the original first line"),
+		assistant(&cwd, "a1", "2026-01-01T00:00:05Z", "and a reply")
 	);
 	write(&path, &first);
 	indexer.full_scan().expect("first scan");
@@ -281,7 +299,8 @@ fn a_transcript_that_shrank_is_parsed_in_full_again() {
 
 	// Shorter than what was indexed, so the prefix cannot be what we read: the
 	// only correct answer is to start over.
-	let rewritten = format!("{}\n", user("u9", "2026-02-01T00:00:00Z", "a different conversation"));
+	let rewritten =
+		format!("{}\n", user(&cwd, "u9", "2026-02-01T00:00:00Z", "a different conversation"));
 	assert!(rewritten.len() < first.len());
 	write(&path, &rewritten);
 	indexer.full_scan().expect("second scan");
@@ -297,9 +316,10 @@ fn a_transcript_that_shrank_is_parsed_in_full_again() {
 #[test]
 fn a_row_from_before_the_column_existed_takes_one_full_parse() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
-	let first = format!("{}\n", user("u1", "2026-01-01T00:00:00Z", "indexed by an older build"));
+	let first =
+		format!("{}\n", user(&cwd, "u1", "2026-01-01T00:00:00Z", "indexed by an older build"));
 	write(&path, &first);
 	indexer.full_scan().expect("first scan");
 
@@ -315,7 +335,10 @@ fn a_row_from_before_the_column_existed_takes_one_full_parse() {
 	})
 	.unwrap();
 
-	write(&path, &format!("{first}{}\n", user("u2", "2026-01-01T00:00:05Z", "and a new turn")));
+	write(
+		&path,
+		&format!("{first}{}\n", user(&cwd, "u2", "2026-01-01T00:00:05Z", "and a new turn")),
+	);
 	indexer.full_scan().expect("second scan");
 
 	assert_eq!(
@@ -329,9 +352,9 @@ fn a_row_from_before_the_column_existed_takes_one_full_parse() {
 #[test]
 fn a_prefix_rewritten_to_a_different_length_falls_back_to_a_full_parse() {
 	let tmp = TempDir::new().unwrap();
-	let (db, indexer, path) = fixture(tmp.path());
+	let (db, indexer, path, cwd) = fixture(tmp.path());
 
-	let first = format!("{}\n", user("u1", "2026-01-01T00:00:00Z", "the original question"));
+	let first = format!("{}\n", user(&cwd, "u1", "2026-01-01T00:00:00Z", "the original question"));
 	write(&path, &first);
 	indexer.full_scan().expect("first scan");
 	assert_eq!(message_bodies(&db), vec!["the original question"]);
@@ -341,8 +364,8 @@ fn a_prefix_rewritten_to_a_different_length_falls_back_to_a_full_parse() {
 	// still says "resume", and only looking at the byte there can tell.
 	let rewritten = format!(
 		"{}\n{}\n",
-		user("u1", "2026-01-01T00:00:00Z", "a much longer first question than before"),
-		user("u2", "2026-01-01T00:00:05Z", "and a second")
+		user(&cwd, "u1", "2026-01-01T00:00:00Z", "a much longer first question than before"),
+		user(&cwd, "u2", "2026-01-01T00:00:05Z", "and a second")
 	);
 	assert!(rewritten.len() > first.len());
 	write(&path, &rewritten);

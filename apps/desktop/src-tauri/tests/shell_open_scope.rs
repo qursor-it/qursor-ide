@@ -96,3 +96,33 @@ fn rejects_things_that_are_not_absolute_paths_or_urls() {
 		assert!(!re.is_match(arg), "should reject: {arg}");
 	}
 }
+
+/// Native Windows opens drive and UNC paths without admitting shell flags or
+/// device namespaces (ADR-0074). The Unix defaults remain unchanged.
+#[test]
+fn windows_overlay_accepts_native_files_without_flags_or_devices() {
+	let config: serde_json::Value =
+		serde_json::from_str(include_str!("../tauri.windows.conf.json")).expect("Windows config");
+	let pattern = config["plugins"]["shell"]["open"].as_str().expect("Windows shell scope");
+	let re = Regex::new(&format!("^{pattern}$")).expect("Windows scope compiles");
+	for path in [
+		r"C:\Projects\a file.txt",
+		r"D:/repo/src/main.rs",
+		r"\\server\share\file.txt",
+		r"\\?\C:\repo\file.txt",
+		r"\\?\UNC\server\share\file.txt",
+		"https://example.test/report?title=test",
+	] {
+		assert!(re.is_match(path), "should allow: {path}");
+	}
+	for path in [
+		"relative.txt",
+		"--enable-debugging",
+		"/R",
+		r"\\.\pipe\name",
+		"C:\\file\nflag",
+		r"\\server",
+	] {
+		assert!(!re.is_match(path), "should reject: {path}");
+	}
+}

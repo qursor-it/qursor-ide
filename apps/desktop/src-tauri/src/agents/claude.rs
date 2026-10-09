@@ -14,7 +14,10 @@ use crate::services::jsonl::EventIter;
 /// Encode an absolute filesystem path into the directory name Claude Code uses
 /// under `~/.claude/projects/`.
 ///
-/// Rule: drop trailing slashes, then replace each `/` **and each `.`** with `-`.
+/// Rule on Unix: drop trailing slashes, then replace each `/` **and each `.`**
+/// with `-`. Native Windows keys also strip the extended path prefix and fold
+/// drive colons and backslashes to `-`, matching the CLI's Windows directory
+/// spelling.
 /// Example: `/Users/alice/code/foo` becomes `-Users-alice-code-foo`, and
 /// `/Users/alice/repo/.claude/worktrees/wt` becomes
 /// `-Users-alice-repo--claude-worktrees-wt` — the `/.` before `claude` folds to
@@ -24,11 +27,40 @@ use crate::services::jsonl::EventIter;
 /// checkout (F21) and `--resume` silently becomes `--session-id`, losing the
 /// conversation.
 pub fn encode_path(p: &Path) -> String {
-	let mut s = p.to_string_lossy().to_string();
-	while s.ends_with('/') {
-		s.pop();
+	#[cfg(windows)]
+	{
+		let mut s = windows_cli_path(p);
+		while (s.ends_with('/') || s.ends_with('\\'))
+			&& !(s.len() == 3 && s.as_bytes().get(1) == Some(&b':'))
+		{
+			s.pop();
+		}
+		s.replace(['/', '\\', '.', ':'], "-")
 	}
-	s.replace(['/', '.'], "-")
+	#[cfg(not(windows))]
+	{
+		let mut s = p.to_string_lossy().to_string();
+		while s.ends_with('/') {
+			s.pop();
+		}
+		s.replace(['/', '.'], "-")
+	}
+}
+
+/// Claude's Windows store uses ordinary drive and UNC paths even when Rust's
+/// canonicalizer gives us a long-path form. The project key is derived from the
+/// path spelling the CLI receives, so strip only the Win32 extended prefix.
+#[cfg(windows)]
+fn windows_cli_path(path: &Path) -> String {
+	let path = path.to_string_lossy();
+	let lower = path.to_ascii_lowercase();
+	if lower.starts_with(r"\\?\unc\") {
+		format!(r"\\{}", &path[8..])
+	} else if lower.starts_with(r"\\?\") {
+		path[4..].to_string()
+	} else {
+		path.into_owned()
+	}
 }
 
 /// Best-effort decode. Ambiguous when the original path contained a literal `-`
@@ -36,12 +68,31 @@ pub fn encode_path(p: &Path) -> String {
 /// the authoritative answer is the `cwd` field Claude itself records in the
 /// transcript, read by [`real_path_of`].
 pub fn decode_candidates(encoded: &str) -> Vec<String> {
-	let trimmed = encoded.trim_start_matches('-');
-	let parts: Vec<&str> = trimmed.split('-').collect();
-	// For most real paths (no embedded '-') the all-slashes form is correct. We
-	// don't enumerate the full 2^n space — it's never that ambiguous in
-	// practice, and `real_path_of` is the real fix.
-	vec![format!("/{}", parts.join("/"))]
+	#[cfg(windows)]
+	{
+		if encoded.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+			&& encoded.as_bytes().get(1) == Some(&b'-')
+			&& encoded.as_bytes().get(2) == Some(&b'-')
+		{
+			let drive = &encoded[..1];
+			let rest = encoded[3..].replace('-', "\\");
+			vec![format!("{drive}:\\{rest}")]
+		} else if let Some(rest) = encoded.strip_prefix("--") {
+			vec![format!("\\\\{}", rest.replace('-', "\\"))]
+		} else {
+			let trimmed = encoded.trim_start_matches('-');
+			vec![format!("\\{}", trimmed.replace('-', "\\"))]
+		}
+	}
+	#[cfg(not(windows))]
+	{
+		let trimmed = encoded.trim_start_matches('-');
+		let parts: Vec<&str> = trimmed.split('-').collect();
+		// For most real paths (no embedded '-') the all-slashes form is correct. We
+		// don't enumerate the full 2^n space — it's never that ambiguous in
+		// practice, and `real_path_of` is the real fix.
+		vec![format!("/{}", parts.join("/"))]
+	}
 }
 
 /// Where Claude writes transcripts for work done in `real_path`.
@@ -148,10 +199,26 @@ pub fn real_path_of(dir: &Path) -> Option<String> {
 	if let Some(cwd) =
 		session_files.iter().find_map(|p| EventIter::open(p).ok()?.find_map(|ev| ev.cwd))
 	{
-		return Some(cwd);
+		return Some(normalize_recorded_path(&cwd));
 	}
 	let name = dir.file_name()?.to_str()?;
-	decode_candidates(name).into_iter().find(|c| Path::new(c).is_dir())
+	decode_candidates(name)
+		.into_iter()
+		.find(|c| Path::new(c).is_dir())
+		.map(|path| normalize_recorded_path(&path))
+}
+
+/// Keep transcript cwd values in the same ordinary drive or UNC form the
+/// project picker stores when Rust or Claude supplies an extended path.
+fn normalize_recorded_path(path: &str) -> String {
+	#[cfg(windows)]
+	{
+		crate::agents::path_identity::display_path(path)
+	}
+	#[cfg(not(windows))]
+	{
+		path.to_string()
+	}
 }
 
 /// Transcript count and last-modified time for a store directory, without
@@ -210,8 +277,35 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(not(windows))]
 	fn decode_simple_roundtrip() {
 		assert_eq!(decode_candidates("-Users-alice-code-foo")[0], "/Users/alice/code/foo");
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn windows_drive_paths_encode_the_drive_and_worktree_components() {
+		assert_eq!(
+			encode_path(Path::new(r"C:\Users\alice\repo\.claude\worktrees\eng-1")),
+			"C--Users-alice-repo--claude-worktrees-eng-1"
+		);
+		assert_eq!(encode_path(Path::new(r"\\?\C:\Users\alice\repo")), "C--Users-alice-repo");
+		assert_eq!(decode_candidates("C--Users-alice-repo")[0], r"C:\Users\alice\repo");
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn windows_unc_paths_round_trip_as_a_best_effort_candidate() {
+		assert_eq!(encode_path(Path::new(r"\\server\share\repo")), "--server-share-repo");
+		assert_eq!(decode_candidates("--server-share-repo")[0], r"\\server\share\repo");
+		assert_eq!(encode_path(Path::new(r"\\?\UNC\server\share\repo")), "--server-share-repo");
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn claude_recorded_cwd_is_simplified_to_drive_and_unc_paths() {
+		assert_eq!(normalize_recorded_path(r"\\?\C:\Users\Alice\repo"), r"C:\Users\Alice\repo");
+		assert_eq!(normalize_recorded_path(r"\\?\UNC\server\share\repo"), r"\\server\share\repo");
 	}
 
 	#[test]

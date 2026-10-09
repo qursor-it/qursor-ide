@@ -132,22 +132,37 @@ pub fn add_project_in(db: &Db, path: &str) -> AppResult<Project> {
 	// folder is admissible **only if an agent already has history for it**.
 	// That is exactly the set the import list can offer, and it excludes a
 	// mistyped path, which no store has ever heard of.
-	let (dir, missing) = match raw.canonicalize() {
+	let (dir, missing, existing_real_path) = match raw.canonicalize() {
 		Ok(d) => {
 			if !d.is_dir() {
 				return Err(AppError::InvalidInput(format!("not a directory: {path}")));
 			}
-			(d, false)
+			(d, false, None)
 		}
 		Err(_) => {
-			if !db.with(|conn| any_history_for(conn, path))? {
+			// A gone leaf still has a useful identity when its parent exists:
+			// canonicalizing that parent resolves dot segments, short names and
+			// junctions without guessing how they map. If the parent is gone too,
+			// retain the recorded spelling and use the exact history fallback.
+			let missing_path = normalized_missing_path(&raw);
+			let missing_path_text = missing_path.to_string_lossy().to_string();
+			if !db.with(|conn| any_history_for(conn, &missing_path_text))? {
 				return Err(AppError::NotFound(format!("no such directory: {path}")));
 			}
-			(raw, true)
+			// Reuse the persisted spelling for a missing project. On Windows a
+			// case- or prefix-variant of the same deleted folder is the same
+			// project even though SQLite's UNIQUE(real_path) sees another string.
+			let existing = db.with(|conn| project_path_for_identity(conn, &missing_path_text))?;
+			let dir = existing.as_deref().map(PathBuf::from).unwrap_or(missing_path);
+			(dir, true, existing)
 		}
 	};
 
-	let real_path = dir.to_string_lossy().to_string();
+	// Store ordinary drive/UNC paths so agent discovery and the renderer share
+	// the same identity as the native picker (ADR-0074).
+	#[cfg(windows)]
+	let dir = dunce::simplified(&dir).to_path_buf();
+	let real_path = existing_real_path.unwrap_or_else(|| dir.to_string_lossy().to_string());
 	let display_name = agents::display_name_for_path(&real_path);
 	let id = uuid::Uuid::new_v4().to_string();
 	let now = chrono::Utc::now().timestamp_millis();
@@ -183,6 +198,26 @@ pub fn add_project_in(db: &Db, path: &str) -> AppResult<Project> {
 	})?;
 
 	db.with(|conn| project_by_path(conn, &real_path))
+}
+
+#[cfg(windows)]
+fn normalized_missing_path(raw: &Path) -> PathBuf {
+	let (Some(parent), Some(name)) = (raw.parent(), raw.file_name()) else {
+		return raw.to_path_buf();
+	};
+	let Ok(parent) = parent.canonicalize() else {
+		return raw.to_path_buf();
+	};
+	if !parent.is_dir() {
+		return raw.to_path_buf();
+	}
+	let joined = parent.join(name);
+	PathBuf::from(agents::path_identity::display_path(&joined.to_string_lossy()))
+}
+
+#[cfg(not(windows))]
+fn normalized_missing_path(raw: &Path) -> PathBuf {
+	raw.to_path_buf()
 }
 
 /// Remove a folder from the workspace.
@@ -258,7 +293,7 @@ pub async fn list_import_candidates(
 }
 
 /// The walk itself, so the command above is only the part that needs `State`.
-fn import_candidates(
+pub fn import_candidates(
 	agent: &str,
 	store: &Path,
 	open_paths: &[String],
@@ -269,7 +304,7 @@ fn import_candidates(
 			key,
 			display_name: agents::display_name_for_path(&real_path),
 			missing: !Path::new(&real_path).is_dir(),
-			already_open: open_paths.iter().any(|p| p == &real_path),
+			already_open: open_paths.iter().any(|p| agents::path_identity::same(p, &real_path)),
 			real_path,
 			session_count,
 			last_activity_at,
@@ -328,14 +363,50 @@ pub fn reconcile(conn: &Connection, owners: &CheckoutOwners) -> AppResult<()> {
 	// Rolling up to the nearest open *ancestor* was considered and rejected
 	// (ADR-0011): it turns every session lookup into a prefix scan and needs a
 	// tie-break the moment both a folder and its parent are open.
-	conn.execute(
-		"UPDATE discovered_projects
-		    SET project_id = (SELECT p.id FROM projects p WHERE p.real_path = discovered_projects.real_path)
-		  WHERE real_path IS NOT NULL",
-		[],
-	)?;
-	// A directory whose folder we never identified can't belong to anything.
-	conn.execute("UPDATE discovered_projects SET project_id = NULL WHERE real_path IS NULL", [])?;
+	#[cfg(windows)]
+	{
+		let project_paths: HashMap<String, String> = {
+			let mut stmt = conn.prepare("SELECT id, real_path FROM projects")?;
+			let rows = stmt
+				.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+				.collect::<rusqlite::Result<Vec<_>>>()?;
+			rows.into_iter().fold(HashMap::new(), |mut paths, (id, path)| {
+				paths.entry(agents::path_identity::key(&path)).or_insert(id);
+				paths
+			})
+		};
+		let discovered: Vec<(i64, Option<String>)> = {
+			let mut stmt = conn.prepare("SELECT id, real_path FROM discovered_projects")?;
+			let rows = stmt
+				.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+				.collect::<rusqlite::Result<_>>()?;
+			rows
+		};
+		{
+			let mut stmt =
+				conn.prepare("UPDATE discovered_projects SET project_id = ?2 WHERE id = ?1")?;
+			for (id, path) in discovered {
+				let project_id = path
+					.as_deref()
+					.and_then(|path| project_paths.get(&agents::path_identity::key(path)));
+				stmt.execute(params![id, project_id])?;
+			}
+		}
+	}
+	#[cfg(not(windows))]
+	{
+		conn.execute(
+			"UPDATE discovered_projects
+			    SET project_id = (SELECT p.id FROM projects p WHERE p.real_path = discovered_projects.real_path)
+			  WHERE real_path IS NOT NULL",
+			[],
+		)?;
+		// A directory whose folder we never identified can't belong to anything.
+		conn.execute(
+			"UPDATE discovered_projects SET project_id = NULL WHERE real_path IS NULL",
+			[],
+		)?;
+	}
 	link_worktrees(conn, owners)
 }
 
@@ -374,20 +445,36 @@ pub fn checkout_owners(conn: &Connection) -> AppResult<CheckoutOwners> {
 }
 
 /// The checkout → project map [`checkout_owners`] builds.
+#[cfg(windows)]
+type CheckoutKey = String;
+#[cfg(not(windows))]
+type CheckoutKey = PathBuf;
+
 #[derive(Debug, Default)]
-pub struct CheckoutOwners(HashMap<PathBuf, String>);
+pub struct CheckoutOwners(HashMap<CheckoutKey, String>);
+
+fn checkout_key(path: &Path) -> CheckoutKey {
+	#[cfg(windows)]
+	{
+		agents::path_identity::key(&path.to_string_lossy())
+	}
+	#[cfg(not(windows))]
+	{
+		path.to_path_buf()
+	}
+}
 
 impl CheckoutOwners {
 	/// Walk one project's repository and claim its checkouts, leaving any that
 	/// another project already claimed.
 	pub fn add(&mut self, project_id: &str, real_path: &str) {
 		for checkout in git::worktree_paths(real_path) {
-			self.0.entry(checkout).or_insert_with(|| project_id.to_string());
+			self.0.entry(checkout_key(&checkout)).or_insert_with(|| project_id.to_string());
 		}
 	}
 
 	fn get(&self, path: &Path) -> Option<&String> {
-		self.0.get(path)
+		self.0.get(&checkout_key(path))
 	}
 
 	fn is_empty(&self) -> bool {
@@ -444,14 +531,33 @@ fn link_worktrees(conn: &Connection, owner: &CheckoutOwners) -> AppResult<()> {
 /// Does any agent's store hold transcripts for this exact folder? The test that
 /// separates "the folder was deleted" from "that path never existed".
 fn any_history_for(conn: &Connection, real_path: &str) -> AppResult<bool> {
-	Ok(conn
-		.query_row(
-			"SELECT 1 FROM discovered_projects WHERE real_path = ?1",
-			params![real_path],
-			|_| Ok(true),
-		)
-		.optional()?
-		.unwrap_or(false))
+	#[cfg(windows)]
+	{
+		let mut stmt =
+			conn.prepare("SELECT real_path FROM discovered_projects WHERE real_path IS NOT NULL")?;
+		let paths = stmt
+			.query_map([], |row| row.get::<_, String>(0))?
+			.collect::<rusqlite::Result<Vec<_>>>()?;
+		Ok(paths.iter().any(|path| agents::path_identity::same(path, real_path)))
+	}
+	#[cfg(not(windows))]
+	{
+		Ok(conn
+			.query_row(
+				"SELECT 1 FROM discovered_projects WHERE real_path = ?1",
+				params![real_path],
+				|_| Ok(true),
+			)
+			.optional()?
+			.unwrap_or(false))
+	}
+}
+
+fn project_path_for_identity(conn: &Connection, real_path: &str) -> AppResult<Option<String>> {
+	let mut stmt = conn.prepare("SELECT real_path FROM projects")?;
+	let paths =
+		stmt.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+	Ok(paths.into_iter().find(|path| agents::path_identity::same(path, real_path)))
 }
 
 fn project_by_path(conn: &Connection, real_path: &str) -> AppResult<Project> {

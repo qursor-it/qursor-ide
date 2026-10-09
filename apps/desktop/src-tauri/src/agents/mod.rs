@@ -15,6 +15,160 @@ use std::path::Path;
 pub mod claude;
 pub mod codex;
 
+/// Path identity shared by agent discovery, indexing, and workspace linking.
+///
+/// Keep the recorded spelling for display and persistence; use this key only
+/// when comparing filesystem identities. Windows paths compare case-insensitively
+/// and accept both slash spellings, including ordinary and extended drive/UNC
+/// forms. Other platforms retain exact string identity.
+pub mod path_identity {
+	/// Present a recorded Windows path as an ordinary drive or UNC path while
+	/// preserving its spelling and letter case.
+	pub fn display_path(path: &str) -> String {
+		#[cfg(windows)]
+		{
+			windows_display_path(path)
+		}
+		#[cfg(not(windows))]
+		{
+			path.to_string()
+		}
+	}
+
+	/// A comparison key for a path without changing the path the caller stores.
+	pub fn key(path: &str) -> String {
+		#[cfg(windows)]
+		{
+			windows_key(path)
+		}
+		#[cfg(not(windows))]
+		{
+			path.to_string()
+		}
+	}
+
+	/// Whether two recorded paths name the same filesystem location.
+	pub fn same(left: &str, right: &str) -> bool {
+		key(left) == key(right)
+	}
+
+	#[cfg(windows)]
+	fn windows_display_path(path: &str) -> String {
+		let separated = path.replace('/', r"\");
+		let lower = separated.to_ascii_lowercase();
+		if lower.starts_with(r"\\?\unc\") {
+			let ordinary = format!(r"\\{}", &separated[8..]);
+			if is_fully_qualified_unc(&ordinary) {
+				ordinary
+			} else {
+				path.to_string()
+			}
+		} else if lower.starts_with(r"\\?\")
+			&& separated.as_bytes().get(4).is_some_and(u8::is_ascii_alphabetic)
+			&& separated.as_bytes().get(5) == Some(&b':')
+			&& separated.as_bytes().get(6) == Some(&b'\\')
+		{
+			separated[4..].to_string()
+		} else if is_fully_qualified_drive(&separated) || is_fully_qualified_unc(&separated) {
+			separated
+		} else {
+			// Agent transcripts can describe paths from another host (for
+			// example `/home/me/repo`). Keep those recorded values intact.
+			path.to_string()
+		}
+	}
+
+	#[cfg(windows)]
+	fn is_fully_qualified_drive(path: &str) -> bool {
+		path.len() >= 3
+			&& path.as_bytes()[0].is_ascii_alphabetic()
+			&& path.as_bytes()[1] == b':'
+			&& path.as_bytes()[2] == b'\\'
+	}
+
+	#[cfg(windows)]
+	fn is_fully_qualified_unc(path: &str) -> bool {
+		if !path.starts_with(r"\\") || path.as_bytes().get(2) == Some(&b'\\') {
+			return false;
+		}
+		let Some(rest) = path.strip_prefix(r"\\") else {
+			return false;
+		};
+		let mut components = rest.split('\\').filter(|part| !part.is_empty());
+		components.next().is_some() && components.next().is_some()
+	}
+
+	#[cfg(windows)]
+	fn windows_key(path: &str) -> String {
+		let ordinary = windows_display_path(path);
+
+		let is_unc = ordinary.starts_with(r"\\");
+		let is_rooted = !is_unc && ordinary.starts_with('\\');
+		let drive_root = ordinary.len() >= 3
+			&& ordinary.as_bytes()[0].is_ascii_alphabetic()
+			&& ordinary.as_bytes()[1] == b':'
+			&& ordinary.as_bytes()[2] == b'\\'
+			&& ordinary[3..].chars().all(|c| c == '\\');
+		let body = if is_unc {
+			&ordinary[2..]
+		} else if is_rooted {
+			&ordinary[1..]
+		} else {
+			ordinary.as_str()
+		};
+		let components = body.split('\\').filter(|part| !part.is_empty()).collect::<Vec<_>>();
+		let joined = components.join(r"\");
+		let mut normalized = if is_unc {
+			format!(r"\\{joined}")
+		} else if is_rooted {
+			format!(r"\{joined}")
+		} else {
+			joined
+		};
+		if drive_root && !normalized.ends_with('\\') {
+			normalized.push('\\');
+		}
+		normalized.to_lowercase()
+	}
+
+	#[cfg(all(test, windows))]
+	mod tests {
+		use super::{display_path, key, same};
+
+		#[test]
+		fn drive_paths_ignore_case_separator_and_extended_prefix_differences() {
+			assert!(same(r"C:\Users\Alice\Repo", r"c:/users/alice/repo/"));
+			assert!(same(r"\\?\C:\Users\Alice\Repo", r"c:\users\alice\repo"));
+			assert_eq!(display_path(r"\\?\C:\Users\Alice\Repo"), r"C:\Users\Alice\Repo");
+			assert!(!same(r"C:\Users\Alice\Repo", r"C:\Users\Alice\Repo-old"));
+		}
+
+		#[test]
+		fn unc_paths_ignore_case_and_extended_prefix_differences() {
+			assert_eq!(key(r"\\?\UNC\Server\Share\Repo"), key(r"//server/share/repo/"));
+			assert_eq!(display_path(r"\\?\UNC\Server\Share\Repo"), r"\\Server\Share\Repo");
+		}
+
+		#[test]
+		fn non_windows_absolute_paths_keep_their_recorded_spelling() {
+			assert_eq!(display_path("/home/me/my-repo"), "/home/me/my-repo");
+			assert_eq!(display_path(r"\home\me\my-repo"), r"\home\me\my-repo");
+		}
+	}
+
+	#[cfg(all(test, not(windows)))]
+	mod tests {
+		use super::same;
+
+		#[test]
+		fn non_windows_path_identity_remains_exact() {
+			assert!(same("/home/alice/repo", "/home/alice/repo"));
+			assert!(!same("/home/alice/repo", "/home/alice/Repo"));
+			assert!(!same("/home/alice/repo", r"\home\alice\repo"));
+		}
+	}
+}
+
 /// The `discovered_projects.agent` / `profiles.agent` value for Claude Code.
 /// One constant so the string is spelled once.
 pub const CLAUDE: &str = "claude";

@@ -18,6 +18,12 @@ use factorai_lib::services::sessions::set_pinned;
 use rusqlite::params;
 use tempfile::TempDir;
 
+/// Escape native separators as JSON data in synthetic transcripts (ADR-0074).
+fn json_path(path: &Path) -> String {
+	let json = serde_json::to_string(&path.to_string_lossy()).expect("serialize fixture path");
+	json[1..json.len() - 1].to_string()
+}
+
 fn open_db(tmp: &Path) -> Db {
 	Db::open(&tmp.join("data")).expect("open db")
 }
@@ -33,10 +39,10 @@ fn make_indexer(db: Db, claude_dir: PathBuf) -> Indexer {
 /// One transcript under `~/.claude/projects/<encoded>/`, timestamped so the
 /// tests can order sessions by recency without sleeping.
 fn write_session(claude_dir: &Path, cwd: &Path, session_id: &str, stamp: &str) {
-	let encoded = format!("-{}", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"));
+	let encoded = factorai_lib::agents::claude::encode_path(cwd);
 	let dir = claude_dir.join("projects").join(&encoded);
 	std::fs::create_dir_all(&dir).expect("mkdir project");
-	let cwd = cwd.to_string_lossy();
+	let cwd = json_path(cwd);
 	std::fs::write(
 		dir.join(format!("{session_id}.jsonl")),
 		format!(
@@ -48,10 +54,10 @@ fn write_session(claude_dir: &Path, cwd: &Path, session_id: &str, stamp: &str) {
 
 /// A sub-agent transcript, which lives nested under the session that spawned it.
 fn write_subagent(claude_dir: &Path, cwd: &Path, parent: &str, agent_id: &str, stamp: &str) {
-	let encoded = format!("-{}", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"));
+	let encoded = factorai_lib::agents::claude::encode_path(cwd);
 	let dir = claude_dir.join("projects").join(&encoded).join(parent).join("subagents");
 	std::fs::create_dir_all(&dir).expect("mkdir subagents");
-	let cwd = cwd.to_string_lossy();
+	let cwd = json_path(cwd);
 	std::fs::write(
 		dir.join(format!("{agent_id}.jsonl")),
 		format!(

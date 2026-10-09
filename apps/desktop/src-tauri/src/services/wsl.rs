@@ -1,19 +1,17 @@
-//! Are we running inside WSL, and does this path live on the Windows drive?
+//! Are we running inside WSL, and does this Linux path live on a Windows drive?
 //!
-//! **This is a runtime question, and it cannot be a `#[cfg]` one.** factorai on
-//! Windows *is* the Linux build, running inside a WSL 2 distribution under WSLg
-//! (ADR-0044). One binary, one target triple, two environments: `cfg!(windows)`
-//! is never true there, and `#[cfg(target_os = "linux")]` cannot tell a WSL
-//! distribution apart from a laptop running Debian. Anything that has to differ
-//! has to ask at runtime, which is what this module is for.
+//! A Linux desktop asks this at runtime because a Linux binary may run either
+//! in WSL or on a native Linux system. Native Windows builds never run inside
+//! WSL and answer false; `cfg` keeps their probe free of Linux-specific checks.
 //!
 //! It answers exactly two questions and deliberately not a third. There is no
 //! path translation here, no `wslpath`, no `\\wsl.localhost` handling: the app
 //! runs *inside* the distribution, so every path it ever sees is already a Linux
-//! path, and a translation layer would only exist to serve a boundary we chose
-//! not to have.
+//! path. A native Windows build uses Windows paths directly and needs neither
+//! this warning nor a translation layer.
 //!
-//! See `specs/01-architecture.md` § "Build targets" and ADR-0044.
+//! See `specs/01-architecture.md` § "Build targets", ADR-0044 for the Linux
+//! WSL behavior, and ADR-0074 for the native Windows target.
 
 use std::path::Path;
 use std::sync::OnceLock;
@@ -39,8 +37,8 @@ pub fn is_wsl() -> bool {
 /// written, and nothing in the app looks broken. git is slow there for the same
 /// reason, which is the part a user *can* feel.
 ///
-/// False everywhere that is not WSL, including native Linux, where `/mnt` is an
-/// ordinary mount point and means nothing in particular.
+/// False outside WSL, including native Windows and native Linux, where `/mnt`
+/// is an ordinary mount point and means nothing in particular.
 pub fn is_windows_filesystem(path: &Path) -> bool {
 	is_wsl() && is_drive_mount(path)
 }
@@ -95,7 +93,7 @@ fn probe() -> bool {
 		.unwrap_or(false)
 }
 
-/// macOS has no WSL to be inside of.
+/// macOS and native Windows have no WSL to be inside of.
 #[cfg(not(target_os = "linux"))]
 fn probe() -> bool {
 	false
@@ -147,5 +145,13 @@ mod tests {
 		if !is_wsl() {
 			assert!(!is_windows_filesystem(&PathBuf::from("/mnt/c/code")));
 		}
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn native_windows_paths_do_not_count_as_wsl_mounts() {
+		assert!(!probe());
+		assert!(!is_wsl());
+		assert!(!is_windows_filesystem(&PathBuf::from(r"C:\Users\me\code\app")));
 	}
 }

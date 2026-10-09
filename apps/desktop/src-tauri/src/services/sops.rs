@@ -16,14 +16,14 @@
 //! credentials are whatever the child process inherits, and factorai never
 //! looks at any of it.
 
+use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{FileContents, SopsStatus};
-use crate::services::shell_path;
 
 /// The oldest `sops` this feature can drive.
 ///
@@ -53,23 +53,21 @@ fn probe() -> SopsStatus {
 	SopsStatus { usable: version.is_some() && !too_old, binary_path, version, too_old }
 }
 
-/// The `sops` on the **child** `PATH`, not on ours.
-///
-/// A GUI process has launchd's or the session manager's environment, and a
-/// `sops` installed by Homebrew, mise or `go install` is on none of it — this
-/// is precisely what [`shell_path`] exists for. Walking the entries ourselves
-/// rather than shelling out to `which` keeps this free enough to call from a
-/// command: the `PATH` was already resolved for the first terminal.
+/// The `sops` on the **child** `PATH`, not on ours. The shared resolver uses
+/// the login-shell path on Unix and PATH/PATHEXT on native Windows, so the
+/// status probe and actual SOPS invocation resolve the same executable.
 pub fn find_binary() -> Option<PathBuf> {
-	std::env::split_paths(shell_path::child_path())
-		.map(|dir| dir.join("sops"))
-		.find(|candidate| is_executable(candidate))
+	crate::services::agent_cli::find_binary_on_path("sops")
 }
 
-#[cfg(unix)]
-fn is_executable(path: &std::path::Path) -> bool {
-	use std::os::unix::fs::PermissionsExt;
-	std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+/// Use the shared Windows launcher so PATH/PATHEXT-resolved `.cmd` and `.bat`
+/// shims run through PowerShell with each argument preserved as data.
+fn sops_command(binary: &Path, args: &[OsString]) -> AppResult<Command> {
+	let (program, args) = crate::services::agent_cli::launch_command(binary, args)?;
+	let mut command = Command::new(program);
+	command.args(args);
+	hide_console(&mut command);
+	Ok(command)
 }
 
 /// `sops --version`, with the release check off.
@@ -79,11 +77,9 @@ fn is_executable(path: &std::path::Path) -> bool {
 /// opening a file in the viewer a network call the user did not ask for and
 /// cannot see (PRODUCT.md — no telemetry, and nothing phones home).
 fn version_of(binary: &std::path::Path) -> Option<String> {
-	let mut cmd = Command::new(binary);
-	cmd.args(["--version", "--disable-version-check"])
-		.stdin(Stdio::null())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::null());
+	let args = [OsString::from("--version"), OsString::from("--disable-version-check")];
+	let mut cmd = sops_command(binary, &args).ok()?;
+	cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
 	// The same environment every other child gets: under an AppImage ours
 	// carries a `LD_LIBRARY_PATH` into a squashfs mount, and a Go binary that
 	// picks up our libraries is a failure that looks like a missing install.
@@ -132,11 +128,12 @@ fn parse_version(version: &str) -> Option<(u32, u32, u32)> {
 pub fn decrypt(path: &str) -> AppResult<String> {
 	let binary = usable_binary()?;
 
-	let mut cmd = Command::new(&binary);
+	let args = [OsString::from("decrypt"), OsString::from(path)];
+	let mut cmd = sops_command(&binary, &args)?;
 	// `decrypt` as a subcommand rather than `-d`: it is the spelling 3.9
 	// introduced and the one `MIN_VERSION` guarantees, and it leaves no room
 	// for a path that starts with a dash to be read as a flag.
-	cmd.arg("decrypt").arg(path).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+	cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
 	crate::services::child_env::changes_for_current_env().apply_to_command(&mut cmd);
 
 	let out = cmd
@@ -187,16 +184,8 @@ pub fn encrypt(path: &str, plaintext: &str) -> AppResult<FileContents> {
 	}
 	let recipe = Recipe::read(&current)?;
 
-	let mut cmd = Command::new(&binary);
-	cmd.arg("encrypt");
-	for (flag, value) in recipe.flags() {
-		cmd.arg(flag).arg(value);
-	}
-	// **`--filename-override`, so the output format is the input's.** `sops`
-	// decides YAML / JSON / dotenv / INI from the filename, and the thing on the
-	// command line is `/dev/stdin`, which tells it nothing. The original path
-	// tells it exactly what the file it is replacing was.
-	cmd.arg("--filename-override").arg(path).arg("/dev/stdin");
+	let args = encrypt_arguments(&recipe, path);
+	let mut cmd = sops_command(&binary, &args)?;
 	cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 	crate::services::child_env::changes_for_current_env().apply_to_command(&mut cmd);
 
@@ -245,6 +234,30 @@ pub fn encrypt(path: &str, plaintext: &str) -> AppResult<FileContents> {
 
 	super::files::write_file(path, &ciphertext)
 }
+
+/// SOPS reads stdin when no input filename is supplied; the override preserves
+/// the encrypted file's format and gives Windows paths their own argv entry.
+fn encrypt_arguments(recipe: &Recipe, path: &str) -> Vec<OsString> {
+	let mut args = vec![OsString::from("encrypt")];
+	for (flag, value) in recipe.flags() {
+		args.push(OsString::from(flag));
+		args.push(OsString::from(value));
+	}
+	args.push(OsString::from("--filename-override"));
+	args.push(OsString::from(path));
+	args
+}
+
+/// Console tools started by the GUI must not open a PowerShell or console
+/// window. SOPS communicates through the pipes configured at each call site.
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) {
+	use std::os::windows::process::CommandExt;
+	cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console(_: &mut Command) {}
 
 /// How to re-make one file: who it is for, and which keys of it are encrypted.
 ///
@@ -757,6 +770,65 @@ fn has_all_three<'a>(keys: impl Iterator<Item = &'a str>) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[cfg(windows)]
+	#[test]
+	fn a_batch_sops_wrapper_receives_the_filename_as_one_argv_entry() {
+		let dir = tempfile::tempdir().unwrap();
+		let binary = dir.path().join("fake sops.cmd");
+		let captured = dir.path().join("argv.txt");
+		std::fs::write(
+			&binary,
+			"@echo off\r\n>\"%~dp0argv.txt\" echo %~1\r\n>>\"%~dp0argv.txt\" echo %~6\r\n>>\"%~dp0argv.txt\" echo %~7\r\n",
+		)
+		.unwrap();
+		let recipe = Recipe {
+			keys: vec![("--age", "age1example".into())],
+			shape: Some(("--encrypted-regex", "^(secret)$".into())),
+		};
+		let path = r"C:\Users\Alice\my secrets.yaml";
+		let args = encrypt_arguments(&recipe, path);
+		let status = sops_command(&binary, &args)
+			.unwrap()
+			.stdin(Stdio::null())
+			.stdout(Stdio::null())
+			.stderr(Stdio::null())
+			.status()
+			.unwrap();
+
+		assert!(status.success());
+		assert_eq!(
+			std::fs::read_to_string(captured).unwrap(),
+			format!("encrypt\r\n--filename-override\r\n{path}\r\n")
+		);
+	}
+
+	#[test]
+	fn encrypt_uses_stdin_and_keeps_the_filename_override_as_one_argument() {
+		let recipe = Recipe {
+			keys: vec![("--age", "age1example".into())],
+			shape: Some(("--encrypted-regex", "^(secret)$".into())),
+		};
+		let path = r"C:\Users\Alice\my secrets.yaml";
+		let args: Vec<String> = encrypt_arguments(&recipe, path)
+			.into_iter()
+			.map(|arg| arg.to_string_lossy().into_owned())
+			.collect();
+
+		assert_eq!(
+			args,
+			[
+				"encrypt",
+				"--age",
+				"age1example",
+				"--encrypted-regex",
+				"^(secret)$",
+				"--filename-override",
+				path,
+			]
+		);
+		assert!(!args.contains(&"/dev/stdin".to_string()));
+	}
 
 	/// The metadata block as SOPS writes it, per format. Trimmed to the keys
 	/// detection reads: the ciphertext values are megabytes of base64 in a real

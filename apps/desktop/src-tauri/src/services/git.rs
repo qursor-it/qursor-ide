@@ -65,7 +65,7 @@ fn status_capped(project_path: &str, cap: usize) -> AppResult<GitStatus> {
 		});
 	};
 	// A bare repository has no working directory, so nothing here applies.
-	let Some(workdir) = repo.workdir().map(Path::to_path_buf) else {
+	let Some(workdir) = repo.workdir().map(workdir_path) else {
 		return Ok(GitStatus {
 			repo_root: None,
 			branch: None,
@@ -132,7 +132,7 @@ pub fn blob(path: &str, rev: GitRev, max_bytes: Option<usize>) -> AppResult<Opti
 	let Some(repo) = discover(path) else {
 		return Ok(None);
 	};
-	let Some(workdir) = repo.workdir().map(Path::to_path_buf) else {
+	let Some(workdir) = repo.workdir().map(workdir_path) else {
 		return Ok(None);
 	};
 	let Ok(rel) = canonical(path).strip_prefix(&workdir).map(Path::to_path_buf) else {
@@ -223,7 +223,7 @@ pub fn graph(project_path: &str, offset: usize, limit: usize) -> AppResult<GitGr
 	};
 	// A bare repository has no working directory, and the panel is bound to a
 	// project folder — same call `status` makes, for the same reason.
-	let Some(workdir) = repo.workdir().map(Path::to_path_buf) else {
+	let Some(workdir) = repo.workdir().map(workdir_path) else {
 		return Ok(empty_graph());
 	};
 
@@ -405,7 +405,7 @@ fn commit_detail_capped(
 	let Some(repo) = discover(project_path) else {
 		return Ok(None);
 	};
-	let Some(workdir) = repo.workdir().map(Path::to_path_buf) else {
+	let Some(workdir) = repo.workdir().map(workdir_path) else {
 		return Ok(None);
 	};
 	// `revparse_single` rather than `Oid::from_str` so a short SHA works too.
@@ -462,7 +462,7 @@ pub fn blob_at(
 	let Some(repo) = discover(path) else {
 		return Ok(None);
 	};
-	let Some(workdir) = repo.workdir().map(Path::to_path_buf) else {
+	let Some(workdir) = repo.workdir().map(workdir_path) else {
 		return Ok(None);
 	};
 	let Ok(rel) = canonical(path).strip_prefix(&workdir).map(Path::to_path_buf) else {
@@ -1151,7 +1151,7 @@ fn worktree_names(repo: &Repository) -> Vec<String> {
 /// second open for a value one `parent()` already has.
 fn main_worktree_path(repo: &Repository) -> Option<PathBuf> {
 	if !repo.is_worktree() {
-		return repo.workdir().map(Path::to_path_buf);
+		return repo.workdir().map(workdir_path);
 	}
 	repo.commondir().parent().map(Path::to_path_buf).filter(|p| p.is_dir())
 }
@@ -1220,8 +1220,40 @@ fn group_order(group: GitGroup) -> u8 {
 	}
 }
 
+/// libgit2 uses ordinary drive paths; the Windows canonicalizer may return a
+/// verbatim prefix or expand a short directory name. Use the same representation
+/// for the repository root and project before deriving relative paths (ADR-0074).
+fn workdir_path(path: &Path) -> PathBuf {
+	#[cfg(windows)]
+	{
+		dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf())
+	}
+	#[cfg(not(windows))]
+	{
+		path.to_path_buf()
+	}
+}
+
 fn canonical(path: &str) -> PathBuf {
-	std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path))
+	#[cfg(windows)]
+	{
+		let path = Path::new(path);
+		if let Ok(real) = dunce::canonicalize(path) {
+			return real;
+		}
+		// A deleted file still has a HEAD/index side. Resolve its existing
+		// parent so short Windows directory aliases do not break that lookup.
+		if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+			if let Ok(real) = dunce::canonicalize(parent) {
+				return real.join(name);
+			}
+		}
+		dunce::simplified(path).to_path_buf()
+	}
+	#[cfg(not(windows))]
+	{
+		std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path))
+	}
 }
 
 /// `target` expressed relative to `base`, with `../` for each level it escapes.

@@ -785,11 +785,14 @@ mod tests {
 
 	#[test]
 	fn openfile_outside_the_project_is_refused_and_never_reaches_the_ui() {
+		let outside = tempfile::TempDir::new().unwrap();
+		let outside_file = outside.path().join("outside.txt");
+		std::fs::write(&outside_file, "outside").unwrap();
 		let f = fixture(true);
 		let reply = call(
 			&f.mcp,
 			"tools/call",
-			json!({ "name": "openFile", "arguments": { "filePath": "/etc/passwd" } }),
+			json!({ "name": "openFile", "arguments": { "filePath": outside_file.to_str().unwrap() } }),
 		);
 
 		let (text, is_error) = tool_result(&reply);
@@ -872,7 +875,12 @@ mod tests {
 		let reply = call(&f.mcp, "tools/call", json!({ "name": "getWorkspaceFolders" }));
 
 		let (text, _) = tool_result(&reply);
-		assert!(text.contains(f.project.path().to_str().unwrap()), "{text}");
+		let result: serde_json::Value = serde_json::from_str(&text).unwrap();
+		let cwd = result["cwd"].as_str().unwrap();
+		assert_eq!(
+			std::path::Path::new(cwd).canonicalize().unwrap(),
+			f.project.path().canonicalize().unwrap()
+		);
 	}
 
 	#[test]

@@ -126,7 +126,7 @@ fn describe(
 fn escapes_root(path: &Path, root_canon: Option<&Path>) -> bool {
 	let Some(root) = root_canon else { return false };
 	match fs::canonicalize(path) {
-		Ok(target) => !target.starts_with(root),
+		Ok(target) => !crate::services::ide::scope::path_is_within(root, &target),
 		Err(_) => true,
 	}
 }
@@ -647,13 +647,32 @@ pub fn write_file(path: &str, contents: &str) -> AppResult<FileContents> {
 
 	// The mode of what is being replaced, before anything replaces it. `None`
 	// for a file that does not exist yet, which then takes the default.
-	let existing_mode = fs::metadata(&target).ok().map(|m| mode_of(&m));
+	let existing_metadata = match fs::metadata(&target) {
+		Ok(metadata) => Some(metadata),
+		Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+		// Do not treat an unreadable existing file as a new file: on Windows
+		// that would replace it without first preserving its DACL.
+		Err(error) => return Err(write_error(path, dir, error)),
+	};
+	let existing_mode = existing_metadata.as_ref().map(mode_of);
+	#[cfg(windows)]
+	let existing_dacl = existing_metadata
+		.as_ref()
+		.map(|_| read_dacl(&target).map_err(|e| write_error(path, dir, e)))
+		.transpose()?;
 
 	let temp = tempfile::Builder::new()
 		.prefix(".factorai-")
 		.suffix(".tmp")
 		.tempfile_in(dir)
 		.map_err(|e| write_error(path, dir, e))?;
+	#[cfg(windows)]
+	if let Some(dacl) = existing_dacl.as_deref() {
+		// Apply the existing ACL before writing any bytes. A secrets file can be
+		// more private than its parent directory, and the temporary replacement
+		// must not briefly inherit a broader read grant.
+		apply_dacl(temp.path(), dacl).map_err(|e| write_error(path, dir, e))?;
+	}
 
 	{
 		use std::io::Write as _;
@@ -672,7 +691,36 @@ pub fn write_file(path: &str, contents: &str) -> AppResult<FileContents> {
 
 	// `persist` is the rename. It reports the temp file back on failure so it is
 	// cleaned up rather than left beside the file it failed to become.
-	temp.persist(&target).map_err(|e| write_error(path, dir, e.error))?;
+	#[cfg(windows)]
+	let clear_readonly_for_replace = existing_mode == Some(1);
+	#[cfg(windows)]
+	if clear_readonly_for_replace {
+		// Windows refuses to replace a read-only destination. Clear only that
+		// attribute after the private, synced replacement is ready, then restore
+		// it on failure and on the replacement after the rename.
+		set_mode(&target, 0).map_err(|e| write_error(path, dir, e))?;
+	}
+	if let Err(error) = temp.persist(&target) {
+		#[cfg(windows)]
+		if clear_readonly_for_replace {
+			if let Err(restore) = set_mode(&target, 1) {
+				return Err(write_error(
+					path,
+					dir,
+					std::io::Error::other(format!(
+						"replacement failed ({}); restoring read-only flag failed ({restore})",
+						error.error
+					)),
+				));
+			}
+		}
+		return Err(write_error(path, dir, error.error));
+	}
+
+	#[cfg(windows)]
+	if clear_readonly_for_replace {
+		set_mode(&target, 1).map_err(|e| write_error(path, dir, e))?;
+	}
 
 	let bytes = contents.as_bytes();
 	Ok(contents_from_bytes(path, bytes, bytes.len() as u64, usize::MAX))
@@ -721,16 +769,120 @@ fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
 // macOS and Linux are the platforms (§ "What this project does not do"), so the
 // arms above are the real ones. These keep the file compiling anywhere else
 // without pretending the mode was preserved.
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn mode_of(meta: &fs::Metadata) -> u32 {
+	u32::from(meta.permissions().readonly())
+}
+
+#[cfg(windows)]
+fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+	let mut permissions = fs::metadata(path)?.permissions();
+	permissions.set_readonly(mode != 0);
+	fs::set_permissions(path, permissions)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn mode_of(meta: &fs::Metadata) -> u32 {
 	let _ = meta;
 	0
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
 	let (_, _) = (path, mode);
 	Ok(())
+}
+
+/// Read the existing Windows discretionary ACL so an atomic replacement keeps
+/// the file's access boundary instead of inheriting the parent directory's ACL.
+#[cfg(windows)]
+fn read_dacl(path: &Path) -> std::io::Result<Vec<u8>> {
+	use std::os::windows::ffi::OsStrExt;
+	use std::ptr::null_mut;
+	use windows_sys::Win32::Security::{GetFileSecurityW, DACL_SECURITY_INFORMATION};
+
+	let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+	let mut required = 0;
+	unsafe {
+		GetFileSecurityW(
+			wide_path.as_mut_ptr(),
+			DACL_SECURITY_INFORMATION,
+			null_mut(),
+			0,
+			&mut required,
+		);
+	}
+	if required == 0 {
+		return Err(std::io::Error::last_os_error());
+	}
+
+	let mut descriptor = vec![0u8; required as usize];
+	let result = unsafe {
+		GetFileSecurityW(
+			wide_path.as_mut_ptr(),
+			DACL_SECURITY_INFORMATION,
+			descriptor.as_mut_ptr().cast(),
+			required,
+			&mut required,
+		)
+	};
+	if result == 0 {
+		return Err(std::io::Error::last_os_error());
+	}
+	descriptor.truncate(required as usize);
+	Ok(descriptor)
+}
+
+/// Install a captured DACL on the temporary file before it receives contents.
+/// The copy is protected from inheriting wider permissions from the parent;
+/// inherited entries from the original ACL are still present in its descriptor.
+#[cfg(windows)]
+fn apply_dacl(path: &Path, descriptor: &[u8]) -> std::io::Result<()> {
+	use std::os::windows::ffi::OsStrExt;
+	use std::ptr::null_mut;
+	use windows_sys::Win32::Security::Authorization::{SetNamedSecurityInfoW, SE_FILE_OBJECT};
+	use windows_sys::Win32::Security::{
+		GetSecurityDescriptorDacl, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+	};
+
+	let mut dacl_present = 0;
+	let mut dacl_defaulted = 0;
+	let mut dacl = null_mut();
+	let got_dacl = unsafe {
+		GetSecurityDescriptorDacl(
+			descriptor.as_ptr().cast_mut().cast(),
+			&mut dacl_present,
+			&mut dacl,
+			&mut dacl_defaulted,
+		)
+	};
+	if got_dacl == 0 {
+		return Err(std::io::Error::last_os_error());
+	}
+	if dacl_present == 0 {
+		return Err(std::io::Error::new(
+			std::io::ErrorKind::InvalidData,
+			"the source file has no DACL",
+		));
+	}
+
+	let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+	let result = unsafe {
+		SetNamedSecurityInfoW(
+			wide_path.as_mut_ptr(),
+			SE_FILE_OBJECT,
+			DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+			null_mut(),
+			null_mut(),
+			dacl,
+			null_mut(),
+		)
+	};
+	if result == 0 {
+		Ok(())
+	} else {
+		Err(std::io::Error::from_raw_os_error(result as i32))
+	}
 }
 
 /// Classify a batch of paths for the terminal's link provider (F19).
@@ -1216,6 +1368,7 @@ sops:
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn path_kinds_follows_a_symlink_to_what_it_points_at() {
 		let dir = tempdir().unwrap();
 		let file = dir.path().join("real.txt");
@@ -1357,6 +1510,93 @@ sops:
 		assert_eq!(mode, 0o600, "a 0600 file must not come back 0644");
 	}
 
+	#[cfg(windows)]
+	#[test]
+	fn write_file_keeps_the_existing_windows_dacl() {
+		let dir = tempdir().unwrap();
+		let file = dir.path().join("secrets.txt");
+		fs::write(&file, "before").unwrap();
+		let before = read_dacl(&file).unwrap();
+
+		write_file(&path_of(&file), "after").unwrap();
+
+		assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+		let after = read_dacl(&file).unwrap();
+		assert_eq!(dacl_semantic_bytes(&before), dacl_semantic_bytes(&after));
+		assert!(
+			dacl_is_protected(&after),
+			"the replacement DACL must be protected from parent inheritance"
+		);
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn write_file_replaces_and_preserves_a_readonly_windows_file() {
+		let dir = tempdir().unwrap();
+		let file = dir.path().join("readonly.txt");
+		fs::write(&file, "before").unwrap();
+		let mut permissions = fs::metadata(&file).unwrap().permissions();
+		permissions.set_readonly(true);
+		fs::set_permissions(&file, permissions).unwrap();
+
+		write_file(&path_of(&file), "after").unwrap();
+
+		assert_eq!(fs::read_to_string(&file).unwrap(), "after");
+		assert!(fs::metadata(&file).unwrap().permissions().readonly());
+	}
+
+	#[cfg(windows)]
+	fn dacl_bytes(descriptor: &[u8]) -> Vec<u8> {
+		use std::ptr::null_mut;
+		use windows_sys::Win32::Security::GetSecurityDescriptorDacl;
+
+		let mut present = 0;
+		let mut defaulted = 0;
+		let mut dacl = null_mut();
+		let ok = unsafe {
+			GetSecurityDescriptorDacl(
+				descriptor.as_ptr().cast_mut().cast(),
+				&mut present,
+				&mut dacl,
+				&mut defaulted,
+			)
+		};
+		assert_ne!(ok, 0);
+		assert_ne!(present, 0);
+		assert!(!dacl.is_null());
+		let size = unsafe { (*dacl).AclSize as usize };
+		unsafe { std::slice::from_raw_parts(dacl.cast::<u8>(), size).to_vec() }
+	}
+
+	#[cfg(windows)]
+	fn dacl_semantic_bytes(descriptor: &[u8]) -> Vec<u8> {
+		let mut acl = dacl_bytes(descriptor);
+		let ace_count = u16::from_le_bytes([acl[4], acl[5]]) as usize;
+		let mut offset = 8;
+		for _ in 0..ace_count {
+			let ace_size = u16::from_le_bytes([acl[offset + 2], acl[offset + 3]]) as usize;
+			acl[offset + 1] &= !(windows_sys::Win32::Security::INHERITED_ACE as u8);
+			offset += ace_size;
+		}
+		acl
+	}
+
+	#[cfg(windows)]
+	fn dacl_is_protected(descriptor: &[u8]) -> bool {
+		use windows_sys::Win32::Security::{GetSecurityDescriptorControl, SE_DACL_PROTECTED};
+
+		let mut control = 0;
+		let mut revision = 0;
+		let ok = unsafe {
+			GetSecurityDescriptorControl(
+				descriptor.as_ptr().cast_mut().cast(),
+				&mut control,
+				&mut revision,
+			)
+		};
+		assert_ne!(ok, 0);
+		control & SE_DACL_PROTECTED != 0
+	}
 	#[cfg(unix)]
 	#[test]
 	fn write_file_reports_an_unwritable_directory() {

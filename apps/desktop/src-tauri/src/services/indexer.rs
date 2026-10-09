@@ -464,7 +464,10 @@ impl Indexer {
 			}
 			codex::rollouts(Path::new(&dir.config_dir))
 				.into_iter()
-				.filter(|p| codex::read_meta(p).is_some_and(|m| m.cwd == dir.key))
+				.filter(|p| {
+					codex::read_meta(p)
+						.is_some_and(|m| crate::agents::path_identity::same(&m.cwd, &dir.key))
+				})
 				.collect()
 		} else {
 			match std::fs::read_dir(dir.path()) {

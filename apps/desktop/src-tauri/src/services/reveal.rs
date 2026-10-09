@@ -22,6 +22,8 @@
 //!   spoken through `dbus-send` rather than a D-Bus crate: one method call with
 //!   no reply to read is not worth a dependency, and `dbus-send` is part of the
 //!   same package as the bus this app is already talking to through GTK.
+//! - Windows: Explorer's `/select,` option, which opens the containing folder
+//!   and highlights the requested file.
 //!
 //! The Linux fallback is `xdg-open` on the **parent directory**, for a desktop
 //! whose file manager does not implement `FileManager1`. That loses the
@@ -63,7 +65,7 @@ fn platform_reveal(path: &Path) -> AppResult<()> {
 	run(Command::new("open").arg("-R").arg(path))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn platform_reveal(path: &Path) -> AppResult<()> {
 	// `--print-reply` is load-bearing and not for its output, which is thrown
 	// away. Without it the call goes out with no reply expected, the bus
@@ -91,6 +93,32 @@ fn platform_reveal(path: &Path) -> AppResult<()> {
 	// folder without the selection is worth more than an error.
 	let folder = path.parent().unwrap_or(path);
 	run(Command::new("xdg-open").arg(folder))
+}
+
+#[cfg(windows)]
+fn platform_reveal(path: &Path) -> AppResult<()> {
+	run(Command::new("explorer.exe").arg(explorer_select_argument(path)))
+}
+
+/// Explorer does not accept the extended-length prefix Rust may return from
+/// canonicalization. Convert it to the ordinary drive or UNC spelling it uses.
+#[cfg(windows)]
+fn windows_shell_path(path: &Path) -> String {
+	let path = path.to_string_lossy();
+	let lower = path.to_ascii_lowercase();
+	if lower.starts_with(r"\\?\unc\") {
+		format!(r"\{}", &path[7..])
+	} else if lower.starts_with(r"\\?\") {
+		path[4..].to_string()
+	} else {
+		path.into_owned()
+	}
+}
+
+/// Explorer expects the selected item joined to `/select,` in one argument.
+#[cfg(windows)]
+fn explorer_select_argument(path: &Path) -> String {
+	format!("/select,{}", windows_shell_path(path))
 }
 
 /// Run `cmd` to completion with the environment a child of this process should
@@ -133,7 +161,7 @@ fn run(cmd: &mut Command) -> AppResult<()> {
 /// necessary — `dbus-send` would pass a literal `@` through — but a URI with
 /// nothing left to interpret cannot be reinterpreted, and the receiver is a
 /// file manager we did not write.
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn file_uri(path: &Path) -> String {
 	use std::fmt::Write;
 	use std::os::unix::ffi::OsStrExt;
@@ -158,6 +186,23 @@ fn file_uri(path: &Path) -> String {
 mod tests {
 	use super::*;
 
+	#[cfg(windows)]
+	#[test]
+	fn explorer_paths_drop_extended_drive_and_unc_prefixes() {
+		assert_eq!(
+			windows_shell_path(Path::new(r"\\?\C:\Users\Alice\repo\file.txt")),
+			r"C:\Users\Alice\repo\file.txt"
+		);
+		assert_eq!(
+			windows_shell_path(Path::new(r"\\?\UNC\server\share\repo\file.txt")),
+			r"\\server\share\repo\file.txt"
+		);
+		assert_eq!(
+			explorer_select_argument(Path::new(r"C:\Users\Alice\my repo\file.txt")),
+			r"/select,C:\Users\Alice\my repo\file.txt"
+		);
+	}
+
 	#[test]
 	fn reveal_refuses_a_relative_path() {
 		// The renderer only ever holds absolute paths, and a relative one here
@@ -174,13 +219,13 @@ mod tests {
 		assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
 	}
 
-	#[cfg(not(target_os = "macos"))]
+	#[cfg(target_os = "linux")]
 	#[test]
 	fn file_uri_keeps_an_ordinary_path_readable() {
 		assert_eq!(file_uri(Path::new("/home/x/notes.md")), "file:///home/x/notes.md");
 	}
 
-	#[cfg(not(target_os = "macos"))]
+	#[cfg(target_os = "linux")]
 	#[test]
 	fn file_uri_escapes_what_a_shell_or_a_uri_would_read() {
 		// A space, a `#` (which would truncate the URI at a fragment), and a
@@ -188,7 +233,7 @@ mod tests {
 		assert_eq!(file_uri(Path::new("/tmp/a b/c#d%e.txt")), "file:///tmp/a%20b/c%23d%25e.txt");
 	}
 
-	#[cfg(not(target_os = "macos"))]
+	#[cfg(target_os = "linux")]
 	#[test]
 	fn file_uri_escapes_non_utf8_bytes_rather_than_losing_them() {
 		use std::ffi::OsStr;

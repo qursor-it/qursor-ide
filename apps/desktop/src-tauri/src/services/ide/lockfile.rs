@@ -20,8 +20,10 @@
 
 use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -68,7 +70,7 @@ pub struct Lockfile {
 	pub pid: u32,
 	pub ide_name: String,
 	pub transport: String,
-	/// Always false here: v1 is macOS and Linux only.
+	/// Whether this session is running in the native Windows desktop build.
 	pub running_in_windows: bool,
 	pub auth_token: String,
 }
@@ -81,7 +83,7 @@ impl Lockfile {
 			pid: std::process::id(),
 			ide_name: IDE_NAME.to_string(),
 			transport: TRANSPORT.to_string(),
-			running_in_windows: false,
+			running_in_windows: cfg!(windows),
 			auth_token: new_token(),
 		}
 	}
@@ -135,6 +137,83 @@ fn write_private(path: &Path, body: &[u8]) -> io::Result<()> {
 	file.set_permissions(fs::Permissions::from_mode(0o600))?;
 	file.write_all(body)?;
 	file.sync_all()
+}
+
+#[cfg(windows)]
+fn write_private(path: &Path, body: &[u8]) -> io::Result<()> {
+	use std::io::Write;
+
+	let mut file = fs::OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+	set_owner_only_dacl(path)?;
+	file.write_all(body)?;
+	file.sync_all()
+}
+
+/// Keep the bearer token readable only by the file owner, the Windows analogue
+/// of the Unix `0600` lockfile. The file is empty until this protected DACL is
+/// installed, so a newly created lock never exposes the token through inherited
+/// directory permissions.
+#[cfg(windows)]
+fn set_owner_only_dacl(path: &Path) -> io::Result<()> {
+	use std::os::windows::ffi::OsStrExt;
+	use std::ptr::null_mut;
+	use windows_sys::Win32::Foundation::{LocalFree, HLOCAL};
+	use windows_sys::Win32::Security::Authorization::{
+		ConvertStringSecurityDescriptorToSecurityDescriptorW, SetNamedSecurityInfoW,
+		SDDL_REVISION_1, SE_FILE_OBJECT,
+	};
+	use windows_sys::Win32::Security::{
+		GetSecurityDescriptorDacl, DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
+	};
+
+	let descriptor_text: Vec<u16> = "D:P(A;;FA;;;OW)\0".encode_utf16().collect();
+	let mut descriptor = null_mut();
+	let mut descriptor_len = 0;
+	let converted = unsafe {
+		ConvertStringSecurityDescriptorToSecurityDescriptorW(
+			descriptor_text.as_ptr(),
+			SDDL_REVISION_1,
+			&mut descriptor,
+			&mut descriptor_len,
+		)
+	};
+	if converted == 0 {
+		return Err(io::Error::last_os_error());
+	}
+
+	let mut dacl_present = 0;
+	let mut dacl_defaulted = 0;
+	let mut dacl = null_mut();
+	let got_dacl = unsafe {
+		GetSecurityDescriptorDacl(descriptor, &mut dacl_present, &mut dacl, &mut dacl_defaulted)
+	};
+	if got_dacl == 0 || dacl_present == 0 || dacl.is_null() {
+		unsafe {
+			LocalFree(descriptor as HLOCAL);
+		}
+		return Err(io::Error::last_os_error());
+	}
+
+	let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+	let result = unsafe {
+		SetNamedSecurityInfoW(
+			wide_path.as_mut_ptr(),
+			SE_FILE_OBJECT,
+			DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+			null_mut(),
+			null_mut(),
+			dacl,
+			null_mut(),
+		)
+	};
+	unsafe {
+		LocalFree(descriptor as HLOCAL);
+	}
+	if result == 0 {
+		Ok(())
+	} else {
+		Err(io::Error::from_raw_os_error(result as i32))
+	}
 }
 
 /// Delete the handle for `port`. Missing is success: the caller is a teardown
@@ -199,11 +278,39 @@ pub fn sweep(claude_dir: &Path, is_alive: impl Fn(u32) -> bool) -> usize {
 /// It cannot distinguish "gone" from "alive but owned by someone else", and
 /// that asymmetry is the safe way round: a pid we cannot signal reads as alive,
 /// so the sweep leaves the file rather than deleting a stranger's.
+#[cfg(unix)]
 pub fn pid_is_alive(pid: u32) -> bool {
 	// SAFETY: `kill` with signal 0 performs error checking only — it delivers no
 	// signal and touches no memory of ours. The cast is to the platform's own
 	// pid type, which is what `std::process::id` widened from.
 	unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+/// Probe a process by opening a limited-information handle. Failure due to
+/// access restrictions is treated as alive, so a sweep never removes a lock
+/// that may belong to another user's still-running session.
+#[cfg(windows)]
+pub fn pid_is_alive(pid: u32) -> bool {
+	use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER};
+	use windows_sys::Win32::System::Threading::{
+		GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+	};
+
+	let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+	if process.is_null() {
+		// ERROR_INVALID_PARAMETER means the process id does not exist. Other
+		// errors (notably access denied) are deliberately kept as "alive".
+		return unsafe { GetLastError() } != ERROR_INVALID_PARAMETER;
+	}
+
+	let mut exit_code = 0;
+	let read_code = unsafe { GetExitCodeProcess(process, &mut exit_code) } != 0;
+	unsafe {
+		CloseHandle(process);
+	}
+	// If Windows let us open the process but could not report its state, keep
+	// the lock. The sweep must only remove a handle when it knows the owner died.
+	!read_code || exit_code == 259 // STILL_ACTIVE
 }
 
 #[cfg(test)]
@@ -235,7 +342,7 @@ mod tests {
 		}
 		assert_eq!(json["transport"], "ws");
 		assert_eq!(json["ideName"], IDE_NAME);
-		assert_eq!(json["runningInWindows"], false);
+		assert_eq!(json["runningInWindows"], cfg!(windows));
 		assert_eq!(json["workspaceFolders"], serde_json::json!(["/home/u/proj"]));
 	}
 
@@ -245,6 +352,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn writing_creates_the_directory_and_a_private_file() {
 		let dir = claude_dir();
 		let lock = Lockfile::new("/home/u/proj");
@@ -257,6 +365,7 @@ mod tests {
 	}
 
 	#[test]
+	#[cfg(unix)]
 	fn rewriting_re_asserts_the_mode_of_a_file_that_already_existed() {
 		let dir = claude_dir();
 		fs::create_dir_all(super::dir(dir.path())).unwrap();
@@ -332,8 +441,7 @@ mod tests {
 	#[test]
 	fn our_own_process_reads_as_alive() {
 		assert!(pid_is_alive(std::process::id()));
-		// A pid that cannot exist: Linux caps at 2^22 by default and this is
-		// past every platform's ceiling.
+		// A pid well outside the range assigned to ordinary local processes.
 		assert!(!pid_is_alive(0x7FFF_FFFF));
 	}
 }

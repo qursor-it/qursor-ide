@@ -17,6 +17,12 @@ use factorai_lib::services::indexer::Indexer;
 use rusqlite::params;
 use tempfile::TempDir;
 
+/// Escape native separators as JSON data in synthetic transcripts (ADR-0074).
+fn json_path(path: &Path) -> String {
+	let json = serde_json::to_string(&path.to_string_lossy()).expect("serialize fixture path");
+	json[1..json.len() - 1].to_string()
+}
+
 fn open_db(tmp: &Path) -> Db {
 	Db::open(&tmp.join("data")).expect("open db")
 }
@@ -32,10 +38,10 @@ fn make_indexer(db: Db, claude_dir: PathBuf) -> Indexer {
 /// A `~/.claude/projects/<encoded>/<session>.jsonl` for `cwd`, as Claude would
 /// leave behind after a session there.
 fn write_claude_session(claude_dir: &Path, cwd: &Path, session_id: &str) {
-	let encoded = format!("-{}", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"));
+	let encoded = factorai_lib::agents::claude::encode_path(cwd);
 	let project_dir = claude_dir.join("projects").join(&encoded);
 	std::fs::create_dir_all(&project_dir).expect("mkdir project");
-	let cwd = cwd.to_string_lossy();
+	let cwd = json_path(cwd);
 	std::fs::write(
 		project_dir.join(format!("{session_id}.jsonl")),
 		format!(
@@ -89,7 +95,9 @@ fn adds_a_folder_claude_has_never_run_in() {
 	assert_eq!(project.last_session_at, None);
 	// The path is what a session spawn will use as its cwd, and what the
 	// transcript directory is derived from, so it has to be the real one.
-	assert_eq!(project.real_path, dir.canonicalize().unwrap().to_str().unwrap());
+	assert_eq!(Path::new(&project.real_path).canonicalize().unwrap(), dir.canonicalize().unwrap());
+	#[cfg(windows)]
+	assert!(!project.real_path.starts_with(r"\\?\"), "persist an ordinary Windows path");
 	// A uuid, not a path encoding: identity is the decision, not the folder.
 	assert_eq!(project.id.len(), 36, "expected a uuid, got {}", project.id);
 }
@@ -286,6 +294,7 @@ fn removing_a_project_retires_its_sidebar_row() {
 	assert_eq!(rows, 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_path_through_a_symlink_resolves_to_the_folder_it_points_at() {
 	let tmp = TempDir::new().unwrap();
@@ -385,6 +394,34 @@ fn a_deleted_folder_is_importable_but_a_typo_is_not() {
 		add_project_in(&db, "/no/such/directory/anywhere").is_err(),
 		"a path no agent has heard of is a mistake, not an import"
 	);
+}
+
+#[cfg(windows)]
+#[test]
+fn readding_a_gone_folder_through_dotdot_parent_reuses_its_project() {
+	let tmp = TempDir::new().unwrap();
+	let work = tmp.path().join("work");
+	let alias_parent = work.join("temp");
+	let dir = work.join("gone");
+	std::fs::create_dir_all(&alias_parent).unwrap();
+	std::fs::create_dir_all(&dir).unwrap();
+	let real = dir.canonicalize().unwrap();
+	let claude_dir = tmp.path().join(".claude");
+	let db = open_db(tmp.path());
+	write_claude_session(&claude_dir, &real, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+
+	let original = add_project_in(&db, real.to_str().unwrap()).expect("add folder");
+	make_indexer(db.clone(), claude_dir).discover().expect("discover history");
+	std::fs::remove_dir_all(&real).unwrap();
+
+	let aliased_missing = alias_parent.join("..").join("gone");
+	assert!(aliased_missing.canonicalize().is_err(), "the leaf is gone");
+	let readded = add_project_in(&db, aliased_missing.to_str().unwrap()).expect("re-add alias");
+
+	assert!(readded.missing);
+	assert_eq!(readded.id, original.id);
+	assert_eq!(readded.real_path, original.real_path);
+	assert_eq!(project_count(&db), 1, "a missing alias must not duplicate the project");
 }
 
 #[test]

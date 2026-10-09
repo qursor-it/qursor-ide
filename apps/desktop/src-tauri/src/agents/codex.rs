@@ -236,9 +236,16 @@ pub fn find_by_prefix(codex_dir: &Path, prefix: &str, cwd: &Path) -> Option<(Str
 		.filter(|(id, _)| id.starts_with(&prefix))
 		.collect();
 	hits.sort_by(|a, b| b.1.cmp(&a.1));
-	hits.into_iter().find(|(_, p)| {
-		read_meta(p).is_some_and(|m| Path::new(&m.cwd) == cwd) || read_meta(p).is_none()
+	hits.into_iter().find(|(_, p)| match read_meta(p) {
+		Some(meta) => same_path(Path::new(&meta.cwd), cwd),
+		None => true,
 	})
+}
+
+/// Compare recorded and current working directories using native Windows path
+/// semantics, including case folding and canonical extended-path prefixes.
+fn same_path(a: &Path, b: &Path) -> bool {
+	crate::agents::path_identity::same(&a.to_string_lossy(), &b.to_string_lossy())
 }
 
 /// The `session_meta` line's fields we use.
@@ -273,7 +280,9 @@ pub fn read_meta(path: &Path) -> Option<Meta> {
 	if line.kind != "session_meta" {
 		return None;
 	}
-	serde_json::from_value(line.payload).ok()
+	let mut meta: Meta = serde_json::from_value(line.payload).ok()?;
+	meta.cwd = crate::agents::path_identity::display_path(&meta.cwd);
+	Some(meta)
 }
 
 /// Every folder this store holds a thread for, keyed by the folder itself
@@ -284,7 +293,8 @@ pub fn discover(codex_dir: &Path) -> Vec<Discovered> {
 	let mut out = Vec::new();
 	for path in rollouts(codex_dir) {
 		let Some(meta) = read_meta(&path) else { continue };
-		if seen.insert(meta.cwd.clone(), ()).is_none() {
+		let identity = crate::agents::path_identity::key(&meta.cwd);
+		if seen.insert(identity, ()).is_none() {
 			out.push(Discovered { agent: CODEX, key: meta.cwd.clone(), real_path: Some(meta.cwd) });
 		}
 	}
@@ -300,18 +310,21 @@ pub fn discover(codex_dir: &Path) -> Vec<Discovered> {
 pub fn folder_stats(codex_dir: &Path) -> HashMap<String, (i64, Option<i64>)> {
 	let mut threads: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
 	let mut newest: HashMap<String, i64> = HashMap::new();
+	let mut recorded_paths: HashMap<String, String> = HashMap::new();
 	for path in rollouts(codex_dir) {
 		let Some(meta) = read_meta(&path) else { continue };
+		let identity = crate::agents::path_identity::key(&meta.cwd);
+		recorded_paths.entry(identity.clone()).or_insert_with(|| meta.cwd.clone());
 		let mtime = std::fs::metadata(&path)
 			.and_then(|m| m.modified())
 			.ok()
 			.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
 			.map(|d| d.as_millis() as i64);
 		if let Some(ms) = mtime {
-			let n = newest.entry(meta.cwd.clone()).or_insert(ms);
+			let n = newest.entry(identity.clone()).or_insert(ms);
 			*n = (*n).max(ms);
 		}
-		let set = threads.entry(meta.cwd.clone()).or_default();
+		let set = threads.entry(identity).or_default();
 		if meta.parent_thread_id.is_none() {
 			if let Some(id) = session_id_of(&path) {
 				set.insert(id);
@@ -320,8 +333,9 @@ pub fn folder_stats(codex_dir: &Path) -> HashMap<String, (i64, Option<i64>)> {
 	}
 	threads
 		.into_iter()
-		.map(|(cwd, ids)| {
-			let last = newest.get(&cwd).copied();
+		.map(|(identity, ids)| {
+			let cwd = recorded_paths.remove(&identity).unwrap_or_else(|| identity.clone());
+			let last = newest.get(&identity).copied();
 			(cwd, (ids.len() as i64, last))
 		})
 		.collect()
@@ -629,6 +643,50 @@ mod tests {
 		);
 		assert_eq!(session_id_of(p).as_deref(), Some("01a0c975-21fa-7e51-ae6f-cb1045c10d51"));
 		assert_eq!(session_id_of(Path::new("/x/notes.jsonl")), None);
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn codex_cwd_matching_accepts_case_and_extended_paths() {
+		assert!(same_path(
+			Path::new(r"C:\Users\Alice\code\pong"),
+			Path::new(r"c:\users\alice\code\pong")
+		));
+		assert!(same_path(
+			Path::new(r"\\?\UNC\server\share\repo"),
+			Path::new(r"\\server\share\repo")
+		));
+		assert!(!same_path(
+			Path::new(r"C:\Users\Alice\repo"),
+			Path::new(r"C:\Users\Alice\repo-old")
+		));
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn codex_metadata_uses_ordinary_drive_and_unc_forms_without_folding_case() {
+		let dir = tempfile::tempdir().unwrap();
+		let drive_path = dir.path().join("drive.jsonl");
+		let drive_line = serde_json::json!({
+			"type": "session_meta",
+			"payload": {
+				"id": "drive",
+				"cwd": r"\\?\C:\Users\Alice\repo"
+			}
+		});
+		std::fs::write(&drive_path, format!("{drive_line}\n")).unwrap();
+		assert_eq!(read_meta(&drive_path).unwrap().cwd, r"C:\Users\Alice\repo");
+
+		let unc_path = dir.path().join("unc.jsonl");
+		let unc_line = serde_json::json!({
+			"type": "session_meta",
+			"payload": {
+				"id": "unc",
+				"cwd": r"\\?\UNC\server\share\repo"
+			}
+		});
+		std::fs::write(&unc_path, format!("{unc_line}\n")).unwrap();
+		assert_eq!(read_meta(&unc_path).unwrap().cwd, r"\\server\share\repo");
 	}
 
 	#[test]
