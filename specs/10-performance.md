@@ -869,7 +869,17 @@ drag of the viewer edge, a live session beside it:
 DOM, and about 14 ms a frame of layout, which is the document reflowing to
 its new width and is the work a resize is for. The WebKitGTK and WKWebView
 numbers are still owed, as for everything in P7. A smoke test holds the
-terminal half (`file-viewer.spec.ts`, "resizes the terminal once, on release").
+terminal half (`file-viewer.spec.ts`, "resizes the PTY once, on release").
+
+*Revised 2026-10-12.* Holding the whole fit, not just the PTY resize, left
+the grid at its old width for the length of the drag, so a widening panel
+covered the session's right edge until the release. The grid now fits on
+every frame and only `terminal_resize` is held: `pushSize` keeps the last
+size per terminal while `isPanelDragging()` and sends it from `onPanelDragEnd`.
+The agent still redraws once per drag. A 60-step out-and-back drag of the
+file panel edge over a session holding 10 000 long lines of scrollback, browser
+lane: median frame 16.7 ms, one long task of about 50 ms (xterm reflowing the
+scrollback to a new width), `terminal_resize` still once.
 
 **PERF-29 — The file tree is not virtualized, and at 2 000 rows it is nineteen times its budget.**
 Impact H on a large repository, cost M to H, measured 2026-09-20.
