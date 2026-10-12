@@ -37,7 +37,7 @@ use crate::services::jsonl::{
 /// 6 — A row indexed before the first user message was written, and so titled
 ///     by its id, takes that message's title from a later tail.
 /// 7 — Shell commands no longer contribute UNC paths to `touched_paths`, and a
-///     tool's UNC path must look like `\\host\share` (migration 0023 removes
+///     tool's UNC path must look like `\\host\share` (migration 9001 removes
 ///     the junk already stored).
 const PARSE_VERSION: i64 = 7;
 

@@ -76,7 +76,7 @@ fn seed_at_0017(data_dir: &Path) {
 			file_mtime    INTEGER NOT NULL,
 			file_size     INTEGER NOT NULL,
 			cwd           TEXT,
-			touched_paths TEXT -- 0010 is marked applied below; 0023 reads this column
+			touched_paths TEXT -- 0010 is marked applied below; 9001 reads this column
 		);
 		CREATE TABLE session_pins (
 			session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
