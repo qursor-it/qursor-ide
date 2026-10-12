@@ -89,6 +89,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	// so not standalone.
 	("0021_incremental_index", include_str!("migrations/0021_incremental_index.sql")),
 	("0022_transcript_path", include_str!("migrations/0022_transcript_path.sql")),
+	// Junk `\\s\S`-style entries in touched_paths, which stalled list_sessions on
+	// Windows; the parse version bump alone cannot remove them (see the file).
+	("0023_clean_touched_paths", include_str!("migrations/0023_clean_touched_paths.sql")),
 ];
 
 /// Migrations that need the connection to themselves, with foreign keys off.

@@ -14,13 +14,16 @@ use crate::state::AppState;
 /// Sessions in one workspace project — every agent directory linked to its
 /// folder, newest first.
 #[tauri::command]
-pub fn list_sessions(
+pub async fn list_sessions(
 	state: State<'_, AppState>,
 	project_id: String,
 ) -> AppResult<Vec<SessionSummary>> {
+	let db = state.db.clone();
+	// Off the main thread: resolving paths touches the filesystem, and a path on
+	// an unreachable network host can block for seconds.
 	// `read`, not `with`: one poll every five seconds per expanded project, and
 	// the writer connection made each of them wait on the indexer (PERF-02).
-	state.db.read(|conn| list_sessions_in(conn, &project_id))
+	off_main(move || db.read(|conn| list_sessions_in(conn, &project_id))).await
 }
 
 /// The body of [`list_sessions`], against a connection rather than the managed
@@ -185,11 +188,42 @@ fn resolve(memo: &mut HashMap<String, String>, path: String) -> String {
 	if let Some(hit) = memo.get(&path) {
 		return hit.clone();
 	}
-	let resolved = std::fs::canonicalize(&path)
-		.map(|p| p.to_string_lossy().to_string())
-		.unwrap_or_else(|_| path.clone());
+	let resolved = if skips_canonicalize(&path) {
+		path.clone()
+	} else {
+		std::fs::canonicalize(&path)
+			.map(|p| p.to_string_lossy().to_string())
+			.unwrap_or_else(|_| path.clone())
+	};
 	memo.insert(path, resolved.clone());
 	resolved
+}
+
+/// Paths never worth a filesystem call: control characters cannot be a real
+/// path, and a UNC-shaped one (`\\host\share`, `//host/share`) makes Windows
+/// look the host up on the network, which stalls for seconds when it is junk
+/// such as a regex fragment. The `\\?\` extended form is local and stays
+/// resolvable.
+fn skips_canonicalize(path: &str) -> bool {
+	path.chars().any(char::is_control)
+		|| ((path.starts_with(r"\\") || (cfg!(windows) && path.starts_with("//")))
+			&& !path.starts_with(r"\\?\"))
+}
+
+#[cfg(test)]
+mod resolve_tests {
+	use super::*;
+
+	#[test]
+	fn junk_unc_and_control_paths_are_returned_unchanged() {
+		let mut memo = HashMap::new();
+		for p in [r"\\s\S", r"\\n", "/tmp/a\u{1}b", r"\\server\share\x"] {
+			assert_eq!(resolve(&mut memo, p.to_string()), p);
+			assert!(skips_canonicalize(p), "{p:?}");
+		}
+		assert!(!skips_canonicalize(r"\\?\C:\code"));
+		assert!(!skips_canonicalize(r"C:\code"));
+	}
 }
 
 /// Read the **last** `limit` events from a session. Default 100. The

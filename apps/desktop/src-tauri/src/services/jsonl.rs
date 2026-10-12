@@ -246,11 +246,35 @@ pub fn tool_use_paths(content: &serde_json::Value) -> Vec<&str> {
 fn absolute_tool_path(path: &str) -> bool {
 	let bytes = path.as_bytes();
 	path.starts_with('/')
-		|| path.starts_with(r"\\")
+		|| is_unc_tool_path(path)
 		|| (bytes.len() >= 3
 			&& bytes[0].is_ascii_alphabetic()
 			&& bytes[1] == b':'
 			&& matches!(bytes[2], b'/' | b'\\'))
+}
+
+/// `\\host\share[\...]` or the `\\?\` extended form. A structured tool field is
+/// trusted more than free text, but still has to look like a real UNC path:
+/// canonicalising `\\s\S` makes Windows look up a host called `s`, which can
+/// stall for seconds.
+fn is_unc_tool_path(path: &str) -> bool {
+	if path.chars().any(char::is_control) {
+		return false;
+	}
+	if let Some(rest) = path.strip_prefix(r"\\?\") {
+		return !rest.is_empty();
+	}
+	let Some(rest) = path.strip_prefix(r"\\") else {
+		return false;
+	};
+	let mut parts = rest.splitn(3, '\\');
+	let host = parts.next().unwrap_or("");
+	let share = parts.next().unwrap_or("");
+	// A one-letter host is a regex escape (`\s\S`), not a machine name.
+	host.len() >= 2
+		&& !host.starts_with('.')
+		&& host.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+		&& !share.is_empty()
 }
 
 /// Every absolute-path-shaped token in a shell command, in order.
@@ -275,6 +299,10 @@ fn absolute_tool_path(path: &str) -> bool {
 /// - A token ends at the first shell metacharacter or whitespace, so
 ///   `"$(cat /wt/a.ts)"` yields `/wt/a.ts` rather than `/wt/a.ts)"`.
 ///
+/// UNC paths (`\\host\share`) are deliberately **not** harvested from command
+/// text: `\\` is also how regex, `sed` and JSON-escaped strings spell a single
+/// backslash, and a junk "UNC path" costs a network lookup when it is resolved.
+///
 /// A redirect's `>` is deliberately *not* a start boundary: `2>/dev/null` is
 /// noise, and while the containment check would drop it anyway, a scan that
 /// does not collect it cannot spend one of the kept slots on it.
@@ -286,22 +314,12 @@ fn command_paths(command: &str) -> Vec<&str> {
 		let drive = bytes[i].is_ascii_alphabetic()
 			&& bytes.get(i + 1) == Some(&b':')
 			&& matches!(bytes.get(i + 2), Some(b'/' | b'\\'));
-		let unc = bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'\\');
-		let forward_unc = cfg!(windows)
-			&& bytes[i] == b'/'
-			&& bytes.get(i + 1) == Some(&b'/')
-			&& (i == 0 || bytes[i - 1] != b':');
-		let extended = unc && bytes.get(i + 2) == Some(&b'?') && bytes.get(i + 3) == Some(&b'\\');
-		if !(bytes[i] == b'/' || drive || unc) || !starts_path(bytes, i) {
+		if !(bytes[i] == b'/' || drive) || !starts_path(bytes, i) {
 			i += 1;
 			continue;
 		}
 		let start = i;
-		while i < bytes.len()
-			&& (!ends_path(bytes[i])
-				|| ((drive || unc) && bytes[i] == b'\\')
-				|| (extended && i == start + 2))
-		{
+		while i < bytes.len() && (!ends_path(bytes[i]) || (drive && bytes[i] == b'\\')) {
 			i += 1;
 		}
 		// Trailing punctuation is sentence noise rather than part of the name — a
@@ -312,7 +330,7 @@ fn command_paths(command: &str) -> Vec<&str> {
 		// splits there, because `:` *is* a start boundary (`PATH=/a:/b`) — and a
 		// session that links an issue tracker would otherwise spend two of the kept
 		// slots on it.
-		if token.len() > 1 && (!token.starts_with("//") || forward_unc) {
+		if token.len() > 1 && !token.starts_with("//") {
 			out.push(token);
 		}
 	}
@@ -714,21 +732,46 @@ mod tests {
 			command_paths(r"git -C C:\code\feature status && type D:/other/main.ts"),
 			vec![r"C:\code\feature", "D:/other/main.ts"]
 		);
-		assert_eq!(
-			command_paths(r"type \\server\share\file.txt"),
-			vec![r"\\server\share\file.txt"]
-		);
 		assert!(command_paths(r"type C:relative.txt").is_empty());
 	}
 
-	#[cfg(windows)]
+	/// UNC paths are not harvested from free text: regex, `sed` and JSON escapes
+	/// all spell a backslash as `\\`, and resolving the junk stalls on Windows.
+	/// (Previously a `\\server\share` in a command was kept; that is gone.)
 	#[test]
-	fn native_windows_shell_paths_distinguish_unc_from_urls() {
-		assert_eq!(
-			command_paths(r"type //server/share/file.txt && type \\?\C:\code\file.txt"),
-			vec!["//server/share/file.txt", r"\\?\C:\code\file.txt"]
-		);
-		assert!(command_paths("echo https://server/share/file.txt").is_empty());
+	fn command_paths_never_yields_unc_paths() {
+		for cmd in [
+			r"type \\server\share\file.txt",
+			r"type //server/share/file.txt",
+			r"grep -E '\\s\S+' file",
+			r"grep -P '[^\\u0000-\u001F\u007F]' x",
+			r"sed 's/\\n//' file",
+			r#"grep -E "\\w-" file"#,
+			r"cd E:\\Developing\\xplorer-scraper\\ && ls",
+			r"echo \\Developing\xplorer-scraper\",
+			r"type \\?\C:\code\file.txt",
+			"echo https://server/share/file.txt",
+		] {
+			let found = command_paths(cmd);
+			assert!(
+				found.iter().all(|p| !p.starts_with(r"\\") && !p.starts_with("//")),
+				"{cmd:?} yielded {found:?}"
+			);
+		}
+		assert_eq!(command_paths(r"cd E:\Developing\app && ls"), vec![r"E:\Developing\app"]);
+	}
+
+	#[test]
+	fn absolute_tool_path_validates_unc_shape() {
+		assert!(absolute_tool_path(r"\\server\share\file.txt"));
+		assert!(absolute_tool_path(r"\\srv.local\share"));
+		assert!(absolute_tool_path(r"\\?\C:\code\file.txt"));
+		assert!(absolute_tool_path(r"E:\Developing\app\a.rs"));
+		assert!(!absolute_tool_path(r"\\s\S"));
+		assert!(!absolute_tool_path(r"\\n"));
+		assert!(!absolute_tool_path(r"\\w-"));
+		assert!(!absolute_tool_path("\\\\host\\sh\u{1}are"));
+		assert!(!absolute_tool_path(r"\\.\pipe"));
 	}
 
 	// Real Claude events that the strict v1 parser was rejecting.

@@ -36,7 +36,10 @@ use crate::services::jsonl::{
 /// 5 — The closing tag and adjacent image label are omitted too.
 /// 6 — A row indexed before the first user message was written, and so titled
 ///     by its id, takes that message's title from a later tail.
-const PARSE_VERSION: i64 = 6;
+/// 7 — Shell commands no longer contribute UNC paths to `touched_paths`, and a
+///     tool's UNC path must look like `\\host\share` (migration 0023 removes
+///     the junk already stored).
+const PARSE_VERSION: i64 = 7;
 
 /// How many recent paths a session keeps. See migration 0010 for why a list at
 /// all, and why the number is not doing any selecting.
