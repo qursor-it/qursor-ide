@@ -2,12 +2,12 @@
  * Whether a `PanelResizer` drag is in progress (PERF-30).
  *
  * Module state rather than a store, because nothing renders from it: the one
- * reader is a terminal's `ResizeObserver`, which asks at the moment it fires.
+ * reader is the terminal's `pushSize`, which asks at the moment a fit lands.
  * A drag changes the session column's width on every frame, and a terminal
- * that refits on each of those sends the PTY a new geometry per frame — the
- * agent behind it redraws its whole screen each time, and that output comes
- * back through the stream while the drag is still going. So a terminal holds
- * its geometry for the length of a drag and fits once when it ends.
+ * that told the PTY about each of those would make the agent behind it redraw
+ * its whole screen each time, with that output coming back through the stream
+ * while the drag is still going. So the grid follows the column on every
+ * frame, and the PTY hears the last size once, when the drag ends.
  */
 
 let dragging = false;

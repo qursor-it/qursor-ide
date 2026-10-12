@@ -1536,11 +1536,12 @@ test.describe('file viewer', () => {
 		await expect(viewer).toBeFocused();
 	});
 
-	test('@smoke dragging the viewer edge resizes the terminal once, on release', async ({
+	test('@smoke dragging the viewer edge refits the grid live and resizes the PTY once, on release', async ({
 		page,
 	}) => {
-		// PERF-30: a refit per drag frame was a PTY resize per frame, and the
-		// agent behind it redrew its whole screen for each one.
+		// PERF-30: a PTY resize per drag frame made the agent behind it redraw
+		// its whole screen for each one. The grid itself still follows the column,
+		// or the session paints under the panel being widened until the release.
 		await installMockBridge(page, fixtureWithFileTree());
 		await page.setViewportSize({ width: 1800, height: 1000 });
 		await page.goto('/');
@@ -1568,10 +1569,18 @@ test.describe('file viewer', () => {
 		await page.mouse.move(x, y);
 		await page.mouse.down();
 		for (let i = 1; i <= 20; i++) await page.mouse.move(x - 10 * i, y);
-		// The column follows the pointer while the terminal holds its geometry.
+		// The column follows the pointer, and the grid narrows with the session
+		// rather than running on under the column; the PTY is not told yet.
 		await expect
 			.poll(async () => (await column.boundingBox())?.width ?? 0)
 			.toBeGreaterThan(widthBefore + 150);
+		const columnLeft = (await column.boundingBox())?.x ?? 0;
+		await expect
+			.poll(async () => {
+				const screen = await page.locator('.xterm-screen:visible').boundingBox();
+				return screen ? screen.x + screen.width : Number.POSITIVE_INFINITY;
+			})
+			.toBeLessThanOrEqual(columnLeft);
 		expect(await resizes()).toBe(before);
 
 		await page.mouse.up();

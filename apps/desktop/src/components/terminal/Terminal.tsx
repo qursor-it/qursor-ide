@@ -387,10 +387,28 @@ if (typeof document !== 'undefined' && 'fonts' in document) {
 const spawnInFlight = new Map<string, Promise<string>>();
 
 /** Push a window size to the PTY, ignoring the `NotFound` a terminal that has
- *  already exited returns — a resize losing that race is not worth surfacing. */
+ *  already exited returns — a resize losing that race is not worth surfacing.
+ *
+ *  **Held for the length of a panel drag** (PERF-30). The grid follows the
+ *  column on every frame, so the session never paints under the panel being
+ *  widened, but each PTY resize makes the agent redraw its whole screen, so
+ *  the PTY hears only the last size, once, when the pointer is released. */
 function pushSize(terminalId: string, cols: number, rows: number): void {
+	if (isPanelDragging()) {
+		heldSizes.set(terminalId, { cols, rows });
+		return;
+	}
 	void cmd.terminalResize(terminalId, cols, rows).catch(() => undefined);
 }
+
+/** The last size each PTY was given during the current drag, by terminal id. */
+const heldSizes = new Map<string, { cols: number; rows: number }>();
+
+onPanelDragEnd(() => {
+	const held = [...heldSizes];
+	heldSizes.clear();
+	for (const [terminalId, { cols, rows }] of held) pushSize(terminalId, cols, rows);
+});
 
 /** The PTY a session's agent is running in, or `undefined` between a restart's
  *  dispose and the next spawn. */
@@ -1147,20 +1165,14 @@ export function Terminal({ sessionId, projectId, projectCwd, sessionCwd }: Termi
 			}, 0);
 
 			// `fit()` is all this needs to do — the terminal's `onResize` handler
-			// pushes the new geometry to the PTY.
-			// Held for the length of a panel drag and fitted once at its end
-			// (PERF-30): a refit per frame is a PTY resize per frame, and the agent
-			// redraws its whole screen for each one.
-			const ro = new ResizeObserver(() => {
-				if (!isPanelDragging()) fitToHost(entry);
-			});
+			// pushes the new geometry to the PTY, which `pushSize` holds until a
+			// panel drag ends (PERF-30).
+			const ro = new ResizeObserver(() => fitToHost(entry));
 			ro.observe(container);
-			const offDragEnd = onPanelDragEnd(() => fitToHost(entry));
 
 			teardown = () => {
 				clearTimeout(focusTimer);
 				ro.disconnect();
-				offDragEnd();
 				// Hide, never detach, and never dispose: the pooled terminal keeps its
 				// scrollback and its listeners, and keeping its box in the document is
 				// what keeps the wheel working when you come back (see `showOnly`).
