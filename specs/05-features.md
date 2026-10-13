@@ -7159,3 +7159,153 @@ project runs"); `start_session` returns `{ id, provisional: bool }`;
 "Session ids" and § `find_claude_binary()` are amended in the same commit.
 
 **Roadmap.** Item 38, rewritten as slices.
+
+## F31 — Pull requests from origin, through `gh`
+
+**Specified 2026-10-13; decision in
+[ADR-0077](adr/0077-pull-requests-go-through-the-users-gh.md).** The right-hand
+panel lists the pull requests of the repository the project was cloned from,
+opens one in full, and shows its diff in the existing side-by-side viewer. It
+reads through the user's own `gh`; the app holds no credential. Delivered in
+four phases, each releasable alone:
+
+| Phase | What | State |
+|---|---|---|
+| P1 | Read: status, list, detail, files, blobs, PR diff | the backend is built; the panel and the diff mode follow |
+| P2 | "Review with an agent" — start a session whose first message is the review brief | **not built yet** |
+| P3 | Submit a human review (comments, approve, request changes) | **not built yet** |
+| P4 | Check a pull request out into a new worktree | **not built yet** |
+
+Everything below describes P1 unless it says otherwise.
+
+### Which repository
+
+**`origin`, and nothing else.** A fork's clone has `upstream` too, and `gh`
+alone would choose it. The repository comes from `origin`'s URL (scp
+`git@host:o/r.git`, `ssh://`, `https://` with or without credentials, a port,
+`.git` or a trailing slash). No `origin` is `noOrigin`; an `origin` that is not
+a GitHub host, or whose path is not `owner/name`, is `notGitHub`. A GitHub
+Enterprise host is allowed; GitLab, Bitbucket, Codeberg, Azure DevOps and
+similar hosts are not. **Every `gh` call names the repository** — `--repo
+HOST/OWNER/NAME` or `gh api --hostname HOST repos/OWNER/NAME/…`; the
+`{owner}`/`{repo}` placeholders are never used, and a test holds every argument
+list to that.
+
+### States
+
+`gh_status` never fails; each problem is a `state` the panel draws as one empty
+state naming the fix. Checked in this order, the cheap local questions first:
+
+| `state` | When | The panel says |
+|---|---|---|
+| `notRepository` | the project folder is in no git repository | not a git repository |
+| `noOrigin` | the repository has no `origin` remote | no `origin`, so nothing to list |
+| `notGitHub` | `origin` is not a GitHub repository | `origin` is not on GitHub |
+| `notInstalled` | no `gh` on the PATH or in the usual install folders | install the GitHub CLI |
+| `tooOld` | `gh --version` is below 2.40 | update `gh` |
+| `notAuthenticated` | `gh` has no login for the host (exit 4) | run `gh auth login --hostname H` |
+| `unreachable` | the login check failed for another reason | the reason; refresh to retry |
+| `ready` | everything above passed | the list |
+
+`GhStatus` also carries `binaryPath`, `version`, `login` (the signed-in user on
+that host), `repo` (`host`, `owner`, `name`, `slug = host/owner/name`,
+`webUrl`), `repoRoot` (the working tree `PrFile.path` is absolute under) and a
+`message` sentence. The refresh button calls `gh_status` with `refresh: true`,
+which re-probes `gh` and forgets the cached login, so installing or signing in
+works without restarting the app.
+
+### The list
+
+`gh_pr_list(projectPath, state)` — `open`, `closed`, `merged` or `all` — returns
+the newest 50 as `PrSummary`: number, title, author (and whether a bot; `ghost`
+for a deleted account), state, draft, base and head branch, the head's full
+commit id, whether it is **cross-repository** and the head's owner (`null` when
+the fork was deleted), created/updated (epoch ms), the review decision, a
+**checks rollup**, line and file counts, the URL, and
+`reviewRequestedFromViewer`.
+
+- **Checks.** `statusCheckRollup` mixes `CheckRun` entries (status and
+  conclusion) and `StatusContext` entries (one state). Both become a
+  `CheckState`; skipped and neutral count as passed, cancelled as failed. The
+  rollup is `failure` when any failed, else `pending` when any is running, else
+  `success`, else `none`.
+- **`reviewRequestedFromViewer`** is true when the signed-in login is among the
+  requested **users** (a team request does not count). The one blue indicator in
+  the list is this one.
+- Nothing is loaded for avatars; the UI draws initials.
+
+### The detail
+
+`gh_pr_detail(projectPath, n)` adds the body, `baseRefOid`, **`mergeBaseOid`**,
+`mergeable`, the individual `checkRuns`, `latestReviews`, `reviewRequests`
+(users, teams as `@slug`), `labels` and `viewerIsAuthor`.
+
+The merge base is what the diff is taken against — GitHub's "Files changed"
+base, not the moving tip of the base branch. It is computed with `git2` when both
+commits are in the clone, and otherwise by `gh api …/compare/BASE...HEAD`;
+either way it is remembered by commit pair.
+
+### The files
+
+`gh_pr_files(projectPath, n)` pages `pulls/N/files` (100 a page) and returns
+`PrFiles { files, total, truncated }`. GitHub stops at 3000 files; `total` is the
+pull request's own count, and `truncated` is true when it exceeds `files.length`.
+Each `PrFile` has an absolute `path` under `repoRoot`, a `relPath` relative to
+the **repository root**, `oldRelPath` for a rename or copy, `status`, a `kind`
+(the existing `GitChangeKind`), line counts, `noPatch` and `commentable`.
+
+- **`commentable`** is `{ left, right }`: inclusive `[start, end]` line ranges,
+  one per hunk, on the old and new side — the lines GitHub accepts an inline
+  comment on, which is every changed line and its context. The patch text is
+  parsed in Rust and **never sent over IPC**. A rename with no changed lines has
+  empty ranges and `noPatch: false`; a file GitHub did not diff (too large, or
+  binary) has `noPatch: true`.
+
+### The blobs
+
+`gh_pr_blob(projectPath, relPath, sha, maxBytes?)` returns the same
+`FileContents` as `git_blob_at`, or `null` when the file is not at that commit
+(an added file has no merge-base side). **Local first**: if the commit is in the
+clone, it is read from the object database, offline. Otherwise — a fork's head
+commit, which `origin` never had — `gh api -H 'Accept:
+application/vnd.github.raw+json' …/contents/PATH?ref=SHA` against the **base**
+repository, which serves a fork head's commit by id; the output is cut at the
+byte cap. Nothing is fetched into the repository. The renderer asks for the old
+side at `mergeBaseOid` under `oldRelPath`, and the new side at `headRefOid`.
+
+### Errors
+
+`Unauthenticated` (no usable login), `NotFound` (a pull request or file that
+does not exist, or that this login cannot see), `Remote` (rate limit, network,
+SAML enforcement, a 422, anything else — with `gh`'s first line), `InvalidInput`
+(a bad number, commit id or path), `NotFound` also for a missing `gh`. A
+non-zero exit is classified by exit code where `gh` documents one (4 = sign in),
+and by its stderr otherwise.
+
+### Cadence
+
+The list refreshes every 60 seconds and a detail every 30, **only while the
+panel is visible**; nothing is polled when it is hidden. File lists and blobs
+are keyed by commit and never expire. Opening the panel, switching the state
+filter and the refresh button each fetch once.
+
+### Not built yet
+
+- **P1 UI**: the PRs tab (`PanelTab`), `components/prs/`, and the `pr:` mode of
+  the file viewer (`PR #42 · abc1234 ↔ def5678`, read-only).
+- **P2**: starting a review session with a first message (needs a
+  `fresh` start, and an ADR relaxing ADR-0008's reuse rule for this gesture).
+- **P3**: `gh_pr_comments` and `gh_pr_submit_review` (`gh api -X POST …/reviews
+  --input -`, the body on stdin), drafts that survive a reload, the comment
+  gutter on commentable lines only, and a confirmation naming the login and the
+  event. The one write the feature will make.
+- **P4**: checking a pull request out into a new worktree through the `git` CLI
+  (never the current checkout), which will need an ADR of its own.
+
+### Backend
+
+New: `services/gh/` (`run`, `repo`, `args`, `parse`, `patch`, `blob`),
+`commands/gh.rs` — `gh_status`, `gh_pr_list`, `gh_pr_detail`, `gh_pr_files`,
+`gh_pr_blob` — and `AppError::{Unauthenticated, Remote}`. See
+`03-backend-rust.md` § `gh`. No migration, no setting, no new plugin or
+capability: the commands are the app's own.

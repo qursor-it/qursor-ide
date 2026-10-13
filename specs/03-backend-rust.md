@@ -23,6 +23,8 @@ commands/
                       #   (+ write_file — F26, planned)
   git.rs              # git_status, git_blob, git_graph, git_commit, git_blob_at
                       #   (+ git_worktrees — F21, planned)
+  gh.rs               # gh_status, gh_pr_list, gh_pr_detail, gh_pr_files,
+                      #   gh_pr_blob — pull requests of `origin` (F31)
   ide.rs              # the IDE bridge's command surface (F20)
   routines.rs         # list/create/update/delete/set_enabled/run_now
                       #   (+ list_skills — slice 2, planned)
@@ -51,6 +53,10 @@ services/
                       #   path_kinds
   sops.rs             # what a SOPS-encrypted file looks like, and where the
                       #   `sops` binary is (F27)
+  gh/                 # pull requests through the user's `gh` (F31, ADR-0077):
+                      #   run (find + run `gh`), repo (`origin` -> owner/name),
+                      #   args (every argv), parse (JSON + failures), patch
+                      #   (commentable lines), blob (a file at a commit)
   file_watch.rs       # FileWatch — the one watch on the file the viewer has
                       #   open (F7), replaced on open and dropped on close
   webview_health.rs   # reload the view when its web process dies, rate-limited,
@@ -113,7 +119,8 @@ mark it, because which side of the line a command is on is a property of what
 it does rather than of its contract; the ones that are, as of 2026-09-20:
 
 - **Spawns a process, or waits on one**: `terminal_spawn`, `shell_spawn`,
-  `sops_decrypt`, `sops_encrypt`, `check_claude_cli`, `validate_claude_binary`,
+  `sops_decrypt`, `sops_encrypt`, the five `gh_*` commands (awaited on the
+  runtime, with their libgit2 steps on the blocking pool), `check_claude_cli`, `validate_claude_binary`,
   `reveal_in_file_manager`.
 - **Walks the filesystem, or reads something large**: `list_import_candidates`,
   `get_session_tail`, `read_image`, `read_pdf`, `probe_media`, `delete_session`
@@ -390,6 +397,25 @@ git_blob_at(path: String, commit: String, max_bytes: Option<usize>) -> Option<Fi
 // worktrees (F21, ADR-0019). Every checkout git knows, main and linked.
 // Read-only like the rest, and it doubles as the IDE bridge's path scope.
 git_worktrees(project_path: String) -> Vec<GitWorktree>
+
+// pull requests (F31, ADR-0077). Read through the user's `gh`; the app holds no
+// credential. Every call names `origin`'s repository explicitly.
+// Can this project show pull requests, and if not, why. NEVER fails: a missing
+// `gh`, no login or no `origin` is a `state` (ready, notInstalled, tooOld,
+// notAuthenticated, notRepository, noOrigin, notGitHub, unreachable).
+// `refresh` re-probes `gh` and forgets the cached login.
+gh_status(project_path: String, refresh: Option<bool>) -> GhStatus
+// The newest 50 pull requests of `origin` in a state: open / closed / merged / all.
+gh_pr_list(project_path: String, state: PrStateFilter) -> Vec<PrSummary>
+// One pull request in full, with the merge base its diff is taken against.
+gh_pr_detail(project_path: String, number: u64) -> PrDetail
+// Changed files (paged 100 at a time; GitHub stops at 3000), each with the
+// lines a review comment may anchor to. The patch text never crosses the bridge.
+gh_pr_files(project_path: String, number: u64) -> PrFiles
+// One file at one commit (a full 40-hex sha; rel_path is relative to the
+// repository root): the clone's copy when it has the commit, GitHub's contents
+// API when it does not. None when the file is not at that commit.
+gh_pr_blob(project_path: String, rel_path: String, sha: String, max_bytes: Option<usize>) -> Option<FileContents>
 
 // memory / plans — PLANNED. Neither is registered yet (roadmap item 2 (#14)).
 // `read_claude_md` / `write_claude_md` were here and are dropped: F26 makes
@@ -1406,6 +1432,75 @@ ago is the case the feature exists for. The set is derived here, from git, and
 never from anything the client sent: ADR-0019 § 2 is why the agent's
 `setWorktree` moves what the panel shows and cannot move what the bridge allows.
 
+### `gh`
+
+Pull requests, read through the user's own `gh` (F31, ADR-0077). The shape is
+`sops`'s: locate a CLI, run it once, parse its stdout. The app never reads,
+stores or sends a token, and never runs `gh auth token`.
+
+**`run`.** `binary(refresh)` finds `gh` with `agent_cli::find_binary_on_path`,
+then — on Windows — `%ProgramFiles%\GitHub CLI`, WinGet's `Links` folder and
+scoop's `shims`; elsewhere Homebrew's and `/usr/local/bin`. A `.cmd` / `.bat` is
+refused (a batch wrapper goes through a shell and does not forward stdin). Only a
+positive answer is cached; a missing `gh` is probed again on `refresh`. `run`
+builds a `std::process::Command`, applies `child_env`, `CREATE_NO_WINDOW` and
+`GH_PROMPT_DISABLED`, `GH_NO_UPDATE_NOTIFIER`, `GH_NO_EXTENSION_UPDATE_NOTIFIER`,
+`GH_SPINNER_DISABLED` and `NO_COLOR`, converts it to `tokio::process::Command`
+with `kill_on_drop`, and wraps the run in `tokio::time::timeout` — 10 s for the
+version and login probes, 30 s for list, detail, files and blobs. A global
+`Semaphore(4)` bounds concurrent children. Optional stdin bytes are written from
+their own task (for P3), and an optional stdout cap kills the child once it is
+passed (for blobs). A non-zero exit is an `Ok(Output)`; only "could not run" and
+"timed out" are errors.
+
+**`repo`.** `parse_remote_url` reads scp, `ssh://`, `https://` (credentials,
+port, `.git`, trailing slash) and `git://` URLs into a `GhRepo` — `host`,
+`owner`, `name`, `slug` (`host/owner/name`) and `webUrl`. `resolve(project_path)`
+opens the repository with `git2` and reads **only `origin`**; there is no
+fallback to another remote, so a fork's `upstream` is never picked. GitLab,
+Bitbucket, Codeberg, Azure and similar hosts are `NotGitHub`; GitHub Enterprise
+hosts are accepted.
+
+**`args`.** Every argument list. `gh pr …` carries `--repo HOST/OWNER/NAME`;
+`gh api` carries `--hostname HOST` and a `repos/OWNER/NAME/…` path. The
+`{owner}` / `{repo}` placeholders are never used, and a test builds every argv
+and asserts the repository is named in each.
+
+**`parse`.** `classify(exit_code, stderr) -> GhFailure`: exit 4 and 401 / "gh
+auth login" are `AuthRequired`; SAML is `Forbidden`; "rate limit" and 429 are
+`RateLimited`; HTTP 404 and "Could not resolve to a" are `NotFound`; HTTP 422 is
+`Validation` (its first lines); connection and timeout text is `Network`;
+anything else is `Other(first line)`. `into_app_error` maps them onto
+`Unauthenticated`, `NotFound` and `Remote`. The serde structs are lenient — a
+missing field is a default and a `null` list is empty — so a field `gh` adds or
+drops does not blank the panel. `statusCheckRollup` entries are `CheckRun`
+(status + conclusion) or `StatusContext` (state) and both map to `CheckState`.
+`--paginate` output is concatenated arrays (`[…][…]`), read with
+`serde_json::Deserializer::from_slice(..).into_iter::<Vec<T>>()`.
+Fixtures captured from a real repository are in `tests/fixtures/gh/`.
+
+**`patch`.** `commentable_lines(patch) -> CommentableLines`: walks each hunk body
+(context advances both sides, `-` the old, `+` the new, `\ No newline at end of
+file` neither) and returns inclusive ranges per hunk and side.
+
+**`blob`.** `local` reads `tree.get_path(rel)` at the commit from the clone and
+distinguishes "the file is not in that commit" (authoritative, `None`) from "the
+commit is not here" (ask GitHub). The remote read is `gh api --hostname H -H
+'Accept: application/vnd.github.raw+json' repos/O/R/contents/<encoded
+path>?ref=SHA` with a byte cap; a 404 is `None`.
+
+**Top level.** `status(project_path, refresh)` never errors: repository, then
+`origin`, then GitHub-ness, then `gh` on disk, its version against the 2.40
+floor (`gh --version`), then the login (`gh api --hostname H user --jq .login`,
+exit 4 = `notAuthenticated`), which is cached per host until `refresh`. `pr_list`
+asks for 50 rows; `pr_detail` adds the merge base — `git2` `merge_base` when
+both commits are local, otherwise `gh api …/compare/BASE...HEAD --jq
+.merge_base_commit.sha` — cached by `(repo, base, head)`; `pr_files` fetches the
+pages and the pull request's `changed_files` together and sets `truncated` when
+the count exceeds the list; `pr_blob` is local first. Inputs are validated
+before they reach an argv: `number > 0`, `sha` is 40 lower-case hex, `rel_path`
+is not absolute and has no `..` segment.
+
 ### `settings`
 
 **Shipped 2026-08-20 with F11.** Three commands over the `settings` table
@@ -1529,11 +1624,19 @@ pub enum AppError {
   #[error("not found: {0}")]     NotFound(String),
   #[error("invalid input: {0}")] InvalidInput(String),
   #[error("process: {0}")]       Process(String),
+  #[error("unauthenticated: {0}")] Unauthenticated(String),
+  #[error("remote: {0}")]        Remote(String),
 }
 ```
 
 Conversion from `anyhow::Error`, `rusqlite::Error`, `std::io::Error` via
 `From` impls. The frontend receives a tagged union it can `switch` on.
+
+`Unauthenticated` and `Remote` are the two kinds F31 added (ADR-0077), mirrored
+in `packages/types` `AppError`: `Unauthenticated` is "the user's `gh` has no
+usable login for this host" and is answered with `gh auth login`, not a toast;
+`Remote` is a failure of a request `gh` made — rate limit, network, SAML, a 422 —
+carrying the remote's own words. A missing pull request or file is `NotFound`.
 
 ## Permissions (`capabilities/default.json`)
 

@@ -1,0 +1,72 @@
+{
+ "additions": 884,
+ "author": {
+  "id": "MDQ6VXNlcjIxNzQxMzE=",
+  "is_bot": false,
+  "login": "bergjs",
+  "name": "bergjs"
+ },
+ "baseRefName": "main",
+ "baseRefOid": "403bcf037948897f8aeaba39fefecf27dd242c0e",
+ "body": "## What and why\n\nfactorai now has a light theme. Settings → Appearance has a **Theme** row: System (default), Light or Dark. System follows the OS appearance and switches with it, without a reload.\n\nThe light palette was already in `@factorai/ui`, but nothing set `data-theme`, so it never rendered. This PR builds the three missing parts that #28 names, and does the pass over every surface:\n\n- **Th",
+ "changedFiles": 32,
+ "createdAt": "2026-10-07T10:20:56Z",
+ "deletions": 191,
+ "headRefName": "feat/28-light-theme",
+ "headRefOid": "48d81843954571d9c9594ff46aee7e15c07d6c56",
+ "headRepositoryOwner": {
+  "id": "MDQ6VXNlcjIxNzQxMzE=",
+  "name": "bergjs",
+  "login": "bergjs"
+ },
+ "isCrossRepository": true,
+ "isDraft": false,
+ "labels": [],
+ "latestReviews": [
+  {
+   "id": "",
+   "author": {
+    "login": "Nightbr"
+   },
+   "authorAssociation": "OWNER",
+   "body": "Wow thanks a lot! Looks amazing, let's ship this on the alpha channel!",
+   "submittedAt": "2026-10-08T15:30:18Z",
+   "includesCreatedEdit": false,
+   "reactionGroups": [],
+   "state": "APPROVED",
+   "commit": {
+    "oid": ""
+   }
+  }
+ ],
+ "mergeable": "UNKNOWN",
+ "number": 57,
+ "reviewDecision": "",
+ "reviewRequests": [],
+ "state": "MERGED",
+ "statusCheckRollup": [
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-10-08T15:33:23Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/37606797987/job/113394883460",
+   "name": "JS — format, lint, types, unit tests",
+   "startedAt": "2026-10-08T15:32:21Z",
+   "status": "COMPLETED",
+   "workflowName": "Quality"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-10-08T15:34:40Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/37606797987/job/113394882915",
+   "name": "Rust — format, clippy, cargo test",
+   "startedAt": "2026-10-08T15:32:21Z",
+   "status": "COMPLETED",
+   "workflowName": "Quality"
+  }
+ ],
+ "title": "feat: a light theme, chosen in Settings → Appearance or following the OS",
+ "updatedAt": "2026-10-09T12:03:14Z",
+ "url": "https://github.com/Nightbr/factorai/pull/57"
+}

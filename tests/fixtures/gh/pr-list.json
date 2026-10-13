@@ -1,0 +1,160 @@
+[
+ {
+  "additions": 77,
+  "author": {
+   "id": "MDQ6VXNlcjczMDQ4Mjc=",
+   "is_bot": false,
+   "login": "rbideau",
+   "name": "Raphaël Bideau"
+  },
+  "baseRefName": "main",
+  "changedFiles": 3,
+  "createdAt": "2026-10-12T12:03:34Z",
+  "deletions": 0,
+  "headRefName": "feat/shift-enter-newline",
+  "headRefOid": "6101498c1c1ac95e6ff2ad887de962e6ede37719",
+  "headRepositoryOwner": {
+   "id": "MDQ6VXNlcjQyMjg2NDY=",
+   "name": "Titouan B",
+   "login": "Nightbr"
+  },
+  "isCrossRepository": false,
+  "isDraft": false,
+  "number": 67,
+  "reviewDecision": "",
+  "reviewRequests": [
+   {
+    "__typename": "User",
+    "login": "Nightbr"
+   }
+  ],
+  "state": "OPEN",
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-10-12T12:10:52Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/38247254701/job/114804149906",
+    "name": "JS — format, lint, types, unit tests",
+    "startedAt": "2026-10-12T12:09:30Z",
+    "status": "COMPLETED",
+    "workflowName": "Quality"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-10-12T12:11:24Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/38247254701/job/114804150134",
+    "name": "Rust — format, clippy, cargo test",
+    "startedAt": "2026-10-12T12:09:30Z",
+    "status": "COMPLETED",
+    "workflowName": "Quality"
+   }
+  ],
+  "title": "feat: Shift+Enter adds a line break in the terminal instead of sending the prompt",
+  "updatedAt": "2026-10-12T12:24:45Z",
+  "url": "https://github.com/Nightbr/factorai/pull/67"
+ },
+ {
+  "additions": 50,
+  "author": {
+   "id": "MDQ6VXNlcjczMDQ4Mjc=",
+   "is_bot": false,
+   "login": "rbideau",
+   "name": "Raphaël Bideau"
+  },
+  "baseRefName": "main",
+  "changedFiles": 2,
+  "createdAt": "2026-10-08T17:34:21Z",
+  "deletions": 50,
+  "headRefName": "fix/65-tauri-cli-2-12",
+  "headRefOid": "12bed9b0929370d57be924feba169d14cabfd51a",
+  "headRepositoryOwner": {
+   "id": "MDQ6VXNlcjQyMjg2NDY=",
+   "name": "Titouan B",
+   "login": "Nightbr"
+  },
+  "isCrossRepository": false,
+  "isDraft": false,
+  "number": 66,
+  "reviewDecision": "",
+  "reviewRequests": [],
+  "state": "MERGED",
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-10-08T17:35:58Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/37817610407/job/113450138418",
+    "name": "JS — format, lint, types, unit tests",
+    "startedAt": "2026-10-08T17:34:27Z",
+    "status": "COMPLETED",
+    "workflowName": "Quality"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-10-08T17:36:04Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/37817610407/job/113450138860",
+    "name": "Rust — format, clippy, cargo test",
+    "startedAt": "2026-10-08T17:34:27Z",
+    "status": "COMPLETED",
+    "workflowName": "Quality"
+   }
+  ],
+  "title": "fix: the Linux AppImage renders on Mesa 25+, with @tauri-apps/cli 2.12.1 no longer bundling libwayland-client",
+  "updatedAt": "2026-10-10T10:44:41Z",
+  "url": "https://github.com/Nightbr/factorai/pull/66"
+ },
+ {
+  "additions": 287,
+  "author": {
+   "id": "MDQ6VXNlcjQyMjg2NDY=",
+   "is_bot": false,
+   "login": "Nightbr",
+   "name": "Titouan B"
+  },
+  "baseRefName": "main",
+  "changedFiles": 7,
+  "createdAt": "2026-10-08T16:19:40Z",
+  "deletions": 38,
+  "headRefName": "fix/project-tile-collisions",
+  "headRefOid": "50bdadb5d34d883de9312601d491e8e66d689960",
+  "headRepositoryOwner": {
+   "id": "MDQ6VXNlcjQyMjg2NDY=",
+   "name": "Titouan B",
+   "login": "Nightbr"
+  },
+  "isCrossRepository": false,
+  "isDraft": false,
+  "number": 64,
+  "reviewDecision": "",
+  "reviewRequests": [],
+  "state": "MERGED",
+  "statusCheckRollup": [
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-10-08T16:21:15Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/37807912659/job/113416939685",
+    "name": "JS — format, lint, types, unit tests",
+    "startedAt": "2026-10-08T16:19:48Z",
+    "status": "COMPLETED",
+    "workflowName": "Quality"
+   },
+   {
+    "__typename": "CheckRun",
+    "completedAt": "2026-10-08T16:21:48Z",
+    "conclusion": "SUCCESS",
+    "detailsUrl": "https://github.com/Nightbr/factorai/actions/runs/37807912659/job/113416939801",
+    "name": "Rust — format, clippy, cargo test",
+    "startedAt": "2026-10-08T16:19:48Z",
+    "status": "COMPLETED",
+    "workflowName": "Quality"
+   }
+  ],
+  "title": "fix: project tiles never collide within a workspace, on a 30-swatch white-ink palette",
+  "updatedAt": "2026-10-08T16:22:08Z",
+  "url": "https://github.com/Nightbr/factorai/pull/64"
+ }
+]

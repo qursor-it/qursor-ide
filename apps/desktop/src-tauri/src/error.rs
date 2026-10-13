@@ -15,6 +15,15 @@ pub enum AppError {
 	InvalidInput(String),
 	#[error("process: {0}")]
 	Process(String),
+	/// The user's `gh` has no usable login for the host (F31, ADR-0077). Its own
+	/// kind rather than a `Process` string because the renderer answers it with
+	/// "run `gh auth login`", not with a toast.
+	#[error("unauthenticated: {0}")]
+	Unauthenticated(String),
+	/// A request `gh` made to the forge failed: rate limit, network, SAML, a 422.
+	/// The remote's own words ride along (F31).
+	#[error("remote: {0}")]
+	Remote(String),
 }
 
 impl From<std::io::Error> for AppError {

@@ -3,6 +3,7 @@ import type {
 	DirListing,
 	FileChangedEvent,
 	FileContents,
+	GhStatus,
 	GitCommitDetail,
 	GitGraph,
 	GitRev,
@@ -17,6 +18,10 @@ import type {
 	Mention,
 	PathKind,
 	PdfContents,
+	PrDetail,
+	PrFiles,
+	PrStateFilter,
+	PrSummary,
 	Profile,
 	ProfileInput,
 	ProfilesChangedEvent,
@@ -265,6 +270,29 @@ export const cmd = {
 	 *  Separate from `gitBlob` rather than widening `GitRev` to carry a SHA. */
 	gitBlobAt: (path: string, commit: string, maxBytes?: number | null) =>
 		invoke<FileContents | null>('git_blob_at', { path, commit, maxBytes }),
+
+	/** Whether this project can show pull requests, and if not, why (F31,
+	 *  ADR-0077). **Never rejects**: a missing `gh`, no login or no `origin` is a
+	 *  `state`. `refresh` re-probes `gh` and forgets the cached login — the
+	 *  panel's refresh button after the user installs or signs in. */
+	ghStatus: (projectPath: string, refresh?: boolean) =>
+		invoke<GhStatus>('gh_status', { projectPath, refresh }),
+	/** The newest 50 pull requests of `origin` in a state. A network read through
+	 *  the user's `gh`; rejects `Unauthenticated` / `Remote` / `NotFound`. */
+	ghPrList: (projectPath: string, state: PrStateFilter) =>
+		invoke<PrSummary[]>('gh_pr_list', { projectPath, state }),
+	/** One pull request in full, with the merge base its diff is taken against. */
+	ghPrDetail: (projectPath: string, number: number) =>
+		invoke<PrDetail>('gh_pr_detail', { projectPath, number }),
+	/** The changed files of a pull request and the lines each can be commented
+	 *  on. Paths are relative to the repository root. */
+	ghPrFiles: (projectPath: string, number: number) =>
+		invoke<PrFiles>('gh_pr_files', { projectPath, number }),
+	/** One file at one commit of a pull request (a full 40-hex `sha`): the clone's
+	 *  copy when it has the commit, GitHub's when it does not. Resolves null when
+	 *  the file is not there — an added file has no merge-base side. */
+	ghPrBlob: (projectPath: string, relPath: string, sha: string, maxBytes?: number | null) =>
+		invoke<FileContents | null>('gh_pr_blob', { projectPath, relPath, sha, maxBytes }),
 
 	/** One setting Rust reads, or null when it has never been set (F11).
 	 *  Preferences only this side reads live in `prefsStore`, not here. */
@@ -763,6 +791,19 @@ interface TestFixture {
 	/** Plaintext keyed by absolute path, for `sops_decrypt` (F27). A path that
 	 *  is not listed rejects, which is how a spec reaches the failure banner. */
 	sopsPlaintext?: Record<string, string>;
+	/** What `gh_status` answers per project path (F31). Absent means no `gh` on
+	 *  this machine, the honest browser-only answer, like `sopsStatus`. */
+	ghStatuses?: Record<string, GhStatus>;
+	/** `gh_pr_list` rows keyed by repo slug (`host/owner/name`). The state filter
+	 *  is applied by the mock, so one list serves open, closed and merged. */
+	ghPrLists?: Record<string, PrSummary[]>;
+	/** `gh_pr_detail` keyed by `<slug>#<number>`. Absent rejects NotFound. */
+	ghPrDetails?: Record<string, PrDetail>;
+	/** `gh_pr_files` keyed by `<repoRoot>#<number>`. Absent rejects NotFound. */
+	ghPrFiles?: Record<string, PrFiles>;
+	/** Blob text keyed by `<sha>:<relPath>`; absent answers null (no such file at
+	 *  that commit). */
+	ghBlobs?: Record<string, string>;
 }
 
 /** One mocked command call, recorded in order while a fixture is installed. */
@@ -1258,6 +1299,67 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			// Same store as `git_blob`, keyed by SHA instead of `head`/`index`.
 			const key = `${String(args?.commit ?? '')}:${String(args?.path ?? '')}`;
 			return (fx?.gitBlobs?.[key] ?? null) as unknown as T;
+		}
+		case 'gh_status': {
+			// No `gh` in a browser: a fixture declares the answer per project, and
+			// absent is the honest "not installed" the panel's empty state is for.
+			const projectPath = String(args?.projectPath ?? '');
+			return (fx?.ghStatuses?.[projectPath] ?? {
+				state: 'notInstalled',
+				binaryPath: null,
+				version: null,
+				login: null,
+				repo: null,
+				repoRoot: null,
+				message: null,
+			}) as unknown as T;
+		}
+		case 'gh_pr_list': {
+			const status = fx?.ghStatuses?.[String(args?.projectPath ?? '')];
+			if (!status?.repo) throw { kind: 'NotFound', message: 'no pull requests for this project' };
+			const state = String(args?.state ?? 'open');
+			const rows = fx?.ghPrLists?.[status.repo.slug] ?? [];
+			return rows.filter((pr) => state === 'all' || pr.state === state) as unknown as T;
+		}
+		case 'gh_pr_detail': {
+			const status = fx?.ghStatuses?.[String(args?.projectPath ?? '')];
+			const detail = status?.repo
+				? fx?.ghPrDetails?.[`${status.repo.slug}#${Number(args?.number)}`]
+				: undefined;
+			if (!detail) {
+				throw { kind: 'NotFound', message: `pull request #${Number(args?.number)} was not found` };
+			}
+			return detail as unknown as T;
+		}
+		case 'gh_pr_files': {
+			const status = fx?.ghStatuses?.[String(args?.projectPath ?? '')];
+			const files = status?.repoRoot
+				? fx?.ghPrFiles?.[`${status.repoRoot}#${Number(args?.number)}`]
+				: undefined;
+			if (!files) {
+				throw {
+					kind: 'NotFound',
+					message: `the files of pull request #${Number(args?.number)} were not found`,
+				};
+			}
+			return files as unknown as T;
+		}
+		case 'gh_pr_blob': {
+			// A missing entry is "no such file at that commit" (an added file's
+			// merge-base side), not a rejection.
+			const relPath = String(args?.relPath ?? '');
+			const text = fx?.ghBlobs?.[`${String(args?.sha ?? '')}:${relPath}`];
+			if (text === undefined) return null as unknown as T;
+			return {
+				path: relPath,
+				contents: text,
+				size: text.length,
+				isBinary: false,
+				truncated: false,
+				lineCount: text ? text.replace(/\n$/, '').split('\n').length : 0,
+				lossy: false,
+				sopsEncrypted: false,
+			} as unknown as T;
 		}
 		case 'git_graph': {
 			const projectPath = String(args?.projectPath ?? '');

@@ -953,7 +953,13 @@ export type AppError =
 	| { kind: 'Db'; message: string }
 	| { kind: 'NotFound'; message: string }
 	| { kind: 'InvalidInput'; message: string }
-	| { kind: 'Process'; message: string };
+	| { kind: 'Process'; message: string }
+	/** `gh` has no usable login for the host (F31). Answered with "run
+	 *  `gh auth login`", not a generic toast. */
+	| { kind: 'Unauthenticated'; message: string }
+	/** A request `gh` made to GitHub failed: rate limit, network, SAML, a 422.
+	 *  The remote's own words are in `message` (F31). */
+	| { kind: 'Remote'; message: string };
 
 /**
  * A project's scheduled prompt (F22, ADR-0026). Mirrors the Rust `Routine`.
@@ -1093,3 +1099,154 @@ export interface ProfileInput {
  *  re-reads profiles off it, which is what makes a new profile's sessions appear
  *  at all. */
 export type ProfilesChangedEvent = Record<string, never>;
+
+// ── Pull requests, read through the user's `gh` (F31, ADR-0077) ────────────
+
+/** Why the pull-request panel can or cannot show anything. `gh_status` never
+ *  rejects: every problem is one of these. */
+export type GhState =
+	| 'ready'
+	| 'notInstalled'
+	| 'tooOld'
+	| 'notAuthenticated'
+	| 'notRepository'
+	| 'noOrigin'
+	| 'notGitHub'
+	| 'unreachable';
+
+/** The repository `origin` names. Only `origin` is ever read, never `upstream`. */
+export interface GhRepo {
+	/** `github.com`, or a GitHub Enterprise host. */
+	host: string;
+	owner: string;
+	name: string;
+	/** `host/owner/name` — what `gh --repo` takes, and the cache key for
+	 *  everything about this repository. Show `owner/name`, not this. */
+	slug: string;
+	/** `https://host/owner/name`, for "Open on GitHub". */
+	webUrl: string;
+}
+
+export interface GhStatus {
+	state: GhState;
+	binaryPath: string | null;
+	version: string | null;
+	/** The signed-in user on `repo.host`, when known. */
+	login: string | null;
+	repo: GhRepo | null;
+	/** Working tree of the repository the project sits in. `PrFile.path` is
+	 *  absolute under it. */
+	repoRoot: string | null;
+	/** A sentence for the empty state: the fix, or `gh`'s own words. */
+	message: string | null;
+}
+
+export type PrState = 'open' | 'closed' | 'merged';
+export type PrStateFilter = PrState | 'all';
+export type CheckState = 'success' | 'failure' | 'pending' | 'skipped' | 'neutral' | 'cancelled';
+
+/** The list row's rollup. Skipped and neutral checks count as `passed`;
+ *  cancelled counts as `failed`. */
+export interface PrChecksSummary {
+	state: 'success' | 'failure' | 'pending' | 'none';
+	total: number;
+	passed: number;
+	failed: number;
+	pending: number;
+}
+
+/** One row of the list. Timestamps are epoch ms. */
+export interface PrSummary {
+	number: number;
+	title: string;
+	/** Login; `ghost` for a deleted account. */
+	author: string;
+	authorIsBot: boolean;
+	state: PrState;
+	isDraft: boolean;
+	baseRefName: string;
+	headRefName: string;
+	/** Full 40-hex id of the head commit. */
+	headRefOid: string;
+	isCrossRepository: boolean;
+	/** Owner of the head repository; null when the fork was deleted. */
+	headOwner: string | null;
+	createdAt: number;
+	updatedAt: number;
+	reviewDecision: 'approved' | 'changesRequested' | 'reviewRequired' | null;
+	checks: PrChecksSummary;
+	additions: number;
+	deletions: number;
+	changedFiles: number;
+	url: string;
+	/** The signed-in user is among the requested reviewers (users, not teams). */
+	reviewRequestedFromViewer: boolean;
+}
+
+export interface PrCheck {
+	name: string;
+	/** The workflow a check run belongs to; null for a commit status. */
+	workflow: string | null;
+	state: CheckState;
+	url: string | null;
+	/** Epoch ms; null while running and for commit statuses. */
+	completedAt: number | null;
+}
+
+export interface PrReview {
+	author: string;
+	state: 'approved' | 'changesRequested' | 'commented' | 'dismissed' | 'pending';
+	submittedAt: number | null;
+	body: string;
+	commitOid: string | null;
+}
+
+export interface PrDetail extends PrSummary {
+	body: string;
+	baseRefOid: string;
+	/** What the diff is taken against — GitHub's "Files changed" base. Read the
+	 *  old side of every file at this commit. */
+	mergeBaseOid: string;
+	mergeable: 'mergeable' | 'conflicting' | 'unknown';
+	checkRuns: PrCheck[];
+	latestReviews: PrReview[];
+	/** Requested reviewers: user logins, and teams as `@slug`. */
+	reviewRequests: string[];
+	labels: string[];
+	viewerIsAuthor: boolean;
+}
+
+/** Lines a review comment may anchor to, per side, as inclusive
+ *  `[start, end]` ranges — one per hunk. */
+export interface CommentableLines {
+	/** Old-file line numbers (context and deleted lines). */
+	left: [number, number][];
+	/** New-file line numbers (context and added lines). */
+	right: [number, number][];
+}
+
+export interface PrFile {
+	/** Absolute, under `GhStatus.repoRoot`. */
+	path: string;
+	/** Relative to the **repository root** (not the project folder): the path
+	 *  `ghPrBlob` takes. */
+	relPath: string;
+	/** The path before a rename or copy. */
+	oldRelPath: string | null;
+	status: 'added' | 'removed' | 'modified' | 'renamed' | 'copied' | 'changed' | 'unchanged';
+	kind: GitChangeKind;
+	additions: number;
+	deletions: number;
+	/** GitHub sent no patch for a file that changed lines (too large, or
+	 *  binary): nothing in it is commentable. */
+	noPatch: boolean;
+	commentable: CommentableLines;
+}
+
+export interface PrFiles {
+	files: PrFile[];
+	/** The pull request's own `changedFiles`. */
+	total: number;
+	/** GitHub lists at most 3000 files; `total` is larger than `files.length`. */
+	truncated: boolean;
+}

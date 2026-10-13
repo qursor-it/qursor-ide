@@ -12,6 +12,7 @@ import type {
 	DirEntry,
 	DirListing,
 	FileContents,
+	GhStatus,
 	GitChange,
 	GitCommitDetail,
 	GitGraph,
@@ -23,6 +24,10 @@ import type {
 	MediaProbe,
 	ImportCandidate,
 	PdfContents,
+	PrDetail,
+	PrFile,
+	PrFiles,
+	PrSummary,
 	Profile,
 	Project,
 	Routine,
@@ -136,6 +141,19 @@ export interface TestFixture {
 	/** Plaintext keyed by absolute path, for `sops_decrypt` (F27). A path that
 	 *  is not listed rejects, which is how a spec reaches the failure banner. */
 	sopsPlaintext?: Record<string, string>;
+	/** What `gh_status` answers per project path (F31). Omit for a machine with
+	 *  no `gh` on it — the browser-only default and the panel's first empty state. */
+	ghStatuses?: Record<string, GhStatus>;
+	/** `gh_pr_list` rows keyed by repo slug (`host/owner/name`). The mock applies
+	 *  the state filter, so one list serves open, closed and merged. */
+	ghPrLists?: Record<string, PrSummary[]>;
+	/** `gh_pr_detail` keyed by `<slug>#<number>`. A number not listed rejects. */
+	ghPrDetails?: Record<string, PrDetail>;
+	/** `gh_pr_files` keyed by `<repoRoot>#<number>`. A number not listed rejects. */
+	ghPrFiles?: Record<string, PrFiles>;
+	/** Blob text keyed by `<sha>:<relPath>`. A key not listed answers null — the
+	 *  file does not exist at that commit. */
+	ghBlobs?: Record<string, string>;
 }
 
 declare global {
@@ -1746,3 +1764,202 @@ export function fixtureGroupedProjects(): TestFixture {
  *  reading it out of the DOM first. */
 export const PRO_GROUP_ID = 'g0000001-0000-4000-8000-000000000001';
 export const PERSO_GROUP_ID = 'g0000002-0000-4000-8000-000000000002';
+
+/** A pull-request summary, defaulting to an ordinary open PR from a branch of
+ *  the repository itself. */
+export function prSummary(number: number, over: Partial<PrSummary> = {}): PrSummary {
+	return {
+		number,
+		title: `Pull request ${number}`,
+		author: 'alice',
+		authorIsBot: false,
+		state: 'open',
+		isDraft: false,
+		baseRefName: 'main',
+		headRefName: `feat/pr-${number}`,
+		headRefOid: sha(40 + number),
+		isCrossRepository: false,
+		headOwner: 'acme',
+		createdAt: Date.UTC(2026, 9, 1, 9, 0),
+		updatedAt: Date.UTC(2026, 9, 10, 9, 0),
+		reviewDecision: null,
+		checks: { state: 'success', total: 3, passed: 3, failed: 0, pending: 0 },
+		additions: 12,
+		deletions: 4,
+		changedFiles: 3,
+		url: `https://github.com/acme/widgets/pull/${number}`,
+		reviewRequestedFromViewer: false,
+		...over,
+	};
+}
+
+function prFile(root: string, relPath: string, over: Partial<PrFile> = {}): PrFile {
+	return {
+		path: `${root}/${relPath}`,
+		relPath,
+		oldRelPath: null,
+		status: 'modified',
+		kind: 'modified',
+		additions: 2,
+		deletions: 1,
+		noPatch: false,
+		commentable: { left: [[1, 4]], right: [[1, 5]] },
+		...over,
+	};
+}
+
+/**
+ * Base shape plus a repository whose `origin` is `github.com/acme/widgets`, a
+ * signed-in `gh`, and three pull requests (F31, ADR-0077):
+ *
+ * - **#11** an ordinary one, open, from a branch of the repository, asking the
+ *   viewer (`alice-reviewer`) for a review — the one that earns the blue dot.
+ * - **#12** a draft from a fork (`mallory/widgets`) whose checks are failing.
+ * - **#13** merged, with a deleted fork and a deleted author (`ghost`).
+ *
+ * #11 has a detail and files: a modified file, an added one (no merge-base
+ * side), a removed one (no head side) and a rename. Blobs exist for both sides
+ * of each, keyed by the PR's own SHAs, so a diff opens from the fixture alone.
+ * Everything else rejects NotFound, which is how a spec reaches the error state.
+ */
+export function fixtureWithPullRequests(): TestFixture {
+	const base = fixtureWithFileTree();
+	const root = base.projects?.[0]?.realPath ?? '';
+	const slug = 'github.com/acme/widgets';
+
+	const head = sha(51);
+	const mergeBase = sha(52);
+	const baseTip = sha(53);
+
+	const status: GhStatus = {
+		state: 'ready',
+		binaryPath: '/usr/bin/gh',
+		version: '2.101.0',
+		login: 'alice-reviewer',
+		repo: {
+			host: 'github.com',
+			owner: 'acme',
+			name: 'widgets',
+			slug,
+			webUrl: 'https://github.com/acme/widgets',
+		},
+		repoRoot: root,
+		message: null,
+	};
+
+	const eleven = prSummary(11, {
+		title: 'feat: add the widget switcher',
+		headRefOid: head,
+		reviewRequestedFromViewer: true,
+		reviewDecision: 'reviewRequired',
+		changedFiles: 4,
+		additions: 30,
+		deletions: 9,
+	});
+	const twelve = prSummary(12, {
+		title: 'wip: rewrite the renderer',
+		author: 'mallory',
+		isDraft: true,
+		isCrossRepository: true,
+		headOwner: 'mallory',
+		checks: { state: 'failure', total: 4, passed: 2, failed: 2, pending: 0 },
+		createdAt: Date.UTC(2026, 9, 5, 9, 0),
+		updatedAt: Date.UTC(2026, 9, 9, 9, 0),
+	});
+	const thirteen = prSummary(13, {
+		title: 'fix: stop the leak on close',
+		author: 'ghost',
+		state: 'merged',
+		isCrossRepository: true,
+		headOwner: null,
+		reviewDecision: 'approved',
+		createdAt: Date.UTC(2026, 8, 20, 9, 0),
+		updatedAt: Date.UTC(2026, 8, 25, 9, 0),
+	});
+
+	const detail: PrDetail = {
+		...eleven,
+		body: 'Adds a switcher so you can change widgets without leaving the page.\n\n- keyboard friendly\n- renames `old.ts`',
+		baseRefOid: baseTip,
+		mergeBaseOid: mergeBase,
+		mergeable: 'mergeable',
+		checkRuns: [
+			{
+				name: 'JS - lint, types, tests',
+				workflow: 'Quality',
+				state: 'success',
+				url: 'https://github.com/acme/widgets/actions/runs/1',
+				completedAt: Date.UTC(2026, 9, 10, 9, 5),
+			},
+			{
+				name: 'Rust - clippy, tests',
+				workflow: 'Quality',
+				state: 'pending',
+				url: null,
+				completedAt: null,
+			},
+			{ name: 'ci/legacy', workflow: null, state: 'neutral', url: null, completedAt: null },
+		],
+		latestReviews: [
+			{
+				author: 'bob',
+				state: 'commented',
+				submittedAt: Date.UTC(2026, 9, 9, 12, 0),
+				body: 'Looks promising, one question below.',
+				commitOid: head,
+			},
+		],
+		reviewRequests: ['alice-reviewer', '@core'],
+		labels: ['enhancement'],
+		viewerIsAuthor: false,
+	};
+
+	const files: PrFiles = {
+		files: [
+			prFile(root, 'src/switcher.ts'),
+			prFile(root, 'src/added.ts', {
+				status: 'added',
+				kind: 'added',
+				additions: 8,
+				deletions: 0,
+				commentable: { left: [], right: [[1, 8]] },
+			}),
+			prFile(root, 'src/removed.ts', {
+				status: 'removed',
+				kind: 'deleted',
+				additions: 0,
+				deletions: 5,
+				commentable: { left: [[1, 5]], right: [] },
+			}),
+			prFile(root, 'src/new-name.ts', {
+				status: 'renamed',
+				kind: 'renamed',
+				oldRelPath: 'src/old-name.ts',
+				additions: 1,
+				deletions: 1,
+				commentable: { left: [[1, 3]], right: [[1, 3]] },
+			}),
+		],
+		total: 4,
+		truncated: false,
+	};
+
+	return {
+		...base,
+		ghStatuses: { [root]: status },
+		ghPrLists: { [slug]: [eleven, twelve, thirteen] },
+		ghPrDetails: { [`${slug}#11`]: detail },
+		ghPrFiles: { [`${root}#11`]: files },
+		ghBlobs: {
+			[`${head}:src/switcher.ts`]: 'export const switcher = 2;\nexport const widgets = [];\n',
+			[`${mergeBase}:src/switcher.ts`]: 'export const switcher = 1;\n',
+			// Added: only the head side exists.
+			[`${head}:src/added.ts`]: 'export const added = true;\n',
+			// Removed: only the merge-base side exists.
+			[`${mergeBase}:src/removed.ts`]: 'export const removed = true;\n',
+			// Renamed: the old path at the merge base, the new one at the head.
+			[`${mergeBase}:src/old-name.ts`]: 'export const name = "old";\n',
+			[`${head}:src/new-name.ts`]: 'export const name = "new";\n',
+		},
+	};
+}

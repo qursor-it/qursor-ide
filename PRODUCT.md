@@ -63,12 +63,15 @@ What a neighbouring product could not truthfully copy without becoming this one:
   already did it" is never a reason to skip asking.
 - **It reads the CLI's own files.** No sync layer, no accounts, no re-implemented
   agent. It attaches to `~/.claude/` and to the `claude` binary the user already
-  has logged in.
+  has logged in. The same goes for GitHub: pull requests are read through the
+  user's own `gh`, and the app holds no credential (ADR-0077).
 
 ## Operating Context
 
 - **Where it runs.** A native desktop app: Tauri 2 (Rust) shell around a React 19
   renderer. macOS and Linux only for v1. Everything is local; there is no server.
+  The one network read is a project's pull requests, made by the user's `gh` on
+  request (ADR-0077).
 - **What it reads.** `~/.claude/projects/` for projects and session transcripts,
   the user's git repositories for the changes and commit graph, and the `claude`
   binary itself for launching and resuming.
@@ -80,7 +83,9 @@ What a neighbouring product could not truthfully copy without becoming this one:
   individual glances at the window, so state that changes while the user is not
   looking has to be legible the moment they look back.
 - **Review, not editing.** Git state is read-only by decision: the agent writes
-  and the human checks.
+  and the human checks. Pull requests extend that to the forge: the human reads
+  them here, and the only thing that will ever be sent back is a review, after an
+  explicit confirmation (ADR-0077).
 
 ## Capabilities and Constraints
 
@@ -99,11 +104,14 @@ table that is not built yet. Treat it as the thinnest of the four verbs.
 **Constraints future work must respect.**
 
 - Read-only on the agent's own state (`~/.claude/`) and on git. The app observes;
-  the agent writes.
+  the agent writes. Reading a project's pull requests from GitHub is allowed, only
+  through the user's `gh` and only while the panel is open; the one write the
+  feature may make is submitting a review, behind a confirmation (ADR-0077).
 - Kill-on-quit is non-optional — no orphaned agent processes, ever.
 - No cloud sync, no accounts, no telemetry, no analytics, no crash reporting in
   the app. The site counts page views, cookielessly (ADR-0063); the app counts
-  nothing.
+  nothing. Credentials stay in `gh`: the app never reads, stores or sends a
+  token, and fetches no avatars or other assets from the network (ADR-0077).
 - English only; no localization in v1. Windows is supported through WSL 2
   (ADR-0044) — the Linux build under WSLg, not a native port.
 - Specifically the official `claude` CLI, not a multi-provider session manager.

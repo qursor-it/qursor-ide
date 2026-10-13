@@ -954,3 +954,267 @@ pub struct RoutineInput {
 	pub enabled: bool,
 	pub catchup_hours: Option<i64>,
 }
+
+// ── Pull requests, read through the user's `gh` (F31, ADR-0077) ────────────
+
+/// Why the pull-request panel can or cannot show anything right now.
+///
+/// One value for the whole ladder, so the panel renders exactly one empty state
+/// and names the fix, instead of failing at the first request. Mirrors
+/// `@factorai/types` `GhState`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GhState {
+	Ready,
+	/// No `gh` on the PATH or in the usual install locations.
+	NotInstalled,
+	/// `gh` is older than the floor in `services::gh::MIN_VERSION`.
+	TooOld,
+	/// `gh` has no login for this repository's host.
+	NotAuthenticated,
+	/// The project folder is not inside a git repository.
+	NotRepository,
+	/// The repository has no `origin` remote (no other remote is consulted).
+	NoOrigin,
+	/// `origin` is not a GitHub (or GitHub Enterprise) repository.
+	NotGitHub,
+	/// `gh` is fine but the host could not be reached.
+	Unreachable,
+}
+
+/// A repository on a GitHub host, as named by `origin`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRepo {
+	/// `github.com`, or a GitHub Enterprise host.
+	pub host: String,
+	pub owner: String,
+	pub name: String,
+	/// `host/owner/name` — the exact value handed to `gh --repo`, and the
+	/// renderer's cache key. Includes the host so two forges never collide.
+	pub slug: String,
+	/// `https://host/owner/name`, for "Open on GitHub".
+	pub web_url: String,
+}
+
+/// The answer to "can this project show pull requests?". `gh_status` never
+/// fails: every problem is a `state`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhStatus {
+	pub state: GhState,
+	pub binary_path: Option<String>,
+	pub version: Option<String>,
+	/// The signed-in user on `repo.host`, once known.
+	pub login: Option<String>,
+	pub repo: Option<GhRepo>,
+	/// Working tree of the repository the project sits in. `PrFile.path` is
+	/// absolute under it.
+	pub repo_root: Option<String>,
+	/// A sentence for the empty state: the fix, or `gh`'s own words.
+	pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrState {
+	Open,
+	Closed,
+	Merged,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrStateFilter {
+	Open,
+	Closed,
+	Merged,
+	All,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CheckState {
+	Success,
+	Failure,
+	Pending,
+	Skipped,
+	Neutral,
+	Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrChecksState {
+	Success,
+	Failure,
+	Pending,
+	None,
+}
+
+/// The rollup the list row shows. Skipped and neutral checks count as passed
+/// (they block nothing); cancelled counts as failed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrChecksSummary {
+	pub state: PrChecksState,
+	pub total: u32,
+	pub passed: u32,
+	pub failed: u32,
+	pub pending: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrReviewDecision {
+	Approved,
+	ChangesRequested,
+	ReviewRequired,
+}
+
+/// One row of the pull-request list. Timestamps are epoch ms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrSummary {
+	pub number: u64,
+	pub title: String,
+	/// Login of the author; `ghost` when the account was deleted.
+	pub author: String,
+	pub author_is_bot: bool,
+	pub state: PrState,
+	pub is_draft: bool,
+	pub base_ref_name: String,
+	pub head_ref_name: String,
+	pub head_ref_oid: String,
+	pub is_cross_repository: bool,
+	/// Owner of the head repository; `None` when the fork was deleted.
+	pub head_owner: Option<String>,
+	pub created_at: i64,
+	pub updated_at: i64,
+	pub review_decision: Option<PrReviewDecision>,
+	pub checks: PrChecksSummary,
+	pub additions: u64,
+	pub deletions: u64,
+	pub changed_files: u64,
+	pub url: String,
+	/// The signed-in user is among the requested reviewers (users only, not
+	/// teams).
+	pub review_requested_from_viewer: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrCheck {
+	pub name: String,
+	/// The workflow a check run belongs to; `None` for a commit status.
+	pub workflow: Option<String>,
+	pub state: CheckState,
+	pub url: Option<String>,
+	/// Epoch ms; `None` while running and for commit statuses.
+	pub completed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrReviewState {
+	Approved,
+	ChangesRequested,
+	Commented,
+	Dismissed,
+	Pending,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrReview {
+	pub author: String,
+	pub state: PrReviewState,
+	pub submitted_at: Option<i64>,
+	pub body: String,
+	/// The commit the review was left on, when GitHub reports one.
+	pub commit_oid: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrMergeable {
+	Mergeable,
+	Conflicting,
+	Unknown,
+}
+
+/// A pull request in full. `PrSummary`'s fields are flattened in, so the wire
+/// shape is the TS `interface PrDetail extends PrSummary`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrDetail {
+	#[serde(flatten)]
+	pub summary: PrSummary,
+	pub body: String,
+	pub base_ref_oid: String,
+	/// What the diff is taken against: the merge base of base and head, which is
+	/// what GitHub's "Files changed" shows.
+	pub merge_base_oid: String,
+	pub mergeable: PrMergeable,
+	pub check_runs: Vec<PrCheck>,
+	pub latest_reviews: Vec<PrReview>,
+	/// Requested reviewers: user logins, and teams as `@slug`.
+	pub review_requests: Vec<String>,
+	pub labels: Vec<String>,
+	pub viewer_is_author: bool,
+}
+
+/// Lines a review comment may anchor to, per side, as inclusive `[start, end]`
+/// ranges — one per hunk. GitHub rejects a comment on a line outside the diff
+/// with a 422, so the renderer only offers these. The patch itself never
+/// crosses the bridge.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentableLines {
+	/// Old-file line numbers (context and deleted lines).
+	pub left: Vec<(u32, u32)>,
+	/// New-file line numbers (context and added lines).
+	pub right: Vec<(u32, u32)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PrFileStatus {
+	Added,
+	Removed,
+	Modified,
+	Renamed,
+	Copied,
+	Changed,
+	Unchanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrFile {
+	/// Absolute, under `GhStatus.repo_root`.
+	pub path: String,
+	/// Relative to the **repository root** (not the project folder): the path
+	/// the GitHub API and `gh_pr_blob` use.
+	pub rel_path: String,
+	/// The path before a rename or copy.
+	pub old_rel_path: Option<String>,
+	pub status: PrFileStatus,
+	pub kind: GitChangeKind,
+	pub additions: u64,
+	pub deletions: u64,
+	/// GitHub sent no patch for a file that changed lines: too large, or
+	/// binary. Nothing is commentable then.
+	pub no_patch: bool,
+	pub commentable: CommentableLines,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrFiles {
+	pub files: Vec<PrFile>,
+	/// The pull request's own `changedFiles`.
+	pub total: u64,
+	/// GitHub lists at most 3000 files; `total` is larger than `files.len()`.
+	pub truncated: bool,
+}

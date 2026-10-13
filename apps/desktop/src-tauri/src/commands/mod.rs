@@ -11,6 +11,7 @@
 use crate::error::{AppError, AppResult};
 
 pub mod files;
+pub mod gh;
 pub mod git;
 pub mod ide;
 pub mod profiles;

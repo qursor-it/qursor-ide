@@ -3,6 +3,7 @@ pub mod agent_tools;
 pub mod child_env;
 pub mod file_watch;
 pub mod files;
+pub mod gh;
 pub mod git;
 pub mod ide;
 pub mod indexer;

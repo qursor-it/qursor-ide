@@ -1204,7 +1204,7 @@ fn head_sha(repo: &Repository) -> Option<String> {
 	Some(repo.head().ok()?.peel_to_commit().ok()?.id().to_string())
 }
 
-fn discover(path: &str) -> Option<Repository> {
+pub(crate) fn discover(path: &str) -> Option<Repository> {
 	// The path may not exist (a deleted file we're asked for the HEAD side of),
 	// in which case discovery walks up from the nearest parent that does.
 	let start = Path::new(path);
@@ -1223,7 +1223,7 @@ fn group_order(group: GitGroup) -> u8 {
 /// libgit2 uses ordinary drive paths; the Windows canonicalizer may return a
 /// verbatim prefix or expand a short directory name. Use the same representation
 /// for the repository root and project before deriving relative paths (ADR-0074).
-fn workdir_path(path: &Path) -> PathBuf {
+pub(crate) fn workdir_path(path: &Path) -> PathBuf {
 	#[cfg(windows)]
 	{
 		dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).to_path_buf())

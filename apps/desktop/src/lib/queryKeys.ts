@@ -45,6 +45,22 @@ export const queryKeys = {
 	 *  is one per machine, the probe is cached in Rust for the run, and every
 	 *  encrypted file asks the same question. */
 	sopsStatus: () => ['sops-status'] as const,
+	/** Whether pull requests can be shown for a repository root, and why not
+	 *  (F31). One per checkout root: the answer depends on its `origin`. */
+	ghStatus: (root: string) => ['gh-status', root] as const,
+	/** The pull-request list of one repository in one state filter (F31). Keyed by
+	 *  slug, not path: two checkouts of one repository share the answer. */
+	ghPrs: (slug: string, filter: string) => ['gh-prs', slug, filter] as const,
+	/** One pull request in full (F31). Polled while its detail is open. */
+	ghPr: (slug: string, number: number) => ['gh-pr', slug, number] as const,
+	/** A pull request's changed files (F31). **`head` is part of the key**, so a
+	 *  force-push is a new entry rather than a stale one: files never expire for a
+	 *  given head. */
+	ghPrFiles: (root: string, number: number, head: string) =>
+		['gh-pr-files', root, number, head] as const,
+	/** One file at one commit of a pull request (F31). Content-addressed by SHA,
+	 *  so it never goes stale. */
+	ghBlob: (slug: string, sha: string, rel: string) => ['gh-blob', slug, sha, rel] as const,
 	/** Repository state for one project. **One key per project, shared by the
 	 *  Changes tab and the tree's decorations** — they read the same poll, which
 	 *  is why the interval follows the panel rather than the tab (Q20). */
