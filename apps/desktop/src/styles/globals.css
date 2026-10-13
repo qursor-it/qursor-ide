@@ -146,3 +146,27 @@
 ::highlight(factorai-find-current) {
 	background-color: color-mix(in oklab, var(--primary) 45%, transparent);
 }
+
+/* **The "+" in the diff's glyph margin** (specs/05-features.md F31, P3). Put on
+   the hovered line by `components/viewer/prReviewZones.tsx`; a click on it opens
+   the comment composer. The accent as a small filled square, so it reads as an
+   affordance and not as a breakpoint. */
+.factorai-review-add {
+	cursor: pointer;
+}
+
+.factorai-review-add::before {
+	content: "+";
+	display: block;
+	width: 14px;
+	height: 14px;
+	margin: 2px 0 0 2px;
+	border-radius: 3px;
+	background-color: var(--primary);
+	color: var(--primary-foreground);
+	font:
+		600 12px/14px ui-sans-serif,
+		system-ui,
+		sans-serif;
+	text-align: center;
+}

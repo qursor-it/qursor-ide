@@ -24,7 +24,8 @@ commands/
   git.rs              # git_status, git_blob, git_graph, git_commit, git_blob_at
                       #   (+ git_worktrees — F21, planned)
   gh.rs               # gh_status, gh_pr_list, gh_pr_detail, gh_pr_files,
-                      #   gh_pr_blob — pull requests of `origin` (F31)
+                      #   gh_pr_blob, gh_pr_comments, gh_pr_submit_review —
+                      #   pull requests of `origin` (F31)
   ide.rs              # the IDE bridge's command surface (F20)
   routines.rs         # list/create/update/delete/set_enabled/run_now
                       #   (+ list_skills — slice 2, planned)
@@ -416,6 +417,13 @@ gh_pr_files(project_path: String, number: u64) -> PrFiles
 // repository root): the clone's copy when it has the commit, GitHub's contents
 // API when it does not. None when the file is not at that commit.
 gh_pr_blob(project_path: String, rel_path: String, sha: String, max_bytes: Option<usize>) -> Option<FileContents>
+// The inline review comments already on a pull request (paged 100 at a time).
+gh_pr_comments(project_path: String, number: u64) -> Vec<PrComment>
+// Publish a review. THE ONE WRITE to GitHub (ADR-0077): validated in
+// `services/gh/review.rs`, then `gh api --hostname H -X POST …/reviews --input -`
+// with the JSON body on stdin (never in argv). Never retried. A 422 carries
+// GitHub's own sentence in `AppError::Remote`.
+gh_pr_submit_review(project_path: String, number: u64, review: ReviewSubmission) -> SubmittedReview
 
 // memory / plans — PLANNED. Neither is registered yet (roadmap item 2 (#14)).
 // `read_claude_md` / `write_claude_md` were here and are dropped: F26 makes

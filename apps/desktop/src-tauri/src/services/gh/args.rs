@@ -74,6 +74,33 @@ pub fn pr_files(repo: &GhRepo, number: u64) -> Vec<String> {
 	]
 }
 
+/// Every inline review comment on the pull request, 100 a page.
+pub fn pr_comments(repo: &GhRepo, number: u64) -> Vec<String> {
+	vec![
+		"api".into(),
+		"--hostname".into(),
+		repo.host.clone(),
+		"--paginate".into(),
+		format!("repos/{}/{}/pulls/{number}/comments?per_page=100", repo.owner, repo.name),
+	]
+}
+
+/// Submit a review. **The one write the app makes to GitHub** (ADR-0077): the
+/// JSON body, review text included, arrives on stdin (`--input -`) and never in
+/// this list, which any process on the machine can read.
+pub fn submit_review(repo: &GhRepo, number: u64) -> Vec<String> {
+	vec![
+		"api".into(),
+		"--hostname".into(),
+		repo.host.clone(),
+		"-X".into(),
+		"POST".into(),
+		format!("repos/{}/{}/pulls/{number}/reviews", repo.owner, repo.name),
+		"--input".into(),
+		"-".into(),
+	]
+}
+
 /// The pull request's own file count, which `pulls/N/files` does not report.
 pub fn pr_changed_files(repo: &GhRepo, number: u64) -> Vec<String> {
 	vec![
@@ -116,6 +143,8 @@ mod tests {
 			("list all", pr_list(&repo, PrStateFilter::All)),
 			("view", pr_view(&repo, 7)),
 			("files", pr_files(&repo, 7)),
+			("comments", pr_comments(&repo, 7)),
+			("submit review", submit_review(&repo, 7)),
 			("changed files", pr_changed_files(&repo, 7)),
 			("compare", compare(&repo, SHA, SHA)),
 			("contents", blob::contents_args(&repo, "src/a b.ts", SHA)),
@@ -166,6 +195,29 @@ mod tests {
 			]
 		);
 		assert_eq!(
+			pr_comments(&repo, 42),
+			[
+				"api",
+				"--hostname",
+				"github.com",
+				"--paginate",
+				"repos/o/r/pulls/42/comments?per_page=100"
+			]
+		);
+		assert_eq!(
+			submit_review(&repo, 42),
+			[
+				"api",
+				"--hostname",
+				"github.com",
+				"-X",
+				"POST",
+				"repos/o/r/pulls/42/reviews",
+				"--input",
+				"-"
+			]
+		);
+		assert_eq!(
 			compare(&repo, "aaa", "bbb"),
 			[
 				"api",
@@ -178,6 +230,18 @@ mod tests {
 		);
 	}
 
+	/// The review text is data for stdin: no argument carries it, and the only
+	/// write names stdin explicitly.
+	#[test]
+	fn a_review_body_is_never_an_argument() {
+		let repo = parse_remote_url("https://github.com/o/r").unwrap();
+		let args = submit_review(&repo, 7);
+		assert!(args.windows(2).any(|w| w[0] == "--input" && w[1] == "-"));
+		assert!(args.windows(2).any(|w| w[0] == "--hostname" && w[1] == "github.com"));
+		assert!(!args.iter().any(|a| a == "-f" || a == "-F" || a.starts_with("body")));
+		assert_eq!(args.iter().filter(|a| a.as_str() == "-X").count(), 1);
+	}
+
 	/// The argument list is data: nothing in it passes through a shell, and the
 	/// token is never requested.
 	#[test]
@@ -185,7 +249,13 @@ mod tests {
 		let (_, calls) = all_calls("https://github.com/o/r");
 		for (name, args) in calls {
 			assert!(!args.iter().any(|a| a == "token" || a == "auth"), "{name}: {args:?}");
-			assert!(!args.iter().any(|a| a == "-X" || a == "--method" || a == "--input"), "{name}");
+			// Submitting a review is the one write (ADR-0077).
+			if name != "submit review" {
+				assert!(
+					!args.iter().any(|a| a == "-X" || a == "--method" || a == "--input"),
+					"{name}"
+				);
+			}
 		}
 	}
 }

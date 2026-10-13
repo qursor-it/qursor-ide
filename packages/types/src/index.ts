@@ -1250,3 +1250,59 @@ export interface PrFiles {
 	/** GitHub lists at most 3000 files; `total` is larger than `files.length`. */
 	truncated: boolean;
 }
+
+/** Which side of a diff a review comment is anchored to. */
+export type DiffSide = 'LEFT' | 'RIGHT';
+
+/** One inline review comment already on a pull request. */
+export interface PrComment {
+	id: number;
+	author: string;
+	body: string;
+	/** Relative to the repository root. */
+	path: string;
+	/** `null` once the commented line is gone from the pull request's diff. */
+	line: number | null;
+	side: DiffSide | null;
+	startLine: number | null;
+	startSide: DiffSide | null;
+	commitOid: string;
+	/** Epoch milliseconds. */
+	createdAt: number;
+	/** The comment this one replies to, when it is part of a thread. */
+	inReplyTo: number | null;
+	url: string;
+	/** The commented line is gone from the latest diff (`line` is `null`). */
+	outdated: boolean;
+}
+
+export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+
+/** One line comment in a review being submitted. */
+export interface DraftComment {
+	/** Relative to the repository root. */
+	path: string;
+	/** The last line of the range. */
+	line: number;
+	side: DiffSide;
+	startLine: number | null;
+	startSide: DiffSide | null;
+	body: string;
+}
+
+/** A whole review, from the Review tab: the only write the app makes to GitHub
+ *  (ADR-0077). */
+export interface ReviewSubmission {
+	/** The head commit the comments were written against. */
+	commitOid: string;
+	event: ReviewEvent;
+	body: string;
+	comments: DraftComment[];
+}
+
+export interface SubmittedReview {
+	id: number;
+	url: string;
+	/** GitHub's word: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`. */
+	state: string;
+}

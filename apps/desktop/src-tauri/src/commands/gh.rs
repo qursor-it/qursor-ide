@@ -2,11 +2,15 @@
 //!
 //! Every command is `async` and awaits `gh` on the runtime; the libgit2 work
 //! inside (reading `origin`, a merge base, a local blob) is moved to the
-//! blocking pool by the service, as `commands/git.rs` does. Phase one is
-//! read-only: no command here writes to GitHub or to the repository.
+//! blocking pool by the service, as `commands/git.rs` does. Every command reads,
+//! except `gh_pr_submit_review`: the one write to GitHub (ADR-0077), a review
+//! the user confirmed. Nothing here writes to the repository.
 
 use crate::error::AppResult;
-use crate::models::{FileContents, GhStatus, PrDetail, PrFiles, PrStateFilter, PrSummary};
+use crate::models::{
+	FileContents, GhStatus, PrComment, PrDetail, PrFiles, PrStateFilter, PrSummary,
+	ReviewSubmission, SubmittedReview,
+};
 use crate::services::gh;
 
 /// Can this project show pull requests — and if not, which of eight reasons.
@@ -50,4 +54,22 @@ pub async fn gh_pr_blob(
 	max_bytes: Option<usize>,
 ) -> AppResult<Option<FileContents>> {
 	gh::pr_blob(&project_path, &rel_path, &sha, max_bytes).await
+}
+
+/// The inline review comments already on a pull request.
+#[tauri::command]
+pub async fn gh_pr_comments(project_path: String, number: u64) -> AppResult<Vec<PrComment>> {
+	gh::pr_comments(&project_path, number).await
+}
+
+/// Publish a review: line comments, a general comment and a verdict. **The only
+/// write to GitHub** (ADR-0077); the renderer calls it only after the user
+/// confirmed. Never retried.
+#[tauri::command]
+pub async fn gh_pr_submit_review(
+	project_path: String,
+	number: u64,
+	review: ReviewSubmission,
+) -> AppResult<SubmittedReview> {
+	gh::submit_review(&project_path, number, &review).await
 }

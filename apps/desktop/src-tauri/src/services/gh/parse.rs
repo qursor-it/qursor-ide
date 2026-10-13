@@ -19,8 +19,9 @@ use serde::Deserialize;
 
 use crate::error::AppError;
 use crate::models::{
-	CheckState, GitChangeKind, PrCheck, PrChecksState, PrChecksSummary, PrDetail, PrFile,
-	PrFileStatus, PrMergeable, PrReview, PrReviewDecision, PrReviewState, PrState, PrSummary,
+	CheckState, DiffSide, GitChangeKind, PrCheck, PrChecksState, PrChecksSummary, PrComment,
+	PrDetail, PrFile, PrFileStatus, PrMergeable, PrReview, PrReviewDecision, PrReviewState,
+	PrState, PrSummary, SubmittedReview,
 };
 
 /// Why a `gh` call failed, in the terms the panel acts on.
@@ -608,6 +609,84 @@ pub fn map_file(raw: &RawFile, repo_root: &Path) -> PrFile {
 	}
 }
 
+// ── review comments ────────────────────────────────────────────────────────
+
+/// One element of `GET /repos/{o}/{r}/pulls/{n}/comments`.
+#[derive(Debug, Default, Deserialize)]
+pub struct RawComment {
+	#[serde(default)]
+	id: u64,
+	#[serde(default)]
+	user: Option<RawOwner>,
+	#[serde(default, deserialize_with = "null_default")]
+	body: String,
+	#[serde(default, deserialize_with = "null_default")]
+	path: String,
+	/// `null` once the commented line is gone from the pull request's diff.
+	#[serde(default)]
+	line: Option<u32>,
+	#[serde(default)]
+	side: Option<String>,
+	#[serde(default)]
+	start_line: Option<u32>,
+	#[serde(default)]
+	start_side: Option<String>,
+	#[serde(default, deserialize_with = "null_default")]
+	commit_id: String,
+	#[serde(default, deserialize_with = "null_default")]
+	created_at: String,
+	#[serde(default)]
+	in_reply_to_id: Option<u64>,
+	#[serde(default, deserialize_with = "null_default")]
+	html_url: String,
+}
+
+fn diff_side(raw: Option<&str>) -> Option<DiffSide> {
+	match raw {
+		Some("LEFT") => Some(DiffSide::Left),
+		Some("RIGHT") => Some(DiffSide::Right),
+		_ => None,
+	}
+}
+
+pub fn map_comment(raw: &RawComment) -> PrComment {
+	PrComment {
+		id: raw.id,
+		author: raw
+			.user
+			.as_ref()
+			.and_then(|u| u.login.clone())
+			.unwrap_or_else(|| "ghost".to_string()),
+		body: raw.body.clone(),
+		path: raw.path.clone(),
+		line: raw.line,
+		side: diff_side(raw.side.as_deref()),
+		start_line: raw.start_line,
+		start_side: diff_side(raw.start_side.as_deref()),
+		commit_oid: raw.commit_id.clone(),
+		created_at: epoch_ms(&raw.created_at),
+		in_reply_to: raw.in_reply_to_id,
+		url: raw.html_url.clone(),
+		outdated: raw.line.is_none(),
+	}
+}
+
+/// The answer to `POST …/reviews`.
+#[derive(Debug, Default, Deserialize)]
+struct RawSubmitted {
+	#[serde(default)]
+	id: u64,
+	#[serde(default, deserialize_with = "null_default")]
+	html_url: String,
+	#[serde(default, deserialize_with = "null_default")]
+	state: String,
+}
+
+pub fn parse_submitted(bytes: &[u8]) -> Result<SubmittedReview, serde_json::Error> {
+	let raw: RawSubmitted = serde_json::from_slice(bytes)?;
+	Ok(SubmittedReview { id: raw.id, url: raw.html_url, state: raw.state })
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -619,6 +698,10 @@ mod tests {
 	const VIEW: &str = include_str!(concat!(
 		env!("CARGO_MANIFEST_DIR"),
 		"/../../../tests/fixtures/gh/pr-view.json"
+	));
+	const COMMENTS: &str = include_str!(concat!(
+		env!("CARGO_MANIFEST_DIR"),
+		"/../../../tests/fixtures/gh/pr-comments-paginated.json"
 	));
 	const FILES: &str = include_str!(concat!(
 		env!("CARGO_MANIFEST_DIR"),
@@ -666,6 +749,11 @@ mod tests {
 				Some(1),
 				"gh: Validation Failed (HTTP 422)\nline must be part of the diff",
 				GhFailure::Validation("Validation Failed (HTTP 422) — line must be part of the diff".into()),
+			),
+			(
+				Some(1),
+				"gh: Unprocessable Entity: Pull request review thread line must be part of the diff (HTTP 422)",
+				GhFailure::Validation("Unprocessable Entity: Pull request review thread line must be part of the diff (HTTP 422)".into()),
 			),
 			(Some(1), "gh: something new and strange", GhFailure::Other("something new and strange".into())),
 			(Some(1), "\n\n  gh: indented first line  \nsecond", GhFailure::Other("indented first line".into())),
@@ -737,6 +825,38 @@ mod tests {
 		let modified = mapped.iter().find(|f| f.status == PrFileStatus::Modified).unwrap();
 		assert!(!modified.commentable.right.is_empty());
 		assert!(!modified.no_patch);
+	}
+
+	#[test]
+	fn the_captured_comments_parse_and_map() {
+		let raw: Vec<RawComment> = parse_pages(COMMENTS.as_bytes()).unwrap();
+		let comments: Vec<PrComment> = raw.iter().map(map_comment).collect();
+		assert_eq!(comments.len(), 4);
+		assert_eq!(comments[0].author, "reviewer");
+		assert_eq!(comments[0].line, Some(12));
+		assert_eq!(comments[0].side, Some(DiffSide::Right));
+		assert_eq!(comments[0].in_reply_to, None);
+		assert!(comments[0].created_at > 1_700_000_000_000);
+		assert_eq!(comments[1].in_reply_to, Some(101));
+		assert_eq!(comments[2].start_line, Some(18));
+		assert_eq!(comments[2].start_side, Some(DiffSide::Left));
+		assert!(comments[2].body.contains("needs a test"));
+		assert!(!comments[2].outdated);
+		assert!(comments[3].outdated);
+		assert_eq!(comments[3].author, "ghost");
+		assert_eq!(comments[3].line, None);
+	}
+
+	#[test]
+	fn a_submitted_review_is_read() {
+		let review = parse_submitted(
+			br#"{"id":77,"html_url":"https://github.com/o/r/pull/7#pullrequestreview-77","state":"APPROVED","body":"x"}"#,
+		)
+		.unwrap();
+		assert_eq!(review.id, 77);
+		assert!(review.url.ends_with("pullrequestreview-77"));
+		assert_eq!(review.state, "APPROVED");
+		assert!(parse_submitted(b"not json").is_err());
 	}
 
 	#[test]

@@ -7173,7 +7173,7 @@ four phases, each releasable alone:
 |---|---|---|
 | P1 | Read: status, list, detail, files, blobs, PR diff | built: the backend, the PRs tab and the `pr:` diff mode |
 | P2 | "Review with an agent" — start a session whose first message is the review brief | built: see "Review with agent" |
-| P3 | Submit a human review (comments, approve, request changes) | **not built yet** |
+| P3 | Submit a human review (comments, approve, request changes) | built: see "Reviewing a pull request" |
 | P4 | Check a pull request out into a new worktree | **not built yet** |
 
 Everything below describes P1 unless it says otherwise.
@@ -7379,12 +7379,51 @@ with Claude and Codex both installed it opens a menu, `Review with Claude` /
   worktree (F21); the brief says the head is checked out there. Otherwise the
   session runs in the project folder and the brief says it is not.
 
-### Not built yet
+### Reviewing a pull request
 
-- **P3**: `gh_pr_comments` and `gh_pr_submit_review` (`gh api -X POST …/reviews
-  --input -`, the body on stdin), drafts that survive a reload, the comment
-  gutter on commentable lines only, and a confirmation naming the login and the
-  event. The one write the feature will make.
+**Phase 3; the write is allowed by [ADR-0077](adr/0077-pull-requests-go-through-the-users-gh.md).**
+In a pull request's diff the reader adds line comments as **drafts**, sees the
+review comments already on GitHub inline, and publishes everything from a
+**Review** sub-tab after a confirmation. This is the one write the app makes to
+GitHub.
+
+- **Starting a comment.** Hover a commentable line and press the `+` in the glyph
+  margin, or put the cursor (or a selection) on it and press `Ctrl/Cmd+Alt+M`
+  (also "Add review comment" in the context menu). A selection of several lines
+  that fits **one hunk range** of that side makes a multi-line comment. A line the
+  diff does not show gets the toast "This line isn't part of the diff.", and a file
+  GitHub sent no patch for takes none (`noPatch`). Commentable ranges come from
+  `gh_pr_files` (`CommentableLines`), checked by `lib/reviewAnchors`.
+- **Sides.** The new side always; the old side only in split view. A diff that
+  Monaco folds into one column because the pane is narrow shows no old side, so
+  old-side comments are not drawn there (they stay in the Review tab).
+- **The composer** is a Monaco view zone under the line holding a small React root:
+  a field (focused on open), "Add to review" (`Ctrl/Cmd+Enter`) and "Cancel"
+  (`Esc`). Keys typed in it never reach the editor. Existing comments of this
+  file (`gh_pr_comments`, not outdated, replies grouped under their root) and
+  drafts (marked "Pending", removable) draw in the same zone as plain text.
+- **Drafts** live in `reviewDraftStore` (`factorai.reviewDrafts`, localStorage,
+  deferred) per pull request, with the head commit they were written against. They
+  survive a reload; nothing reaches GitHub until the confirmed submit.
+- **The Review tab** (`pr-review-tab`, badge = draft count) lists the drafts (click
+  opens the file's diff; remove), takes a general comment and a verdict (Comment /
+  Approve / Request changes). **Approve and Request changes are disabled on one's
+  own pull request** (`viewerIsAuthor`). A banner offers "Discard drafts" when the
+  head moved since the first draft; the review is still submitted against the
+  commit the drafts were written on. "Submit review…" opens a confirmation, "Publish
+  as @login: N comments, Event"; on success the drafts are cleared, the detail and
+  comments queries are invalidated and a toast offers "Open on GitHub"; on failure
+  the drafts stay and the error shows inline. The call is never retried.
+- **Backend.** `gh_pr_comments` pages `pulls/N/comments`. `gh_pr_submit_review`
+  validates in Rust (full commit id, repository-relative paths, line ≥ 1,
+  `start_line` before `line` with its side, non-empty bodies, 65 536 characters,
+  500 comments, and a non-empty review for Comment and Request changes), then runs
+  `gh api --hostname H -X POST repos/O/R/pulls/N/reviews --input -` with the JSON on
+  **stdin**; no argument carries review text. A 422 surfaces GitHub's own sentence,
+  including the reasons `gh` prints on stdout. A timeout says the review may have
+  been published.
+
+### Not built yet
 - **P4**: checking a pull request out into a new worktree through the `git` CLI
   (never the current checkout), which will need an ADR of its own.
 

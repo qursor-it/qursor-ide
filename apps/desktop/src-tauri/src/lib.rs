@@ -413,6 +413,8 @@ pub fn run() {
 			commands::gh::gh_pr_detail,
 			commands::gh::gh_pr_files,
 			commands::gh::gh_pr_blob,
+			commands::gh::gh_pr_comments,
+			commands::gh::gh_pr_submit_review,
 			commands::git::git_worktrees,
 			commands::sessions::clear_session_worktree,
 			commands::sessions::set_session_worktree,

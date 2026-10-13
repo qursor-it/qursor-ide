@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import {
 	FOO_ID,
 	fixtureWithFileTree,
+	fixtureWithOwnPullRequest,
 	fixtureWithPullRequests,
 	fixtureWithPullRequestsSignedOut,
 	installMockBridge,
@@ -304,5 +305,319 @@ test.describe('review with agent', () => {
 		expect(opts.initialPrompt).toContain('checked out in the current directory');
 		const set = (await calls(page, 'set_session_worktree'))[0];
 		expect(set?.args?.path).toBe(wt);
+	});
+});
+
+test.describe('reviewing a pull request', () => {
+	const SLUG = 'github.com/acme/widgets';
+	const DRAFTS_KEY = 'factorai.reviewDrafts';
+
+	async function openSwitcherDiff(page: Page) {
+		await page.goto(PROJECT);
+		await openPrs(page);
+		await page.getByTestId('pr-row-11').click();
+		await page.getByTestId('pr-files').getByTitle('src/switcher.ts').click();
+		await expect(side(page, 'modified')).toContainText('export const switcher = 2;');
+	}
+
+	/** Line 2 of the modified side, found by its text: Monaco recycles line
+	 *  elements, so their order in the DOM is not the order of the lines. */
+	function secondLine(page: Page) {
+		return side(page, 'modified').locator('.view-line', { hasText: 'widgets' });
+	}
+
+	/** A review draft already in storage, as an earlier visit would have left it. */
+	async function seedDraft(page: Page, head: string, over: Record<string, unknown> = {}) {
+		await page.addInitScript(
+			({ key, slug, head, over }) => {
+				if (localStorage.getItem(key)) return;
+				localStorage.setItem(
+					key,
+					JSON.stringify({
+						state: {
+							byPr: {
+								[`${slug}#11`]: {
+									headOid: head,
+									body: '',
+									event: 'COMMENT',
+									comments: [
+										{
+											id: 'seeded-1',
+											path: 'src/switcher.ts',
+											side: 'RIGHT',
+											line: 1,
+											body: 'Rename this constant.',
+											createdAt: 1,
+										},
+									],
+									...over,
+								},
+							},
+						},
+						version: 1,
+					}),
+				);
+			},
+			{ key: DRAFTS_KEY, slug: SLUG, head, over },
+		);
+	}
+
+	async function openReviewTab(page: Page) {
+		await page.goto(PROJECT);
+		await openPrs(page);
+		await page.getByTestId('pr-row-11').click();
+		await page.getByTestId('pr-review-tab').click();
+		await expect(page.getByTestId('pr-review-panel')).toBeVisible();
+	}
+
+	test('@smoke draws the conversation already on GitHub, and not the outdated one', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await openSwitcherDiff(page);
+
+		const thread = page.getByTestId('review-thread');
+		await expect(thread).toHaveCount(1);
+		await expect(thread).toContainText('Why a constant here?');
+		await expect(thread).toContainText('Because the tests read it.');
+		await expect(thread).toContainText('bob');
+		await expect(page.getByText('Stale remark')).toHaveCount(0);
+		expect((await calls(page, 'gh_pr_comments')).length).toBeGreaterThan(0);
+	});
+
+	test('@smoke comments from the glyph margin: the typing lands, and the draft is pending', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await openSwitcherDiff(page);
+
+		await secondLine(page).hover();
+		const glyph = page
+			.getByTestId('diff-view-editor')
+			.locator('.editor.modified .factorai-review-add');
+		await expect(glyph).toBeVisible();
+		await glyph.click();
+
+		// **This is the view-zone focus check**: the keys go through the keyboard,
+		// not into the field, so a zone that lost focus to the editor fails here.
+		const text = page.getByTestId('review-composer-text');
+		await expect(text).toBeFocused();
+		// A real click must land in the field too, not on the text layer behind it.
+		await text.click();
+		await expect(text).toBeFocused();
+		await page.keyboard.type('Please rename this.');
+		await expect(text).toHaveValue('Please rename this.');
+
+		await page.getByTestId('review-composer-add').click();
+		const draft = page.getByTestId('review-draft');
+		await expect(draft).toContainText('Pending');
+		await expect(draft).toContainText('Please rename this.');
+		await expect(page.getByTestId('review-composer')).toHaveCount(0);
+
+		await page.getByTestId('pr-review-tab').click();
+		await expect(page.getByTestId('pr-review-tab-badge')).toHaveText('1');
+		await expect(page.getByTestId('pr-review-draft')).toContainText('src/switcher.ts:2');
+	});
+
+	test('@smoke comments from the keyboard on the cursor line', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await openSwitcherDiff(page);
+
+		await secondLine(page).click();
+		await page.keyboard.press('Control+Alt+M');
+		const text = page.getByTestId('review-composer-text');
+		await expect(text).toBeFocused();
+		await page.keyboard.type('Keyboard comment');
+		await page.keyboard.press('Control+Enter');
+
+		await expect(page.getByTestId('review-draft')).toContainText('Keyboard comment');
+		await expect(page.getByTestId('review-composer')).toHaveCount(0);
+	});
+
+	test('@smoke makes a multi-line comment from a selection', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await openSwitcherDiff(page);
+
+		await secondLine(page).click();
+		await page.keyboard.press('Home');
+		await page.keyboard.press('Control+Home');
+		await page.keyboard.press('Shift+ArrowDown');
+		await page.keyboard.press('Shift+End');
+		await page.keyboard.press('Control+Alt+M');
+		await expect(page.getByTestId('review-composer')).toContainText('Lines 1–2');
+		await expect(page.getByTestId('review-composer-text')).toBeFocused();
+		await page.keyboard.type('Both of these');
+		await page.keyboard.press('Control+Enter');
+
+		await expect(page.getByTestId('review-draft')).toContainText('Lines 1–2');
+		await page.getByTestId('pr-review-tab').click();
+		await expect(page.getByTestId('pr-review-draft')).toContainText('src/switcher.ts:1–2');
+	});
+
+	test('@smoke keeps typing out of the editor, and Escape closes the composer', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await openSwitcherDiff(page);
+
+		await secondLine(page).click();
+		await page.keyboard.press('Control+Alt+M');
+		await expect(page.getByTestId('review-composer-text')).toBeFocused();
+		await page.keyboard.type('abc');
+		// Ctrl+A in the box selects the box's text, not the file's.
+		await page.keyboard.press('Control+A');
+		await page.keyboard.type('z');
+		await expect(page.getByTestId('review-composer-text')).toHaveValue('z');
+
+		await page.keyboard.press('Escape');
+		await expect(page.getByTestId('review-composer')).toHaveCount(0);
+		await expect(page.getByTestId('review-draft')).toHaveCount(0);
+	});
+
+	test('@smoke refuses a line that is not part of the diff', async ({ page }) => {
+		// Line 2 of the modified side is outside the only range.
+		const fixture = fixtureWithPullRequests();
+		const root = fixture.projects?.[0]?.realPath ?? '';
+		const listing = fixture.ghPrFiles?.[`${root}#11`];
+		const file = listing?.files.find((f) => f.relPath === 'src/switcher.ts');
+		if (file) file.commentable = { left: [[1, 1]], right: [[1, 1]] };
+		await installMockBridge(page, fixture);
+		await openSwitcherDiff(page);
+
+		await secondLine(page).click();
+		await page.keyboard.press('Control+Alt+M');
+		await expect(page.getByText("This line isn't part of the diff.")).toBeVisible();
+		await expect(page.getByTestId('review-composer')).toHaveCount(0);
+	});
+
+	test('@smoke a draft survives a reload', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await openSwitcherDiff(page);
+
+		await secondLine(page).click();
+		await page.keyboard.press('Control+Alt+M');
+		await expect(page.getByTestId('review-composer-text')).toBeFocused();
+		await page.keyboard.type('Still here after a reload');
+		await page.keyboard.press('Control+Enter');
+		await expect(page.getByTestId('review-draft')).toBeVisible();
+		await expect
+			.poll(() => page.evaluate((k) => localStorage.getItem(k) ?? '', DRAFTS_KEY))
+			.toContain('Still here after a reload');
+
+		await page.reload();
+		// The panel remembers what was open; get to the pull request from either.
+		await expect(page.getByTestId('file-tree-panel')).toBeVisible();
+		await page.getByRole('tab', { name: 'PRs' }).click();
+		const row = page.getByTestId('pr-row-11');
+		await expect(row.or(page.getByTestId('pr-detail'))).toBeVisible();
+		if (await row.isVisible()) await row.click();
+		await expect(page.getByTestId('pr-review-tab-badge')).toHaveText('1');
+		await page.getByTestId('pr-files').getByTitle('src/switcher.ts').click();
+		await expect(page.getByTestId('review-draft')).toContainText('Still here after a reload');
+	});
+
+	test('@smoke cannot approve or request changes on your own pull request', async ({ page }) => {
+		await installMockBridge(page, fixtureWithOwnPullRequest());
+		await openReviewTab(page);
+
+		await expect(page.getByTestId('pr-review-event-APPROVE')).toBeDisabled();
+		await expect(page.getByTestId('pr-review-event-REQUEST_CHANGES')).toBeDisabled();
+		await expect(page.getByTestId('pr-review-event-COMMENT')).toBeEnabled();
+		await expect(page.getByTestId('pr-review-event-APPROVE')).toHaveAttribute(
+			'title',
+			/your own pull request/,
+		);
+	});
+
+	test('@smoke publishes the review after a confirmation, and clears the drafts', async ({
+		page,
+	}) => {
+		const fixture = fixtureWithPullRequests();
+		const head = fixture.ghPrDetails?.[`${SLUG}#11`]?.headRefOid ?? '';
+		await installMockBridge(page, fixture);
+		await seedDraft(page, head);
+		await openReviewTab(page);
+
+		await expect(page.getByTestId('pr-review-tab-badge')).toHaveText('1');
+		await page.getByTestId('pr-review-event-REQUEST_CHANGES').click();
+		await page.getByTestId('pr-review-body').fill('Needs one rename.');
+		await page.getByTestId('pr-review-submit').click();
+
+		const confirm = page.getByTestId('pr-review-confirm');
+		await expect(confirm).toContainText('@alice-reviewer');
+		await expect(confirm.getByTestId('pr-review-confirm-text')).toHaveText(
+			'Publish as @alice-reviewer: 1 comment, Request changes',
+		);
+		// Nothing has been sent yet.
+		expect(await calls(page, 'gh_pr_submit_review')).toHaveLength(0);
+
+		await confirm.getByTestId('pr-review-confirm-submit').click();
+		await expect(page.getByText('Review published')).toBeVisible();
+
+		const sent = (await calls(page, 'gh_pr_submit_review'))[0];
+		expect(sent?.args?.number).toBe(11);
+		const review = sent?.args?.review as {
+			commitOid: string;
+			event: string;
+			body: string;
+			comments: { path: string; line: number; side: string; body: string }[];
+		};
+		expect(review.commitOid).toBe(head);
+		expect(review.event).toBe('REQUEST_CHANGES');
+		expect(review.body).toBe('Needs one rename.');
+		expect(review.comments).toHaveLength(1);
+		expect(review.comments[0]).toMatchObject({
+			path: 'src/switcher.ts',
+			line: 1,
+			side: 'RIGHT',
+			body: 'Rename this constant.',
+		});
+
+		await expect(page.getByTestId('pr-review-tab-badge')).toHaveCount(0);
+		await expect(page.getByTestId('pr-review-drafts')).toHaveCount(0);
+		await expect(page.getByTestId('pr-review-body')).toHaveValue('');
+	});
+
+	test('@smoke keeps the drafts and says why when GitHub refuses the review', async ({ page }) => {
+		const fixture = fixtureWithPullRequests();
+		const head = fixture.ghPrDetails?.[`${SLUG}#11`]?.headRefOid ?? '';
+		fixture.ghSubmitReviewFails = {
+			kind: 'Remote',
+			message: 'Unprocessable Entity: line must be part of the diff',
+		};
+		await installMockBridge(page, fixture);
+		await seedDraft(page, head);
+		await openReviewTab(page);
+
+		await page.getByTestId('pr-review-submit').click();
+		await page.getByTestId('pr-review-confirm-submit').click();
+
+		await expect(page.getByTestId('pr-review-submit-error')).toContainText(
+			'line must be part of the diff',
+		);
+		await expect(page.getByTestId('pr-review-tab-badge')).toHaveText('1');
+		await expect(page.getByTestId('pr-review-draft')).toHaveCount(1);
+		// One attempt: a failed submit is never retried behind the user's back.
+		expect(await calls(page, 'gh_pr_submit_review')).toHaveLength(1);
+	});
+
+	test('@smoke warns when the pull request moved on under the drafts', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await seedDraft(page, 'a'.repeat(40));
+		await openReviewTab(page);
+
+		await expect(page.getByTestId('pr-review-stale')).toContainText('aaaaaaa');
+		await page.getByRole('button', { name: 'Discard drafts' }).click();
+		await expect(page.getByTestId('pr-review-stale')).toHaveCount(0);
+		await expect(page.getByTestId('pr-review-tab-badge')).toHaveCount(0);
+	});
+
+	test('@smoke will not submit an empty comment review', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await openReviewTab(page);
+
+		await expect(page.getByTestId('pr-review-submit')).toBeDisabled();
+		await page.getByTestId('pr-review-event-APPROVE').click();
+		await expect(page.getByTestId('pr-review-submit')).toBeEnabled();
 	});
 });

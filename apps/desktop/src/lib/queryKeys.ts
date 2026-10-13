@@ -53,6 +53,9 @@ export const queryKeys = {
 	ghPrs: (slug: string, filter: string) => ['gh-prs', slug, filter] as const,
 	/** One pull request in full (F31). Polled while its detail is open. */
 	ghPr: (slug: string, number: number) => ['gh-pr', slug, number] as const,
+	/** The inline review comments of a pull request (F31 P3). Refetched after a
+	 *  review is published. */
+	ghPrComments: (slug: string, number: number) => ['gh-pr-comments', slug, number] as const,
 	/** A pull request's changed files (F31). **`head` is part of the key**, so a
 	 *  force-push is a new entry rather than a stale one: files never expire for a
 	 *  given head. */

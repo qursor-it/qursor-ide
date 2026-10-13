@@ -13,6 +13,7 @@ import { type ReactNode, useState } from 'react';
 import { FileChangeRow } from '@components/files/FileChangeRow';
 import { AgentMark } from '@components/layout/AgentMark';
 import { CheckGlyph } from '@components/prs/CheckGlyph';
+import { ReviewTab } from '@components/prs/ReviewTab';
 import { usePrsTabActive, useResetOnUnauthenticated } from '@hooks/useGhStatus';
 import { useFileViewer } from '@hooks/useFileViewer';
 import { useInstalledAgents } from '@hooks/useInstalledAgents';
@@ -28,14 +29,16 @@ import {
 	reviewStateLabel,
 } from '@lib/pullRequests';
 import { queryKeys } from '@lib/queryKeys';
+import { draftKey } from '@lib/reviewAnchors';
 import { cmd, openExternally } from '@lib/tauri';
+import { useReviewDraftStore } from '@store/reviewDraftStore';
 
 /** The open pull request is re-read every 30s (F31): its checks finishing and a
  *  review landing are what you have it open to see. The list's minute is for a
  *  screen you are scanning, not reading. */
 const DETAIL_POLL_MS = 30_000;
 
-type SubTab = 'files' | 'overview';
+type SubTab = 'files' | 'overview' | 'review';
 
 interface PrDetailViewProps {
 	projectId: string;
@@ -46,17 +49,19 @@ interface PrDetailViewProps {
 }
 
 /**
- * One pull request (specs/05-features.md F31): identity above, then Files and
- * Overview as sub-tabs, in the shape of the graph's `CommitDetail`.
+ * One pull request (specs/05-features.md F31): identity above, then Files,
+ * Overview and Review as sub-tabs, in the shape of the graph's `CommitDetail`.
  *
  * **Files first**, because a reviewer opens a pull request to read its diff;
- * the description is one click away. Read-only: nothing here approves, comments
- * or merges.
+ * the description is one click away. The Review tab is where comments written in
+ * the diff are published (P3): the one write the app makes to GitHub, behind a
+ * confirmation (ADR-0077). Nothing here merges or closes.
  */
 export function PrDetailView({ projectId, root, status, number, onBack }: PrDetailViewProps) {
 	const active = usePrsTabActive();
 	const slug = status.repo?.slug ?? '';
 	const [tab, setTab] = useState<SubTab>('files');
+	const drafts = useReviewDraftStore((s) => s.byPr[draftKey(slug, number)]?.comments.length ?? 0);
 
 	const query = useQuery({
 		queryKey: queryKeys.ghPr(slug, number),
@@ -100,13 +105,18 @@ export function PrDetailView({ projectId, root, status, number, onBack }: PrDeta
 					>
 						<SubTabButton id="files" active={tab} onSelect={setTab} label="Files" />
 						<SubTabButton id="overview" active={tab} onSelect={setTab} label="Overview" />
+						<SubTabButton
+							id="review"
+							active={tab}
+							onSelect={setTab}
+							label="Review"
+							badge={drafts}
+						/>
 					</div>
 					<div className="min-h-0 flex-1 overflow-y-auto">
-						{tab === 'files' ? (
-							<FilesTab root={root} pr={query.data} />
-						) : (
-							<Overview pr={query.data} />
-						)}
+						{tab === 'files' && <FilesTab root={root} pr={query.data} />}
+						{tab === 'overview' && <Overview pr={query.data} />}
+						{tab === 'review' && <ReviewTab root={root} pr={query.data} status={status} />}
 					</div>
 				</>
 			)}
@@ -434,18 +444,21 @@ function Section({
 	);
 }
 
-/** One of the pane's two tabs: visually the panel header's `TabButton`, local
+/** One of the pane's tabs: visually the panel header's `TabButton`, local
  *  state by design, like `CommitDetail`'s. */
 function SubTabButton({
 	id,
 	active,
 	onSelect,
 	label,
+	badge = 0,
 }: {
 	id: SubTab;
 	active: SubTab;
 	onSelect: (tab: SubTab) => void;
 	label: string;
+	/** A count drawn beside the label when it is above zero. */
+	badge?: number;
 }) {
 	const selected = active === id;
 	return (
@@ -457,8 +470,17 @@ function SubTabButton({
 				selected ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
 			}`}
 			onClick={() => onSelect(id)}
+			data-testid={`pr-${id}-tab`}
 		>
 			{label}
+			{badge > 0 && (
+				<span
+					className="ml-1 rounded bg-primary/15 px-1 text-primary text-xs tabular-nums"
+					data-testid={`pr-${id}-tab-badge`}
+				>
+					{badge}
+				</span>
+			)}
 		</button>
 	);
 }

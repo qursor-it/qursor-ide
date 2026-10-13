@@ -1,4 +1,5 @@
 import type {
+	AppError,
 	ClaudeCliStatus,
 	DirListing,
 	FileChangedEvent,
@@ -18,6 +19,7 @@ import type {
 	Mention,
 	PathKind,
 	PdfContents,
+	PrComment,
 	PrDetail,
 	PrFiles,
 	PrStateFilter,
@@ -27,6 +29,7 @@ import type {
 	ProfilesChangedEvent,
 	Project,
 	QuitRequestedEvent,
+	ReviewSubmission,
 	Routine,
 	RoutineFireEvent,
 	RoutinesChangedEvent,
@@ -53,6 +56,7 @@ import type {
 	AgentId,
 	SessionAdoptedEvent,
 	Spawned,
+	SubmittedReview,
 } from '@factorai/types';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { type UnlistenFn, listen as tauriListen } from '@tauri-apps/api/event';
@@ -288,6 +292,15 @@ export const cmd = {
 	 *  on. Paths are relative to the repository root. */
 	ghPrFiles: (projectPath: string, number: number) =>
 		invoke<PrFiles>('gh_pr_files', { projectPath, number }),
+	/** The inline review comments already on a pull request. */
+	ghPrComments: (projectPath: string, number: number) =>
+		invoke<PrComment[]>('gh_pr_comments', { projectPath, number }),
+	/** Publish a review. **The one write the app makes to GitHub** (ADR-0077):
+	 *  call it only after the user confirmed, and never retry it — a second call
+	 *  is a second review. Rejects `InvalidInput` for a review GitHub would
+	 *  refuse and `Remote` with GitHub's own sentence for a 422. */
+	ghPrSubmitReview: (projectPath: string, number: number, review: ReviewSubmission) =>
+		invoke<SubmittedReview>('gh_pr_submit_review', { projectPath, number, review }),
 	/** One file at one commit of a pull request (a full 40-hex `sha`): the clone's
 	 *  copy when it has the commit, GitHub's when it does not. Resolves null when
 	 *  the file is not there — an added file has no merge-base side. */
@@ -806,6 +819,11 @@ interface TestFixture {
 	ghPrDetails?: Record<string, PrDetail>;
 	/** `gh_pr_files` keyed by `<repoRoot>#<number>`. Absent rejects NotFound. */
 	ghPrFiles?: Record<string, PrFiles>;
+	/** `gh_pr_comments` keyed by `<slug>#<number>`. Absent answers `[]`. */
+	ghPrComments?: Record<string, PrComment[]>;
+	/** Makes `gh_pr_submit_review` reject with this error, so a test can reach
+	 *  the "drafts are kept" path. */
+	ghSubmitReviewFails?: AppError;
 	/** Blob text keyed by `<sha>:<relPath>`; absent answers null (no such file at
 	 *  that commit). */
 	ghBlobs?: Record<string, string>;
@@ -1348,6 +1366,31 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 				};
 			}
 			return files as unknown as T;
+		}
+		case 'gh_pr_comments': {
+			const status = fx?.ghStatuses?.[String(args?.projectPath ?? '')];
+			const rows = status?.repo
+				? fx?.ghPrComments?.[`${status.repo.slug}#${Number(args?.number)}`]
+				: undefined;
+			return (rows ?? []) as unknown as T;
+		}
+		case 'gh_pr_submit_review': {
+			if (fx?.ghSubmitReviewFails) throw fx.ghSubmitReviewFails;
+			const status = fx?.ghStatuses?.[String(args?.projectPath ?? '')];
+			const number = Number(args?.number);
+			const detail = status?.repo ? fx?.ghPrDetails?.[`${status.repo.slug}#${number}`] : undefined;
+			const event = (args?.review as ReviewSubmission | undefined)?.event;
+			const state =
+				event === 'APPROVE'
+					? 'APPROVED'
+					: event === 'REQUEST_CHANGES'
+						? 'CHANGES_REQUESTED'
+						: 'COMMENTED';
+			return {
+				id: 1,
+				url: `${detail?.url ?? `https://github.com/o/r/pull/${number}`}#pullrequestreview-1`,
+				state,
+			} as unknown as T;
 		}
 		case 'gh_pr_blob': {
 			// A missing entry is "no such file at that commit" (an added file's

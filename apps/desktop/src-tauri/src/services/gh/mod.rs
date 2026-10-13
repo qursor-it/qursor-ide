@@ -16,17 +16,20 @@
 //! - [`parse`] — `gh`'s JSON into the wire models, and its failures into a
 //!   classification.
 //! - [`patch`] — which lines of a diff a comment may anchor to.
+//! - [`review`] — checking a review before it is sent, and its JSON body.
 //! - [`blob`] — a file at a commit, from the clone when it is there.
 //!
-//! **Read-only, in phase one.** Every call here is a GET. Nothing is written to
-//! GitHub, and nothing is written to the repository: no `git fetch`, so a fork's
-//! head commit is read from GitHub rather than pulled in.
+//! **Reads, and one write.** Every call here is a GET except [`submit_review`],
+//! which POSTs a review the user confirmed (ADR-0077) and passes it on stdin.
+//! Nothing is written to the repository: no `git fetch`, so a fork's head commit
+//! is read from GitHub rather than pulled in.
 
 pub mod args;
 pub mod blob;
 pub mod parse;
 pub mod patch;
 pub mod repo;
+pub mod review;
 pub mod run;
 
 use std::collections::HashMap;
@@ -37,7 +40,8 @@ use parking_lot::Mutex;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-	FileContents, GhRepo, GhState, GhStatus, PrDetail, PrFiles, PrStateFilter, PrSummary,
+	FileContents, GhRepo, GhState, GhStatus, PrComment, PrDetail, PrFiles, PrStateFilter,
+	PrSummary, ReviewSubmission, SubmittedReview,
 };
 
 use run::{Call, Output, BLOB_TIMEOUT, READ_TIMEOUT, STATUS_TIMEOUT};
@@ -58,6 +62,12 @@ const FILES_OUTPUT_CAP: usize = 64 * 1024 * 1024;
 /// enough to pay a network round trip on every status read; `refresh` clears it.
 static LOGINS: LazyLock<Mutex<HashMap<String, String>>> =
 	LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// A review's answer is a few hundred bytes; this is a ceiling, not an estimate.
+const REVIEW_OUTPUT_CAP: usize = 1024 * 1024;
+
+/// Longer than a read: GitHub validates every line comment of the review.
+const SUBMIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 type MergeBaseKey = (String, String, String);
 
@@ -395,6 +405,61 @@ pub async fn pr_files(project_path: &str, number: u64) -> AppResult<PrFiles> {
 	Ok(PrFiles { files, total, truncated })
 }
 
+/// The inline review comments already on a pull request, oldest first as GitHub
+/// lists them.
+pub async fn pr_comments(project_path: &str, number: u64) -> AppResult<Vec<PrComment>> {
+	let number = validate_number(number)?;
+	let ctx = context(project_path).await?;
+	let what = format!("the review comments of pull request #{number}");
+	let out = read(&ctx, args::pr_comments(&ctx.repo, number), READ_TIMEOUT, &what).await?;
+	let raw: Vec<parse::RawComment> = parse::parse_pages(&out).map_err(|e| unreadable(&what, e))?;
+	Ok(raw.iter().map(parse::map_comment).collect())
+}
+
+/// Publish a review. **The one write to GitHub** (ADR-0077): validated here,
+/// sent as JSON on stdin, never retried — a second POST would be a second
+/// review.
+pub async fn submit_review(
+	project_path: &str,
+	number: u64,
+	review: &ReviewSubmission,
+) -> AppResult<SubmittedReview> {
+	let number = validate_number(number)?;
+	review::validate(review)?;
+	let body = review::payload(review)?;
+	let ctx = context(project_path).await?;
+	let what = format!("pull request #{number}");
+	let call = Call {
+		args: args::submit_review(&ctx.repo, number),
+		stdin: Some(body),
+		stdout_cap: Some(REVIEW_OUTPUT_CAP),
+		timeout: Some(SUBMIT_TIMEOUT),
+	};
+	let output = run::run(&ctx.binary, call).await.map_err(|e| match e {
+		// The request may have reached GitHub before the wait ran out.
+		AppError::Remote(message) => AppError::Remote(format!(
+			"{message}; the review may have been published, so check the pull request before submitting again"
+		)),
+		other => other,
+	})?;
+	if output.overflowed {
+		return Err(unreadable("the review's answer", "an answer far larger than expected"));
+	}
+	if !output.succeeded() {
+		let mut failure = parse::classify(output.code, &output.stderr);
+		// `gh` prints GitHub's reasons to stdout; add the ones stderr left out.
+		if let parse::GhFailure::Validation(message) = &mut failure {
+			if let Some(detail) = review::validation_detail(&output.stdout) {
+				if !message.contains(&detail) {
+					*message = format!("{message} — {detail}");
+				}
+			}
+		}
+		return Err(failure.into_app_error(&what));
+	}
+	parse::parse_submitted(&output.stdout).map_err(|e| unreadable("the published review", e))
+}
+
 /// One file at one commit of a pull request: from the clone when the commit is
 /// there, from GitHub when it is not (a fork's head). `None` when the file does
 /// not exist at that commit.
@@ -525,6 +590,20 @@ mod tests {
 		));
 		assert!(matches!(pr_detail(&path, 0).await, Err(AppError::InvalidInput(_))));
 		assert!(matches!(pr_files(&path, 1).await, Err(AppError::InvalidInput(_))));
+		assert!(matches!(pr_comments(&path, 1).await, Err(AppError::InvalidInput(_))));
+		let review = ReviewSubmission {
+			commit_oid: "0123456789abcdef0123456789abcdef01234567".into(),
+			event: crate::models::ReviewEvent::Approve,
+			body: String::new(),
+			comments: vec![],
+		};
+		assert!(matches!(submit_review(&path, 1, &review).await, Err(AppError::InvalidInput(_))));
+		// Refused by validation before any repository is looked at.
+		let empty = ReviewSubmission { event: crate::models::ReviewEvent::Comment, ..review };
+		let Err(AppError::InvalidInput(message)) = submit_review(&path, 1, &empty).await else {
+			panic!("expected a refusal");
+		};
+		assert!(message.contains("only an approval may be empty"), "{message}");
 	}
 
 	#[test]

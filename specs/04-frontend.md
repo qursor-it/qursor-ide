@@ -292,6 +292,28 @@ back to Files rather than rendering a panel with no body. `MIN_PANEL_WIDTH` is 2
 (it was 256), measured with the fourth label: the Files tab's header, the widest,
 overflows below 280px. See Q18.
 
+### `reviewDraftStore` (F31, P3)
+
+Review drafts, one per pull request. **Persisted** as `factorai.reviewDrafts`
+(version 1, `deferredLocalStorage`, ADR-0013): Rust never reads a draft, and it is
+small enough for the quota ADR-0040 worries about.
+
+```ts
+type ReviewDraft = {
+  headOid: string;            // the head the first comment was written against
+  body: string;               // the general comment
+  event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
+  comments: { id; path; side: 'LEFT' | 'RIGHT'; line; startLine?; body; createdAt }[];
+};
+// byPr: Record<`${slug}#${number}`, ReviewDraft>
+// addComment, updateComment, removeComment, setBody, setEvent, clear(key)
+```
+
+A draft with no comments, no text and the default verdict is deleted, so a pull
+request nobody is reviewing leaves no entry. `headOid` is set by the first comment
+and kept, so the review is submitted against the lines the comments were written
+on.
+
 ### `prPanelStore` (F31)
 
 Where the PRs tab is, and nothing else. **Not persisted.**
@@ -557,6 +579,17 @@ no left read and a removed one no right read. Sides are cached by commit
 (`staleTime: Infinity`). Binary and truncated files take the commit-range path's
 messages. The footer reads `PR #42 · abc1234 ↔ def5678` and the read-only label
 `pull request — read-only`.
+
+**Review zones** (F31, P3). In `pr:` mode `DiffEditor` creates a review layer
+beside the Monaco editor (`components/viewer/prReviewZones.tsx`, `reviewable` prop)
+and hands it data through `usePrReviewInput` (the cached `gh_status` and
+`gh_pr_files` queries plus `gh_pr_comments`); the layer is disposed before the
+editor. It enables the glyph margin on commentable files, shows a `+` decoration
+(`.factorai-review-add`) on hover, registers the `factorai.addReviewComment` action
+(`Ctrl/Cmd+Alt+M`) on both editors, and draws threads, drafts and the composer as
+view zones whose content is a React root (`ReviewZoneContent`). Two Monaco facts it
+depends on: `suppressMouseDown: true` on a zone makes Monaco *take* the press, so it
+is left off, and the text layer paints over zones, so a zone sets `z-index: 1`.
 
 ## Session content rendering
 

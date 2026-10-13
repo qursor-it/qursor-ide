@@ -12,7 +12,10 @@
 //! Every call in it is a read.
 
 use factorai_lib::error::AppError;
-use factorai_lib::models::{CommentableLines, GhRepo, GhState, GhStatus, PrState, PrStateFilter};
+use factorai_lib::models::{
+	CommentableLines, DiffSide, DraftComment, GhRepo, GhState, GhStatus, PrComment, PrState,
+	PrStateFilter, ReviewEvent, ReviewSubmission,
+};
 use factorai_lib::services::gh;
 
 #[test]
@@ -82,6 +85,50 @@ fn commentable_ranges_cross_as_pairs() {
 		serde_json::to_value(lines).unwrap(),
 		serde_json::json!({"left": [[1, 3]], "right": [[1, 4], [20, 22]]})
 	);
+}
+
+#[test]
+fn a_review_arrives_camel_case_with_screaming_events_and_upper_sides() {
+	let review: ReviewSubmission = serde_json::from_value(serde_json::json!({
+		"commitOid": "0123456789abcdef0123456789abcdef01234567",
+		"event": "REQUEST_CHANGES",
+		"body": "b",
+		"comments": [{"path": "a.ts", "line": 4, "side": "RIGHT", "startLine": 2, "startSide": "RIGHT", "body": "c"}]
+	}))
+	.unwrap();
+	assert_eq!(review.event, ReviewEvent::RequestChanges);
+	assert_eq!(review.comments[0].start_line, Some(2));
+	assert_eq!(review.comments[0].side, DiffSide::Right);
+	let single: DraftComment = serde_json::from_value(
+		serde_json::json!({"path": "a.ts", "line": 4, "side": "LEFT", "startLine": null, "startSide": null, "body": "c"}),
+	)
+	.unwrap();
+	assert_eq!(single.side, DiffSide::Left);
+	assert_eq!(single.start_line, None);
+}
+
+#[test]
+fn a_comment_crosses_as_camel_case() {
+	let comment = PrComment {
+		id: 1,
+		author: "a".into(),
+		body: "b".into(),
+		path: "p".into(),
+		line: Some(3),
+		side: Some(DiffSide::Left),
+		start_line: None,
+		start_side: None,
+		commit_oid: "c".into(),
+		created_at: 5,
+		in_reply_to: Some(2),
+		url: "u".into(),
+		outdated: false,
+	};
+	let value = serde_json::to_value(comment).unwrap();
+	assert_eq!(value["side"], "LEFT");
+	assert_eq!(value["inReplyTo"], 2);
+	assert_eq!(value["createdAt"], 5);
+	assert_eq!(value["commitOid"], "c");
 }
 
 /// Read-only run against the public upstream, through a temporary clone whose

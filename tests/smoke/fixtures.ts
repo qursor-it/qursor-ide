@@ -24,6 +24,7 @@ import type {
 	MediaProbe,
 	ImportCandidate,
 	PdfContents,
+	PrComment,
 	PrDetail,
 	PrFile,
 	PrFiles,
@@ -1808,6 +1809,31 @@ function prFile(root: string, relPath: string, over: Partial<PrFile> = {}): PrFi
 	};
 }
 
+function prComment(
+	id: number,
+	author: string,
+	body: string,
+	commitOid: string,
+	over: Partial<PrComment> = {},
+): PrComment {
+	return {
+		id,
+		author,
+		body,
+		path: 'src/switcher.ts',
+		line: 1,
+		side: 'RIGHT',
+		startLine: null,
+		startSide: null,
+		commitOid,
+		createdAt: Date.UTC(2026, 9, 9, 12, 0),
+		inReplyTo: null,
+		url: `https://github.com/acme/widgets/pull/11#discussion_r${id}`,
+		outdated: false,
+		...over,
+	};
+}
+
 /**
  * Base shape plus a repository whose `origin` is `github.com/acme/widgets`, a
  * signed-in `gh`, and three pull requests (F31, ADR-0077):
@@ -1950,6 +1976,18 @@ export function fixtureWithPullRequests(): TestFixture {
 		ghPrLists: { [slug]: [eleven, twelve, thirteen] },
 		ghPrDetails: { [`${slug}#11`]: detail },
 		ghPrFiles: { [`${root}#11`]: files },
+		ghPrComments: {
+			[`${slug}#11`]: [
+				prComment(101, 'bob', 'Why a constant here?', head, { line: 1 }),
+				prComment(102, 'carol', 'Because the tests read it.', head, {
+					line: 1,
+					inReplyTo: 101,
+					createdAt: Date.UTC(2026, 9, 9, 13, 0),
+				}),
+				// The line is gone from the latest diff: nowhere to draw it.
+				prComment(103, 'bob', 'Stale remark', head, { line: null, outdated: true }),
+			],
+		},
 		ghBlobs: {
 			[`${head}:src/switcher.ts`]: 'export const switcher = 2;\nexport const widgets = [];\n',
 			[`${mergeBase}:src/switcher.ts`]: 'export const switcher = 1;\n',
@@ -1960,6 +1998,22 @@ export function fixtureWithPullRequests(): TestFixture {
 			// Renamed: the old path at the merge base, the new one at the head.
 			[`${mergeBase}:src/old-name.ts`]: 'export const name = "old";\n',
 			[`${head}:src/new-name.ts`]: 'export const name = "new";\n',
+		},
+	};
+}
+
+/**
+ * The same repository, with the viewer as the author of #11: GitHub refuses an
+ * approval or a change request on one's own pull request (F31, P3).
+ */
+export function fixtureWithOwnPullRequest(): TestFixture {
+	const base = fixtureWithPullRequests();
+	const detail = base.ghPrDetails?.['github.com/acme/widgets#11'];
+	if (!detail) return base;
+	return {
+		...base,
+		ghPrDetails: {
+			'github.com/acme/widgets#11': { ...detail, author: 'alice-reviewer', viewerIsAuthor: true },
 		},
 	};
 }

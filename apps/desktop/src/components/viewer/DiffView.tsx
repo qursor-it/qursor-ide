@@ -30,6 +30,12 @@ import {
 	monaco,
 	openFind,
 } from '@components/viewer/monaco';
+import {
+	type PrReviewLayer,
+	type ReviewLayerInput,
+	attachPrReview,
+} from '@components/viewer/prReviewZones';
+import { usePrReviewInput } from '@hooks/usePrReviewInput';
 import { usePrefsStore } from '@store/prefsStore';
 
 /**
@@ -242,6 +248,9 @@ function DiffViewInner({ path, mode, sides = null }: DiffViewProps) {
 	const { root } = useActiveCheckout();
 	const queryClient = useQueryClient();
 	const { left, right } = sidesFor(path, mode, { root, queryClient });
+	// Line comments, for a pull request's diff only (F31 P3): null for every
+	// other mode, and until the file list arrives.
+	const review = usePrReviewInput(mode, path, sides ? null : root);
 
 	// Disabled rather than absent when the strings were handed to us: hooks run
 	// in the same order either way, and nothing should read a revision whose
@@ -367,6 +376,8 @@ function DiffViewInner({ path, mode, sides = null }: DiffViewProps) {
 						language={languageForFile(basename(path))}
 						inline={inline}
 						readOnly={!editable}
+						reviewable={!sides && parsePrRange(mode) !== null}
+						review={review}
 						onDirtyChange={noteDirty}
 						onSave={requestSave}
 					/>
@@ -470,6 +481,11 @@ interface DiffEditorProps {
 	language: string;
 	inline: boolean;
 	readOnly: boolean;
+	/** This is a pull request's diff, so it takes line comments (F31 P3). */
+	reviewable: boolean;
+	/** What the review layer shows; `null` until the pull request's file list is
+	 *  in. Only read when `reviewable`. */
+	review: ReviewLayerInput | null;
 	onDirtyChange: (dirty: boolean) => void;
 	onSave: () => void;
 }
@@ -498,6 +514,8 @@ function DiffEditor({
 	language,
 	inline,
 	readOnly,
+	reviewable,
+	review,
 	onDirtyChange,
 	onSave,
 }: DiffEditorProps) {
@@ -523,6 +541,12 @@ function DiffEditor({
 	onSaveRef.current = onSave;
 	const onDirtyRef = useRef(onDirtyChange);
 	onDirtyRef.current = onDirtyChange;
+	/** The pull request's line comments, bolted on beside the editor
+	 *  (`prReviewZones`). Held in refs for the same reason as the texts: the
+	 *  data arrives after the editor exists and must not recreate it. */
+	const reviewRef = useRef(review);
+	reviewRef.current = review;
+	const layerRef = useRef<PrReviewLayer | null>(null);
 
 	/**
 	 * **Creation only. Neither text is a dependency**, and that is the fix for a
@@ -603,6 +627,10 @@ function DiffEditor({
 			if (viewStateRef.current) editor.restoreViewState(viewStateRef.current);
 		}
 
+		const layer = reviewable ? attachPrReview(editor, { inline }) : null;
+		layer?.update(reviewRef.current);
+		layerRef.current = layer;
+
 		if (findSink) {
 			findSink.current = {
 				open: () => openFind(modifiedEditor),
@@ -618,6 +646,9 @@ function DiffEditor({
 				bufferRef.current = modifiedModel.getValue();
 			}
 			if (findSink) findSink.current = null;
+			// Before the editor, so its zones are taken down while it still exists.
+			layer?.dispose();
+			layerRef.current = null;
 			contentSub?.dispose();
 			modelsRef.current = null;
 			appliedBaselineRef.current = null;
@@ -631,7 +662,11 @@ function DiffEditor({
 			originalModel.dispose();
 			modifiedModel.dispose();
 		};
-	}, [bufferRef, language, inline, readOnly, findSink]);
+	}, [bufferRef, language, inline, readOnly, reviewable, findSink]);
+
+	useEffect(() => {
+		layerRef.current?.update(review);
+	}, [review]);
 
 	/** A new left-hand revision — the index moved, or the watcher re-read. In
 	 *  place, because this side has no buffer to protect and no undo worth

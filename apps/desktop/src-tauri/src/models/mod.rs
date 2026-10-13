@@ -1218,3 +1218,79 @@ pub struct PrFiles {
 	/// GitHub lists at most 3000 files; `total` is larger than `files.len()`.
 	pub truncated: bool,
 }
+
+/// Which side of a diff a review comment is anchored to: the old file or the
+/// new one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum DiffSide {
+	Left,
+	Right,
+}
+
+/// One inline review comment already on a pull request (F31, P3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrComment {
+	pub id: u64,
+	pub author: String,
+	pub body: String,
+	/// Relative to the repository root.
+	pub path: String,
+	/// `None` when the commented line no longer exists in the current diff.
+	pub line: Option<u32>,
+	pub side: Option<DiffSide>,
+	pub start_line: Option<u32>,
+	pub start_side: Option<DiffSide>,
+	pub commit_oid: String,
+	/// Epoch milliseconds.
+	pub created_at: i64,
+	/// The comment this one replies to, when it is part of a thread.
+	pub in_reply_to: Option<u64>,
+	pub url: String,
+	/// The comment's line is gone from the latest diff (`line` is `None`).
+	pub outdated: bool,
+}
+
+/// What a submitted review says about the pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReviewEvent {
+	Approve,
+	RequestChanges,
+	Comment,
+}
+
+/// One line comment in a review being submitted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DraftComment {
+	/// Relative to the repository root, the new name for a renamed file.
+	pub path: String,
+	/// The last line of the range.
+	pub line: u32,
+	pub side: DiffSide,
+	pub start_line: Option<u32>,
+	pub start_side: Option<DiffSide>,
+	pub body: String,
+}
+
+/// A whole review, from the Review tab. The only write the app makes to GitHub
+/// (ADR-0077).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewSubmission {
+	/// The head commit the comments were written against.
+	pub commit_oid: String,
+	pub event: ReviewEvent,
+	pub body: String,
+	pub comments: Vec<DraftComment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmittedReview {
+	pub id: u64,
+	pub url: String,
+	pub state: String,
+}
