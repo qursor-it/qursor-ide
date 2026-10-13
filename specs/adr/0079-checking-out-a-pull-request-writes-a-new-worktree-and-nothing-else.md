@@ -16,11 +16,11 @@ Three things make this different from the rest of git in the app.
 ## Decision
 
 - **The `git` CLI, not `git2`, for this action.** The app finds `git` on the PATH (and a few well-known install locations), refuses a `.cmd` / `.bat` shim, and runs it as a one-shot child with the shared child environment, a timeout (120 s for the fetch, 60 s for `worktree add`) and kill-on-drop. `GIT_TERMINAL_PROMPT=0` makes a missing credential an error instead of a hang; the user's credential helpers keep working. `git2` stays `default-features = false` and everything else in the app stays read-only.
-- **Two commands, both naming the main checkout with `-C`.** `git -C <main> fetch --no-tags --no-write-fetch-head origin refs/pull/<n>/head`, then one of `git -C <main> worktree add -b pr/<n> <path> <oid>`, `worktree add <path> pr/<n>` (the branch already points at the head) or `worktree add --detach <path> <oid>`. The commit is the one the human was shown, and it is verified present with `git2` before anything is added.
+- **Two commands, both naming the main checkout with `-C`.** `git -C <main> fetch --no-tags --no-write-fetch-head <remote> refs/pull/<n>/head`, then one of `git -C <main> worktree add -b pr/<n> <path> <oid>`, `worktree add <path> pr/<n>` (the branch already points at the head) or `worktree add --detach <path> <oid>`. The commit is the one the human was shown, and it is verified present with `git2` before anything is added.
 - **The guarantee.** The app never runs `checkout`, `switch`, `reset`, `stash`, `restore`, `clean` or `push`, never passes `--force`, and never writes to the current checkout, its index or HEAD, or to any other worktree. What changes on disk is one new linked worktree and, at most, one new branch `pr/<n>`. A branch `pr/<n>` that exists at another commit is left alone: the human is offered a detached checkout instead. A test holds every argument list to this.
 - **Where.** Next to the main checkout, as `<main folder>-pr-<n>`, with `-2`, `-3` appended while the path is taken. The path is shown before anything happens.
 - **A confirmation first**, naming the folder, the branch and the commit. When the head lives in a fork the dialog says so: running its code can execute anything it contains. A worktree that already has the head out turns the button into "Open checkout" and nothing is run.
-- **`origin`** is the remote, the same one the PRs tab resolves.
+- **`<remote>`** is the remote the PRs tab resolved (`origin` unless the repository has none, ADR-0077); its name is checked not to start with `-` or contain whitespace before it reaches the argument list.
 
 ## Consequences
 

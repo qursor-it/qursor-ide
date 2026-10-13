@@ -238,7 +238,8 @@ mod tests {
 	}
 
 	fn repo() -> GhRepo {
-		crate::services::gh::repo::parse_remote_url("https://github.com/Nightbr/factorai").unwrap()
+		crate::services::gh::repo::parse_remote_url("origin", "https://github.com/Nightbr/factorai")
+			.unwrap()
 	}
 
 	#[test]

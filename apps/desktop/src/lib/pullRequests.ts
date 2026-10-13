@@ -53,7 +53,7 @@ export function ghStatusText(status: Pick<GhStatus, 'state' | 'message'>): strin
 		case 'notRepository':
 			return 'This folder is not a git repository.';
 		case 'noOrigin':
-			return 'This repository has no origin remote, so there are no pull requests to show.';
+			return 'This repository has no origin remote and no single GitHub remote, so there are no pull requests to show.';
 		case 'notGitHub':
 			return 'The origin remote is not a GitHub repository.';
 		case 'unreachable':

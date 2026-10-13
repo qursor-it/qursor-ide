@@ -974,7 +974,8 @@ pub enum GhState {
 	NotAuthenticated,
 	/// The project folder is not inside a git repository.
 	NotRepository,
-	/// The repository has no `origin` remote (no other remote is consulted).
+	/// No `origin` remote, and not exactly one other GitHub remote (`upstream` is
+	/// never counted): there are none, or several and it is unclear which to show.
 	NoOrigin,
 	/// `origin` is not a GitHub (or GitHub Enterprise) repository.
 	NotGitHub,
@@ -982,7 +983,8 @@ pub enum GhState {
 	Unreachable,
 }
 
-/// A repository on a GitHub host, as named by `origin`.
+/// A repository on a GitHub host, as named by `origin` (or, without one, by the
+/// only GitHub remote).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GhRepo {
@@ -995,6 +997,9 @@ pub struct GhRepo {
 	pub slug: String,
 	/// `https://host/owner/name`, for "Open on GitHub".
 	pub web_url: String,
+	/// The name of the git remote this repository was read from: `origin`, or the
+	/// only GitHub remote when there is no `origin`.
+	pub remote: String,
 }
 
 /// The answer to "can this project show pull requests?". `gh_status` never

@@ -4,6 +4,7 @@ import {
 	fixtureWithFileTree,
 	fixtureWithOwnPullRequest,
 	fixtureWithPullRequests,
+	fixtureWithPullRequestsViaRemote,
 	fixtureWithPullRequestsSignedOut,
 	installMockBridge,
 } from './fixtures';
@@ -83,6 +84,15 @@ test.describe('pull requests tab', () => {
 			.toBe(true);
 	});
 
+	test('names the remote when the repository was not read from origin', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequestsViaRemote());
+		await page.goto(PROJECT);
+		await openPrs(page);
+
+		await expect(page.getByTestId('pr-repo')).toContainText('acme/widgets');
+		await expect(page.getByTestId('pr-remote')).toHaveText('· via remote xplorer');
+	});
+
 	test('@smoke lists the pull requests and marks only what earns a mark', async ({ page }) => {
 		await installMockBridge(page, fixtureWithPullRequests());
 		await page.goto(PROJECT);
@@ -93,6 +103,8 @@ test.describe('pull requests tab', () => {
 		await expect(page.getByTestId('pr-row-12')).toContainText('wip: rewrite the renderer');
 		await expect(page.getByTestId('pr-row-13')).toHaveCount(0);
 		await expect(page.getByTestId('pr-repo')).toHaveText('acme/widgets');
+		// Read from `origin`: nothing to explain.
+		await expect(page.getByTestId('pr-remote')).toHaveCount(0);
 
 		// The draft chip is on #12 only.
 		await expect(page.getByTestId('pr-row-12').getByTestId('pr-draft')).toBeVisible();

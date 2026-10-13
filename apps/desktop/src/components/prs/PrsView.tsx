@@ -25,7 +25,7 @@ import { usePrPanelStore } from '@store/prPanelStore';
 export function PrsView() {
 	// **The checkout, not the project folder** (F21), like Changes and the tree:
 	// the pull request the agent's worktree belongs to is the one that matters,
-	// and `gh_status` reads `origin` from whatever repository the path is in.
+	// and `gh_status` reads the repository's remote from whatever repository the path is in.
 	const { projectId, root, isLoading } = useActiveCheckout();
 	const status = useGhStatus(root);
 

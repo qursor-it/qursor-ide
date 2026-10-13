@@ -8,6 +8,7 @@ const repo: GhRepo = {
 	name: 'widgets',
 	slug: 'github.com/acme/widgets',
 	webUrl: 'https://github.com/acme/widgets',
+	remote: 'origin',
 };
 
 const pr = {

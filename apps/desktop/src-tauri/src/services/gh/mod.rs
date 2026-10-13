@@ -139,20 +139,29 @@ fn not_installed() -> AppError {
 	)
 }
 
-async fn context(project_path: &str) -> AppResult<Ctx> {
-	let path = project_path.to_string();
-	let (resolved, binary) = blocking(move || (repo::resolve(&path), run::binary(false))).await?;
-	let resolved = resolved.map_err(|why| match why {
+/// What a command says when the project has no repository to act on.
+fn unresolved_error(why: repo::Unresolved) -> AppError {
+	match why {
 		repo::Unresolved::NotRepository => {
 			AppError::InvalidInput("this folder is not inside a git repository".into())
 		}
-		repo::Unresolved::NoOrigin => {
-			AppError::InvalidInput("this repository has no `origin` remote".into())
-		}
+		repo::Unresolved::NoOrigin(candidates) if candidates.is_empty() => AppError::InvalidInput(
+			"this repository has no `origin` remote and no other GitHub remote".into(),
+		),
+		repo::Unresolved::NoOrigin(candidates) => AppError::InvalidInput(format!(
+			"this repository has no `origin` remote and several GitHub remotes ({}); rename the one to use to `origin`",
+			candidates.join(", ")
+		)),
 		repo::Unresolved::NotGitHub(url) => {
 			AppError::InvalidInput(format!("`origin` is not a GitHub repository: {url}"))
 		}
-	})?;
+	}
+}
+
+async fn context(project_path: &str) -> AppResult<Ctx> {
+	let path = project_path.to_string();
+	let (resolved, binary) = blocking(move || (repo::resolve(&path), run::binary(false))).await?;
+	let resolved = resolved.map_err(unresolved_error)?;
 	let binary = binary.ok_or_else(not_installed)?;
 	Ok(Ctx { binary, repo: resolved.repo, root: resolved.root })
 }
@@ -221,8 +230,8 @@ fn status_with(state: GhState, message: Option<String>) -> GhStatus {
 /// Can this project show pull requests, and if not, why not. **Never fails**:
 /// each problem is a state, so the panel has one empty state to draw.
 ///
-/// The cheap local questions come first (is there a repository, an `origin`, is
-/// it GitHub), then the install and version of `gh`, then the one network call —
+/// The cheap local questions come first (is there a repository, a remote to read,
+/// is it GitHub), then the install and version of `gh`, then the one network call —
 /// who is signed in. `refresh` re-probes `gh` and forgets the cached login, for
 /// the panel's refresh button after the user installs or signs in.
 pub async fn status(project_path: &str, refresh: bool) -> GhStatus {
@@ -241,13 +250,18 @@ pub async fn status(project_path: &str, refresh: bool) -> GhStatus {
 				Some("This folder is not inside a git repository.".to_string()),
 			)
 		}
-		Err(repo::Unresolved::NoOrigin) => return status_with(
-			GhState::NoOrigin,
-			Some(
-				"This repository has no `origin` remote, so there is no pull-request list to read."
-					.to_string(),
-			),
-		),
+		Err(repo::Unresolved::NoOrigin(candidates)) => {
+			let message = if candidates.is_empty() {
+				"This repository has no `origin` remote and no other GitHub remote, so there is no pull-request list to read."
+					.to_string()
+			} else {
+				format!(
+					"This repository has no `origin` remote and several GitHub remotes ({}), so it is not clear whose pull requests to show. Rename the one you want to `origin`.",
+					candidates.join(", ")
+				)
+			};
+			return status_with(GhState::NoOrigin, Some(message));
+		}
 		Err(repo::Unresolved::NotGitHub(url)) => {
 			return status_with(
 				GhState::NotGitHub,

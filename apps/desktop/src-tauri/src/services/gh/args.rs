@@ -137,7 +137,7 @@ mod tests {
 	/// This clone's own shape: the fork is `origin`, the original `upstream`. A
 	/// call that fell back to `gh`'s own resolution would read the wrong one.
 	fn all_calls(url: &str) -> (GhRepo, Vec<(&'static str, Vec<String>)>) {
-		let repo = parse_remote_url(url).unwrap();
+		let repo = parse_remote_url("origin", url).unwrap();
 		let calls = vec![
 			("list open", pr_list(&repo, PrStateFilter::Open)),
 			("list all", pr_list(&repo, PrStateFilter::All)),
@@ -234,7 +234,7 @@ mod tests {
 	/// write names stdin explicitly.
 	#[test]
 	fn a_review_body_is_never_an_argument() {
-		let repo = parse_remote_url("https://github.com/o/r").unwrap();
+		let repo = parse_remote_url("origin", "https://github.com/o/r").unwrap();
 		let args = submit_review(&repo, 7);
 		assert!(args.windows(2).any(|w| w[0] == "--input" && w[1] == "-"));
 		assert!(args.windows(2).any(|w| w[0] == "--hostname" && w[1] == "github.com"));

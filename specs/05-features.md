@@ -7162,7 +7162,7 @@ project runs"); `start_session` returns `{ id, provisional: bool }`;
 
 **Roadmap.** Item 38, rewritten as slices.
 
-## F31 — Pull requests from origin, through `gh`
+## F31 — Pull requests from the project's remote, through `gh`
 
 **Specified 2026-10-13; decision in
 [ADR-0077](adr/0077-pull-requests-go-through-the-users-gh.md).** The right-hand
@@ -7182,11 +7182,17 @@ Everything below describes P1 unless it says otherwise.
 
 ### Which repository
 
-**`origin`, and nothing else.** A fork's clone has `upstream` too, and `gh`
-alone would choose it. The repository comes from `origin`'s URL (scp
-`git@host:o/r.git`, `ssh://`, `https://` with or without credentials, a port,
-`.git` or a trailing slash). No `origin` is `noOrigin`; an `origin` that is not
-a GitHub host, or whose path is not `owner/name`, is `notGitHub`. A GitHub
+**`origin`, else the one GitHub remote that is not `upstream`.** A fork's clone
+has `upstream` too, and `gh` alone would choose it. The repository comes from
+`origin`'s URL (scp `git@host:o/r.git`, `ssh://`, `https://` with or without
+credentials, a port, `.git` or a trailing slash). An `origin` that is not a
+GitHub host, or whose path is not `owner/name`, is `notGitHub`, and nothing else
+is tried. With no `origin`, every remote except `upstream` whose URL is GitHub
+is a candidate: exactly one is used and its name is `repo.remote` (the list
+header then reads "owner/name · via remote `xplorer`", and the P4 checkout
+fetches from that remote); none is `noOrigin`; two or more are `noOrigin` too,
+and the message names them and asks the user to rename the one they want to
+`origin`. A GitHub
 Enterprise host is allowed; GitLab, Bitbucket, Codeberg, Azure DevOps and
 similar hosts are not. **Every `gh` call names the repository** — `--repo
 HOST/OWNER/NAME` or `gh api --hostname HOST repos/OWNER/NAME/…`; the
@@ -7201,7 +7207,7 @@ state naming the fix. Checked in this order, the cheap local questions first:
 | `state` | When | The panel says |
 |---|---|---|
 | `notRepository` | the project folder is in no git repository | not a git repository |
-| `noOrigin` | the repository has no `origin` remote | no `origin`, so nothing to list |
+| `noOrigin` | no `origin`, and not exactly one other GitHub remote (`upstream` never counts) | no `origin` (or which several remotes to choose from), so nothing to list |
 | `notGitHub` | `origin` is not a GitHub repository | `origin` is not on GitHub |
 | `notInstalled` | no `gh` on the PATH or in the usual install folders | install the GitHub CLI |
 | `tooOld` | `gh --version` is below 2.40 | update `gh` |

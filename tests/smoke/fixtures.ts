@@ -1874,6 +1874,7 @@ export function fixtureWithPullRequests(): TestFixture {
 			name: 'widgets',
 			slug,
 			webUrl: 'https://github.com/acme/widgets',
+			remote: 'origin',
 		},
 		repoRoot: root,
 		message: null,
@@ -2021,6 +2022,21 @@ export function fixtureWithOwnPullRequest(): TestFixture {
 		ghPrDetails: {
 			'github.com/acme/widgets#11': { ...detail, author: 'alice-reviewer', viewerIsAuthor: true },
 		},
+	};
+}
+
+/**
+ * The same repository, read from a remote named `xplorer` because there is no
+ * `origin` (F31): the list header says which remote.
+ */
+export function fixtureWithPullRequestsViaRemote(): TestFixture {
+	const base = fixtureWithPullRequests();
+	const root = base.projects?.[0]?.realPath ?? '';
+	const status = base.ghStatuses?.[root];
+	if (!status?.repo) return base;
+	return {
+		...base,
+		ghStatuses: { [root]: { ...status, repo: { ...status.repo, remote: 'xplorer' } } },
 	};
 }
 

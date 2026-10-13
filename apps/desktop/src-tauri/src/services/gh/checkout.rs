@@ -53,16 +53,30 @@ pub fn branch_name(number: u64) -> String {
 	format!("pr/{number}")
 }
 
-/// Fetch the pull request's head from `origin`. No tags, no `FETCH_HEAD`, and no
-/// destination ref: the objects arrive and nothing local is renamed or moved.
-pub fn fetch_args(main: &Path, number: u64) -> Vec<String> {
+/// A remote name that is safe as a bare git argument: not empty, no leading `-`
+/// (it would read as an option), no whitespace or control characters. Names come
+/// from the repository's own config, so this is a second line of defence.
+pub fn validate_remote(remote: &str) -> AppResult<&str> {
+	if remote.is_empty()
+		|| remote.starts_with('-')
+		|| remote.chars().any(|c| c.is_whitespace() || c.is_control())
+	{
+		return Err(AppError::InvalidInput(format!("`{remote}` is not a usable remote name")));
+	}
+	Ok(remote)
+}
+
+/// Fetch the pull request's head from `remote` (the one the repository was read
+/// from, see [`super::repo`]). No tags, no `FETCH_HEAD`, and no destination ref:
+/// the objects arrive and nothing local is renamed or moved.
+pub fn fetch_args(main: &Path, remote: &str, number: u64) -> Vec<String> {
 	vec![
 		"-C".into(),
 		main.to_string_lossy().into_owned(),
 		"fetch".into(),
 		"--no-tags".into(),
 		"--no-write-fetch-head".into(),
-		"origin".into(),
+		remote.into(),
 		format!("refs/pull/{number}/head"),
 	]
 }
@@ -128,12 +142,15 @@ pub fn find_existing(
 
 /// What the repository on disk says, before anything is fetched.
 struct Local {
+	/// The remote the pull requests belong to.
+	remote: String,
 	main: PathBuf,
 	worktrees: Vec<GitWorktree>,
 	path: PathBuf,
 }
 
 fn inspect(project_path: &str, number: u64) -> AppResult<Local> {
+	let remote = super::repo::resolve(project_path).map_err(super::unresolved_error)?.repo.remote;
 	let worktrees = git::worktrees(project_path)?;
 	let Some(main) = worktrees.iter().find(|w| w.is_main) else {
 		return Err(AppError::InvalidInput(
@@ -143,7 +160,7 @@ fn inspect(project_path: &str, number: u64) -> AppResult<Local> {
 	let main = PathBuf::from(&main.path);
 	let taken: HashSet<PathBuf> = worktrees.iter().map(|w| PathBuf::from(&w.path)).collect();
 	let path = pick_path(&main, number, |p| p.exists() || taken.contains(p))?;
-	Ok(Local { main, worktrees, path })
+	Ok(Local { remote, main, worktrees, path })
 }
 
 /// The commit a local branch points at.
@@ -206,16 +223,16 @@ pub async fn checkout(
 	let local = blocking(move || {
 		let local = inspect(&p, number)?;
 		let existing = find_existing(&local.worktrees, number, &oid);
-		Ok::<_, AppError>((local.main, local.path, existing))
+		Ok::<_, AppError>((local.remote, local.main, local.path, existing))
 	})
 	.await??;
-	let (main, path, existing) = local;
+	let (remote, main, path, existing) = local;
 	if let Some(existing) = existing {
 		return Ok(existing);
 	}
 
 	let git = git_binary().await?;
-	checkout_worktree(&git, &main, number, head_oid, detached, &path).await?;
+	checkout_worktree(&git, &main, &remote, number, head_oid, detached, &path).await?;
 
 	let (p, wanted) = (project_path.to_string(), path.clone());
 	blocking(move || git::worktrees(&p))
@@ -234,17 +251,19 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 	}
 }
 
-/// The git half, testable without `gh`: fetch, check the commit arrived, add the
-/// worktree.
+/// The git half, testable without `gh`: fetch from `remote`, check the commit
+/// arrived, add the worktree.
 pub async fn checkout_worktree(
 	git: &Path,
 	main: &Path,
+	remote: &str,
 	number: u64,
 	head_oid: &str,
 	detached: bool,
 	path: &Path,
 ) -> AppResult<()> {
-	let fetched = run_git(git, fetch_args(main, number), FETCH_TIMEOUT).await?;
+	let remote = validate_remote(remote)?;
+	let fetched = run_git(git, fetch_args(main, remote, number), FETCH_TIMEOUT).await?;
 	if !fetched.ok {
 		return Err(AppError::Remote(format!(
 			"git could not fetch pull request #{number}: {}",
@@ -400,7 +419,7 @@ mod tests {
 	fn all_argv(main: &Path) -> Vec<Vec<String>> {
 		let path = Path::new("/work/app-pr-7");
 		vec![
-			fetch_args(main, 7),
+			fetch_args(main, "origin", 7),
 			worktree_add_args(main, 7, OID, path, &AddMode::NewBranch),
 			worktree_add_args(main, 7, OID, path, &AddMode::ExistingBranch),
 			worktree_add_args(main, 7, OID, path, &AddMode::Detached),
@@ -426,9 +445,10 @@ mod tests {
 		let main = Path::new("/work/app");
 		let path = Path::new("/work/app-pr-7");
 		assert_eq!(
-			fetch_args(main, 7)[2..],
+			fetch_args(main, "origin", 7)[2..],
 			["fetch", "--no-tags", "--no-write-fetch-head", "origin", "refs/pull/7/head"]
 		);
+		assert_eq!(fetch_args(main, "xplorer", 7)[5], "xplorer");
 		assert_eq!(
 			worktree_add_args(main, 7, OID, path, &AddMode::NewBranch)[2..],
 			["worktree", "add", "-b", "pr/7", "/work/app-pr-7", OID]
@@ -441,6 +461,16 @@ mod tests {
 			worktree_add_args(main, 7, OID, path, &AddMode::Detached)[2..],
 			["worktree", "add", "--detach", "/work/app-pr-7", OID]
 		);
+	}
+
+	#[test]
+	fn a_remote_name_must_not_read_as_an_option() {
+		for good in ["origin", "xplorer", "my-fork", "a.b/c"] {
+			assert!(validate_remote(good).is_ok(), "{good:?}");
+		}
+		for bad in ["", "-u", "--upload-pack=x", "a b", "a\tb", "a\nb"] {
+			assert!(validate_remote(bad).is_err(), "{bad:?}");
+		}
 	}
 
 	#[test]
@@ -551,7 +581,7 @@ mod tests {
 		};
 		let before = head_of(&fx.main);
 		let path = pick_path(&fx.main, 7, |p| p.exists()).unwrap();
-		checkout_worktree(&fx.git, &fx.main, 7, &fx.pr_oid, false, &path).await.unwrap();
+		checkout_worktree(&fx.git, &fx.main, "origin", 7, &fx.pr_oid, false, &path).await.unwrap();
 
 		assert!(path.join(".git").exists());
 		let list = git::worktrees(&fx.main.to_string_lossy()).unwrap();
@@ -561,6 +591,27 @@ mod tests {
 		assert!(same_dir(Path::new(&added.path), &path));
 		assert_eq!(find_existing(&list, 7, &fx.pr_oid).unwrap().path, added.path);
 		assert_eq!(head_of(&fx.main), before);
+	}
+
+	#[tokio::test]
+	async fn the_fetch_goes_to_the_named_remote_not_to_origin() {
+		let Some(fx) = fixture() else {
+			eprintln!("skipped: git is not on PATH");
+			return;
+		};
+		let repo = git2::Repository::open(&fx.main).unwrap();
+		let url = repo.find_remote("origin").unwrap().url().unwrap().to_string();
+		repo.remote_delete("origin").unwrap();
+		repo.remote("xplorer", &url).unwrap();
+		let path = pick_path(&fx.main, 7, |p| p.exists()).unwrap();
+
+		let err = checkout_worktree(&fx.git, &fx.main, "origin", 7, &fx.pr_oid, false, &path)
+			.await
+			.unwrap_err();
+		assert!(matches!(err, AppError::Remote(_)), "{err:?}");
+
+		checkout_worktree(&fx.git, &fx.main, "xplorer", 7, &fx.pr_oid, false, &path).await.unwrap();
+		assert!(path.join(".git").exists());
 	}
 
 	#[tokio::test]
@@ -574,13 +625,14 @@ mod tests {
 		repo.branch("pr/7", &start, false).unwrap();
 
 		let path = pick_path(&fx.main, 7, |p| p.exists()).unwrap();
-		let err =
-			checkout_worktree(&fx.git, &fx.main, 7, &fx.pr_oid, false, &path).await.unwrap_err();
+		let err = checkout_worktree(&fx.git, &fx.main, "origin", 7, &fx.pr_oid, false, &path)
+			.await
+			.unwrap_err();
 		let AppError::InvalidInput(message) = err else { panic!("{err:?}") };
 		assert!(message.contains("detached"), "{message}");
 		assert!(!path.exists());
 
-		checkout_worktree(&fx.git, &fx.main, 7, &fx.pr_oid, true, &path).await.unwrap();
+		checkout_worktree(&fx.git, &fx.main, "origin", 7, &fx.pr_oid, true, &path).await.unwrap();
 		let list = git::worktrees(&fx.main.to_string_lossy()).unwrap();
 		let added = list.iter().find(|w| !w.is_main).unwrap();
 		assert_eq!(added.branch, None);
@@ -599,8 +651,9 @@ mod tests {
 		};
 		let path = pick_path(&fx.main, 8, |p| p.exists()).unwrap();
 		// The origin has no pull request 8.
-		let err =
-			checkout_worktree(&fx.git, &fx.main, 8, &fx.pr_oid, false, &path).await.unwrap_err();
+		let err = checkout_worktree(&fx.git, &fx.main, "origin", 8, &fx.pr_oid, false, &path)
+			.await
+			.unwrap_err();
 		assert!(matches!(err, AppError::Remote(_)), "{err:?}");
 		assert!(!path.exists());
 	}

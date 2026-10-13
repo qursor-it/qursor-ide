@@ -1114,7 +1114,8 @@ export type GhState =
 	| 'notGitHub'
 	| 'unreachable';
 
-/** The repository `origin` names. Only `origin` is ever read, never `upstream`. */
+/** The repository `origin` names, or, with no `origin`, the only GitHub remote
+ *  that is not `upstream`. */
 export interface GhRepo {
 	/** `github.com`, or a GitHub Enterprise host. */
 	host: string;
@@ -1125,6 +1126,8 @@ export interface GhRepo {
 	slug: string;
 	/** `https://host/owner/name`, for "Open on GitHub". */
 	webUrl: string;
+	/** The git remote this was read from: `origin` unless the repository has none. */
+	remote: string;
 }
 
 export interface GhStatus {

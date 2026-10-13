@@ -42,6 +42,7 @@ fn a_status_is_camel_case_with_camel_case_states() {
 			name: "r".into(),
 			slug: "github.com/o/r".into(),
 			web_url: "https://github.com/o/r".into(),
+			remote: "origin".into(),
 		}),
 		repo_root: Some("C:\\code\\r".into()),
 		message: None,

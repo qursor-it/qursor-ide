@@ -1484,9 +1484,12 @@ passed (for blobs). A non-zero exit is an `Ok(Output)`; only "could not run" and
 
 **`repo`.** `parse_remote_url` reads scp, `ssh://`, `https://` (credentials,
 port, `.git`, trailing slash) and `git://` URLs into a `GhRepo` — `host`,
-`owner`, `name`, `slug` (`host/owner/name`) and `webUrl`. `resolve(project_path)`
-opens the repository with `git2` and reads **only `origin`**; there is no
-fallback to another remote, so a fork's `upstream` is never picked. GitLab,
+`owner`, `name`, `slug` (`host/owner/name`), `webUrl` and `remote` (the name of
+the remote it came from; `parse_remote_url(remote, url)`). `resolve(project_path)`
+opens the repository with `git2` and reads `origin`; when `origin` exists it is
+the answer and there is no fallback past it. Without `origin`, the one GitHub
+remote that is not `upstream` is used; none, or several (`NoOrigin` carrying
+their sorted names), is `noOrigin`, so a fork's `upstream` is never picked. GitLab,
 Bitbucket, Codeberg, Azure and similar hosts are `NotGitHub`; GitHub Enterprise
 hosts are accepted.
 

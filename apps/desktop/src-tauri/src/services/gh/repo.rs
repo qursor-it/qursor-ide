@@ -1,11 +1,17 @@
-//! Which GitHub repository a project is, from its `origin` remote (F31).
+//! Which GitHub repository a project is, from its remotes (F31).
 //!
-//! **Only `origin`.** A clone with an `upstream` remote — a fork — has two
+//! **`origin` wins.** A clone with an `upstream` remote — a fork — has two
 //! candidates, and `gh`'s own resolution would pick `upstream`. The user decided
 //! the panel shows the pull requests of the repository they cloned from, so
 //! `origin` is read here and every `gh` call that follows names that repository
-//! explicitly (see [`super::args`]). There is no fallback to another remote: a
-//! repository without `origin` is `noOrigin`, and saying so is the honest answer.
+//! explicitly (see [`super::args`]). When `origin` exists it is the answer, even
+//! if it is not GitHub: there is no fallback past it.
+//!
+//! **Without `origin`,** the one GitHub remote is used — a clone whose remote was
+//! named `xplorer` is still unambiguous. `upstream` is never a candidate (by
+//! convention it is the parent of a fork, not the user's repository). Two or more
+//! remaining GitHub remotes are ambiguous, and the panel says which instead of
+//! guessing: [`Unresolved::NoOrigin`] carries their names.
 //!
 //! This is a config read. `git2` has no transport linked in (ADR-0009) and
 //! nothing here contacts the remote.
@@ -19,7 +25,10 @@ use crate::services::git;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Unresolved {
 	NotRepository,
-	NoOrigin,
+	/// No `origin`, and not exactly one other GitHub remote. Carries the sorted
+	/// names of the GitHub remotes (excluding `upstream`) when there are several;
+	/// empty when there are none.
+	NoOrigin(Vec<String>),
 	/// `origin` exists and is not a GitHub host (or not an `owner/name` URL).
 	NotGitHub(String),
 }
@@ -31,15 +40,42 @@ pub struct Resolved {
 	pub root: PathBuf,
 }
 
-/// Open the project's repository and read `origin` (blocking: libgit2).
+/// Open the project's repository and read its remote (blocking: libgit2).
 pub fn resolve(project_path: &str) -> Result<Resolved, Unresolved> {
 	let repository = git::discover(project_path).ok_or(Unresolved::NotRepository)?;
 	let root = repository.workdir().map(git::workdir_path).ok_or(Unresolved::NotRepository)?;
-	let remote = repository.find_remote("origin").map_err(|_| Unresolved::NoOrigin)?;
-	let url = remote.url().ok().filter(|u| !u.trim().is_empty()).ok_or(Unresolved::NoOrigin)?;
-	match parse_remote_url(url) {
-		Some(repo) => Ok(Resolved { repo, root }),
-		None => Err(Unresolved::NotGitHub(url.to_string())),
+	if let Ok(origin) = repository.find_remote("origin") {
+		let url = origin
+			.url()
+			.ok()
+			.filter(|u| !u.trim().is_empty())
+			.ok_or(Unresolved::NoOrigin(Vec::new()))?;
+		return match parse_remote_url("origin", url) {
+			Some(repo) => Ok(Resolved { repo, root }),
+			None => Err(Unresolved::NotGitHub(url.to_string())),
+		};
+	}
+
+	let mut candidates: Vec<GhRepo> = Vec::new();
+	if let Ok(names) = repository.remotes() {
+		// `StringArray::iter()` yields `Result<Option<&str>>`: skip what cannot be read.
+		for name in names.iter() {
+			let Ok(Some(name)) = name else { continue };
+			if name == "upstream" {
+				continue;
+			}
+			let found = repository.find_remote(name).ok();
+			let repo = found.and_then(|r| r.url().ok().and_then(|u| parse_remote_url(name, u)));
+			candidates.extend(repo);
+		}
+	}
+	match candidates.len() {
+		1 => Ok(Resolved { repo: candidates.remove(0), root }),
+		_ => {
+			let mut names: Vec<String> = candidates.into_iter().map(|c| c.remote).collect();
+			names.sort();
+			Err(Unresolved::NoOrigin(names))
+		}
 	}
 }
 
@@ -48,10 +84,10 @@ pub fn resolve(project_path: &str) -> Result<Resolved, Unresolved> {
 /// not of what to accept.
 const OTHER_FORGES: &[&str] = &["gitlab", "bitbucket", "codeberg", "azure.com", "sr.ht", "gitea"];
 
-/// `owner/name` out of a remote URL: scp (`git@host:o/r.git`), `ssh://`,
-/// `https://` (with or without credentials, a port, `.git`, a trailing slash) and
-/// `git://`. `None` for anything else, including a GitLab-shaped host.
-pub fn parse_remote_url(url: &str) -> Option<GhRepo> {
+/// `owner/name` out of the URL of the remote called `remote`: scp
+/// (`git@host:o/r.git`), `ssh://`, `https://` (with or without credentials, a
+/// port, `.git`, a trailing slash) and `git://`. `None` for anything else, including a GitLab-shaped host.
+pub fn parse_remote_url(remote: &str, url: &str) -> Option<GhRepo> {
 	let url = url.trim();
 	let (host, path) = split_url(url)?;
 	let host = host.to_ascii_lowercase();
@@ -69,6 +105,7 @@ pub fn parse_remote_url(url: &str) -> Option<GhRepo> {
 	Some(GhRepo {
 		slug: format!("{host}/{owner}/{name}"),
 		web_url: format!("https://{host}/{owner}/{name}"),
+		remote: remote.to_string(),
 		host,
 		owner: owner.to_string(),
 		name: name.to_string(),
@@ -120,7 +157,7 @@ mod tests {
 	use super::*;
 
 	fn slug(url: &str) -> Option<String> {
-		parse_remote_url(url).map(|r| r.slug)
+		parse_remote_url("origin", url).map(|r| r.slug)
 	}
 
 	#[test]
@@ -168,7 +205,7 @@ mod tests {
 
 	#[test]
 	fn a_repo_carries_the_pieces_the_panel_needs() {
-		let repo = parse_remote_url("git@github.com:Nightbr/factorai.git").unwrap();
+		let repo = parse_remote_url("origin", "git@github.com:Nightbr/factorai.git").unwrap();
 		assert_eq!(
 			repo,
 			GhRepo {
@@ -177,26 +214,83 @@ mod tests {
 				name: "factorai".into(),
 				slug: "github.com/Nightbr/factorai".into(),
 				web_url: "https://github.com/Nightbr/factorai".into(),
+				remote: "origin".into(),
 			}
 		);
 	}
 
-	/// This very clone: `origin` is the fork and `upstream` the original. Only
-	/// `origin` may ever be read.
-	#[test]
-	fn only_origin_is_read() {
+	fn init() -> (tempfile::TempDir, git2::Repository, String) {
 		let dir = tempfile::tempdir().unwrap();
 		let repo = git2::Repository::init(dir.path()).unwrap();
 		let path = dir.path().to_string_lossy().into_owned();
-		assert_eq!(resolve(&path), Err(Unresolved::NoOrigin));
+		(dir, repo, path)
+	}
 
-		// An `upstream` with no `origin` must not be picked up.
+	/// This very clone: `origin` is the fork and `upstream` the original. `origin`
+	/// is read, and `upstream` alone is never picked up.
+	#[test]
+	fn origin_wins_and_upstream_alone_is_never_read() {
+		let (_dir, repo, path) = init();
+		assert_eq!(resolve(&path), Err(Unresolved::NoOrigin(vec![])));
+
 		repo.remote("upstream", "https://github.com/Nightbr/factorai.git").unwrap();
-		assert_eq!(resolve(&path), Err(Unresolved::NoOrigin));
+		assert_eq!(resolve(&path), Err(Unresolved::NoOrigin(vec![])));
 
 		repo.remote("origin", "https://github.com/qursor-it/qursor-ide.git").unwrap();
 		let resolved = resolve(&path).unwrap();
 		assert_eq!(resolved.repo.slug, "github.com/qursor-it/qursor-ide");
+		assert_eq!(resolved.repo.remote, "origin");
+	}
+
+	#[test]
+	fn a_single_other_github_remote_is_used() {
+		let (_dir, repo, path) = init();
+		repo.remote("xplorer", "git@github.com:xplorer-platform/xplorer-backend.git").unwrap();
+		let resolved = resolve(&path).unwrap();
+		assert_eq!(resolved.repo.slug, "github.com/xplorer-platform/xplorer-backend");
+		assert_eq!(resolved.repo.remote, "xplorer");
+	}
+
+	#[test]
+	fn upstream_is_skipped_when_another_github_remote_exists() {
+		let (_dir, repo, path) = init();
+		repo.remote("upstream", "https://github.com/Nightbr/factorai.git").unwrap();
+		repo.remote("mine", "https://github.com/me/factorai.git").unwrap();
+		let resolved = resolve(&path).unwrap();
+		assert_eq!(resolved.repo.slug, "github.com/me/factorai");
+		assert_eq!(resolved.repo.remote, "mine");
+	}
+
+	#[test]
+	fn several_github_remotes_without_origin_are_named_not_guessed() {
+		let (_dir, repo, path) = init();
+		repo.remote("zeta", "https://github.com/o/z.git").unwrap();
+		repo.remote("alpha", "https://github.com/o/a.git").unwrap();
+		repo.remote("upstream", "https://github.com/p/a.git").unwrap();
+		assert_eq!(
+			resolve(&path),
+			Err(Unresolved::NoOrigin(vec!["alpha".to_string(), "zeta".to_string()]))
+		);
+	}
+
+	#[test]
+	fn a_gitlab_remote_does_not_count_as_a_candidate() {
+		let (_dir, repo, path) = init();
+		repo.remote("lab", "https://gitlab.com/o/r.git").unwrap();
+		assert_eq!(resolve(&path), Err(Unresolved::NoOrigin(vec![])));
+		repo.remote("hub", "https://github.com/o/r.git").unwrap();
+		assert_eq!(resolve(&path).unwrap().repo.remote, "hub");
+	}
+
+	#[test]
+	fn a_non_github_origin_is_final_even_with_another_github_remote() {
+		let (_dir, repo, path) = init();
+		repo.remote("origin", "https://gitlab.com/o/r.git").unwrap();
+		repo.remote("mirror", "https://github.com/o/r.git").unwrap();
+		assert_eq!(
+			resolve(&path),
+			Err(Unresolved::NotGitHub("https://gitlab.com/o/r.git".to_string()))
+		);
 	}
 
 	#[test]

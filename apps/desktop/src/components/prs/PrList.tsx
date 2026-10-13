@@ -76,6 +76,11 @@ export function PrList({ root, status, onOpen }: PrListProps) {
 					data-testid="pr-repo"
 				>
 					{repoName}
+					{status.repo && status.repo.remote !== 'origin' && (
+						<span data-testid="pr-remote" title={`Read from the git remote ${status.repo.remote}`}>
+							{` · via remote ${status.repo.remote}`}
+						</span>
+					)}
 				</span>
 				<Select value={filter} onValueChange={(v) => setFilter(v as PrStateFilter)}>
 					<SelectTrigger
