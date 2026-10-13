@@ -90,6 +90,11 @@ Concretely:
    other branch of the transcript probe, unchanged. Writing the prompt into the
    PTY after spawn is a race against the CLI's own startup that lands in a trust
    dialog when it loses, and bracketed paste makes it a quoting problem as well.
+   → **Amended 2026-10-13 by
+   [ADR-0078](0078-a-human-gesture-can-start-a-session-with-its-first-message.md)**:
+   a prompt no longer means a routine fired. A human gesture can bring one too;
+   the routine origin is the explicit `ensureTerminal` parameter, and only that
+   parameter withholds the tab.
 
 5. **`croner` (3.x) parses and projects the schedule**; the runner is ours.
    It takes the 5-field expressions people actually write (seconds optional),

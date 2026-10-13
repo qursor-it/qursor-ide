@@ -272,7 +272,7 @@ routine_pending_fires() -> Vec<FireEvent>
 list_skills(project_id: String) -> Vec<SkillInfo>
 
 // terminal
-start_session(project_id: String) -> SessionId          // see "Session ids" below
+start_session(project_id: String, agent: Option<AgentId>, fresh: Option<bool>) -> SessionId  // see "Session ids" below
 terminal_spawn(opts: SpawnOpts) -> Spawned              // session_id, project_id, cwd?, cols, rows, initial_prompt?, agent? → { id, agent } (F30)
 terminal_write(id: TerminalId, data: String) -> ()
 terminal_resize(id: TerminalId, cols: u16, rows: u16) -> ()
@@ -851,6 +851,10 @@ for. That reuse keeps an impatient double-click from starting two `claude`
 processes. It lives here rather than in the renderer because the sidebar's
 per-project button fires on projects whose session list was never fetched, and
 because the filesystem can't lag the way the index can.
+
+**`fresh: true` skips the reuse** and always mints a new id, for a caller that
+brings a first message a running session would drop
+([ADR-0078](adr/0078-a-human-gesture-can-start-a-session-with-its-first-message.md)).
 
 **"Has a transcript" asks the store, not a recorded location.** The probe looks
 for `<id>.jsonl` in the project folder's store directory first, then in every

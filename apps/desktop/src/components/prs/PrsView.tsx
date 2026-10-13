@@ -50,6 +50,7 @@ function Ready({ projectId, root, status }: { projectId: string; root: string; s
 	if (selected !== null) {
 		return (
 			<PrDetailView
+				projectId={projectId}
 				root={root}
 				status={status}
 				number={selected}

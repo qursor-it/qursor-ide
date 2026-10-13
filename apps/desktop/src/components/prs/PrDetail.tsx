@@ -1,12 +1,23 @@
-import type { GhStatus, PrDetail } from '@factorai/types';
-import { Button, IconButton } from '@factorai/ui';
+import type { AgentId, GhRepo, GhStatus, PrDetail } from '@factorai/types';
+import {
+	Button,
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+	IconButton,
+} from '@factorai/ui';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, ExternalLink } from 'lucide-react';
+import { Bot, ChevronLeft, ExternalLink } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { FileChangeRow } from '@components/files/FileChangeRow';
+import { AgentMark } from '@components/layout/AgentMark';
 import { CheckGlyph } from '@components/prs/CheckGlyph';
 import { usePrsTabActive, useResetOnUnauthenticated } from '@hooks/useGhStatus';
 import { useFileViewer } from '@hooks/useFileViewer';
+import { useInstalledAgents } from '@hooks/useInstalledAgents';
+import { useStartReviewSession } from '@hooks/useStartReviewSession';
+import { agentName } from '@lib/agents';
 import { formatAbsolute, formatRelative } from '@lib/format';
 import {
 	checkStateLabel,
@@ -27,6 +38,7 @@ const DETAIL_POLL_MS = 30_000;
 type SubTab = 'files' | 'overview';
 
 interface PrDetailViewProps {
+	projectId: string;
 	root: string;
 	status: GhStatus;
 	number: number;
@@ -41,7 +53,7 @@ interface PrDetailViewProps {
  * the description is one click away. Read-only: nothing here approves, comments
  * or merges.
  */
-export function PrDetailView({ root, status, number, onBack }: PrDetailViewProps) {
+export function PrDetailView({ projectId, root, status, number, onBack }: PrDetailViewProps) {
 	const active = usePrsTabActive();
 	const slug = status.repo?.slug ?? '';
 	const [tab, setTab] = useState<SubTab>('files');
@@ -80,7 +92,7 @@ export function PrDetailView({ root, status, number, onBack }: PrDetailViewProps
 			)}
 			{query.data && (
 				<>
-					<Header pr={query.data} />
+					<Header pr={query.data} projectId={projectId} root={root} repo={status.repo} />
 					<div
 						role="tablist"
 						aria-label="Pull request"
@@ -102,7 +114,95 @@ export function PrDetailView({ root, status, number, onBack }: PrDetailViewProps
 	);
 }
 
-function Header({ pr }: { pr: PrDetail }) {
+/**
+ * "Review with agent" (F31, ADR-0078): a new session whose first message is the
+ * review prompt. One button with the project's agent; with a second agent
+ * installed it becomes a menu naming each, the way the sidebar's `+` chevron
+ * does. Disabled while the start is in flight, so a double click is one session.
+ */
+function ReviewWithAgent({
+	pr,
+	repo,
+	projectId,
+	root,
+}: {
+	pr: PrDetail;
+	repo: GhRepo;
+	projectId: string;
+	root: string;
+}) {
+	const installed = useInstalledAgents();
+	const start = useStartReviewSession(projectId, root);
+	const [busy, setBusy] = useState(false);
+	const [failed, setFailed] = useState<string | null>(null);
+
+	const run = (agent?: AgentId) => {
+		setBusy(true);
+		setFailed(null);
+		start({ pr, repo, agent })
+			.catch((e) => setFailed(e instanceof Error ? e.message : 'Could not start the review.'))
+			.finally(() => setBusy(false));
+	};
+	const label = (
+		<>
+			<Bot />
+			Review with agent
+		</>
+	);
+
+	return (
+		<div className="flex flex-col items-start gap-1 pt-1.5">
+			{installed.length < 2 ? (
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={busy}
+					data-testid="pr-review-agent"
+					onClick={() => run()}
+				>
+					{label}
+				</Button>
+			) : (
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button variant="outline" size="sm" disabled={busy} data-testid="pr-review-agent">
+							{label}
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="start" className="w-44">
+						{installed.map((agent) => (
+							<DropdownMenuItem
+								key={agent}
+								data-testid={`pr-review-agent-${agent}`}
+								onSelect={() => run(agent)}
+							>
+								<AgentMark agent={agent} aria-hidden />
+								Review with {agentName(agent)}
+							</DropdownMenuItem>
+						))}
+					</DropdownMenuContent>
+				</DropdownMenu>
+			)}
+			{failed && (
+				<p data-testid="pr-review-error" className="text-destructive text-xs">
+					{failed}
+				</p>
+			)}
+		</div>
+	);
+}
+
+function Header({
+	pr,
+	projectId,
+	root,
+	repo,
+}: {
+	pr: PrDetail;
+	projectId: string;
+	root: string;
+	repo: GhRepo | null;
+}) {
 	const fork = forkLabel(pr);
 	return (
 		<div className="shrink-0 px-3 pt-2 pb-1.5">
@@ -145,6 +245,7 @@ function Header({ pr }: { pr: PrDetail }) {
 					</span>
 				)}
 			</p>
+			{repo && <ReviewWithAgent pr={pr} repo={repo} projectId={projectId} root={root} />}
 			<p className="pt-1 text-muted-foreground text-xs">
 				{pr.author}
 				<span className="text-muted-foreground/60">

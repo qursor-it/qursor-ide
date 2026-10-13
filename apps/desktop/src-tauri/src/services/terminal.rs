@@ -133,10 +133,11 @@ pub struct SpawnOpts {
 	pub rows: u16,
 	/// A first message for the agent, appended to argv (F22, ADR-0026 § 4).
 	///
-	/// `None` for every human-started session, which is every caller but a
-	/// routine fire. It is argv rather than a write into the PTY because a write
-	/// races the CLI's own startup and lands in a trust dialog when it loses,
-	/// and bracketed paste makes it a quoting problem as well.
+	/// `None` unless a routine fired (ADR-0026) or a human gesture brought a
+	/// first message, such as a pull request review (ADR-0078). It is argv
+	/// rather than a write into the PTY because a write races the CLI's own
+	/// startup and lands in a trust dialog when it loses, and bracketed paste
+	/// makes it a quoting problem as well.
 	#[serde(default)]
 	pub initial_prompt: Option<String>,
 	/// The launch override (F30 § "Which agent a project runs", rule 1): the
@@ -1190,13 +1191,21 @@ impl TerminalManager {
 	/// agent are candidates. For an agent that names its own sessions
 	/// (ADR-0062) the returned id is *provisional* until adoption; an
 	/// unadopted live session is by definition unmessaged and is reused.
+	///
+	/// **`fresh` skips the reuse** (ADR-0078): a caller that brings a first
+	/// message cannot land it in a PTY that is already running, so it asks for
+	/// a brand-new id. The agent is still resolved, so an unknown one errors.
 	pub fn next_session_id(
 		&self,
 		project_id: &str,
 		folder: &Path,
 		agent: Option<&str>,
+		fresh: bool,
 	) -> AppResult<String> {
 		let agent = self.resolve_agent(agent, project_id, None)?;
+		if fresh {
+			return Ok(Uuid::new_v4().to_string());
+		}
 		for entry in self.terminals.iter() {
 			let h = entry.value();
 			// A shell contributes no id here because it has none: it would
@@ -2870,7 +2879,7 @@ mod tests {
 		// `next_session_id` mints a fresh uuid when it finds nothing to reuse, so
 		// what is asserted is that the shell is not what it reused — and a shell
 		// has no id it *could* hand back.
-		let offered = mgr.next_session_id(project, Path::new("/tmp"), None).unwrap();
+		let offered = mgr.next_session_id(project, Path::new("/tmp"), None, false).unwrap();
 		assert!(
 			mgr.list().iter().all(|t| t.session_id.as_deref() != Some(offered.as_str())),
 			"new session must never be handed a live terminal that is not an agent"
@@ -3226,7 +3235,7 @@ mod tests {
 		// The project root — where a "new session" click probes — holds no
 		// transcript for this session; only the worktree key does.
 		let offered =
-			mgr.next_session_id(project, worktree.path().parent().unwrap(), None).unwrap();
+			mgr.next_session_id(project, worktree.path().parent().unwrap(), None, false).unwrap();
 		assert_ne!(
 			offered, sid,
 			"a messaged worktree session must not be reused for a new session"
@@ -3271,7 +3280,7 @@ mod tests {
 			.spawn_inner(req, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
 			.unwrap();
 
-		let offered = mgr.next_session_id(project, project_dir.path(), None).unwrap();
+		let offered = mgr.next_session_id(project, project_dir.path(), None, false).unwrap();
 		assert_ne!(offered, sid, "a session whose transcript moved is still a messaged one");
 
 		mgr.kill_all();
@@ -3392,9 +3401,9 @@ mod tests {
 		// And a "new Claude session" click is not handed the Codex session's
 		// provisional id: `next_session_id` is per agent.
 		let folder = Path::new("/tmp");
-		let claude = mgr.next_session_id(&o.project_id, folder, Some("claude")).unwrap();
+		let claude = mgr.next_session_id(&o.project_id, folder, Some("claude"), false).unwrap();
 		assert_ne!(claude, o.session_id);
-		let codex = mgr.next_session_id(&o.project_id, folder, Some("codex")).unwrap();
+		let codex = mgr.next_session_id(&o.project_id, folder, Some("codex"), false).unwrap();
 		assert_eq!(codex, o.session_id, "an unadopted Codex session is reused");
 		mgr.kill(&id).unwrap();
 	}
@@ -3546,10 +3555,27 @@ mod tests {
 	fn next_session_id_mints_a_fresh_uuid_when_nothing_is_live() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
-		let a = mgr.next_session_id("proj", Path::new("/tmp/proj"), None).unwrap();
-		let b = mgr.next_session_id("proj", Path::new("/tmp/proj"), None).unwrap();
+		let a = mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap();
+		let b = mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap();
 		assert_ne!(a, b, "each call with nothing to reuse is a new session");
 		assert_eq!(a.len(), 36, "expected a uuid, got {a}");
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn next_session_id_fresh_does_not_reuse_a_live_session() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
+		let mut o = opts(80, 24);
+		o.project_id = "proj".into();
+		let session = o.session_id.clone();
+		mgr.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		let fresh = mgr.next_session_id("proj", Path::new("/tmp/proj"), None, true).unwrap();
+		assert_ne!(fresh, session, "a first message needs its own PTY");
+		assert!(mgr.next_session_id("proj", Path::new("/tmp/proj"), Some("nope"), true).is_err());
+		mgr.kill_all();
 	}
 
 	#[test]
@@ -3564,10 +3590,13 @@ mod tests {
 			.unwrap();
 
 		// Live, never messaged → the click lands on it rather than a second claude.
-		assert_eq!(mgr.next_session_id("proj", Path::new("/tmp/proj"), None).unwrap(), session);
+		assert_eq!(
+			mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap(),
+			session
+		);
 		// A different project must not borrow it.
 		assert_ne!(
-			mgr.next_session_id("elsewhere", Path::new("/tmp/elsewhere"), None).unwrap(),
+			mgr.next_session_id("elsewhere", Path::new("/tmp/elsewhere"), None, false).unwrap(),
 			session
 		);
 		mgr.kill_all();
@@ -3595,7 +3624,10 @@ mod tests {
 			.unwrap();
 
 		*assignment.lock().unwrap() = Some(reassigned.path().to_path_buf());
-		assert_ne!(mgr.next_session_id("proj", Path::new("/tmp/proj"), None).unwrap(), session);
+		assert_ne!(
+			mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap(),
+			session
+		);
 		mgr.kill_all();
 	}
 
@@ -3612,7 +3644,10 @@ mod tests {
 			.unwrap();
 
 		// It has real content, so "new session" must not hijack it.
-		assert_ne!(mgr.next_session_id("proj", Path::new("/tmp/proj"), None).unwrap(), session);
+		assert_ne!(
+			mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap(),
+			session
+		);
 		mgr.kill_all();
 	}
 

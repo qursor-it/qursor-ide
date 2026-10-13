@@ -67,6 +67,11 @@ sidebar's per-project button fires on projects whose session list was never
 fetched — TypeScript can't answer "has this been messaged" without a round
 trip anyway, and answering from the index would race the debounce.
 
+→ **Amended 2026-10-13 by
+[ADR-0078](0078-a-human-gesture-can-start-a-session-with-its-first-message.md)**:
+`start_session` takes a `fresh` flag that skips this reuse, for a caller that
+brings a first message — a running idle session would drop it.
+
 ## Consequences
 
 **Positive.**

@@ -214,6 +214,14 @@ type TerminalState = {
 };
 ```
 
+`launchAgent`, `launchPrompt` and `launchCwd` (not persisted) park what one
+click wants the next spawn to use: the launch agent, and — for a gesture that
+starts a session with something to say, such as "Review with agent" (F31) — a
+first message and a working directory. `Terminal`'s spawn takes them once
+(`takeLaunchAgent`, `takeLaunch`); a routine's prompt is not one of them, it is
+the explicit parameter that withholds the tab
+([ADR-0078](adr/0078-a-human-gesture-can-start-a-session-with-its-first-message.md)).
+
 `tabs` is **what you have open**; `bySession` is **what is running**. A tab
 outlives its process — it survives an exit and a quit, and only closing removes
 it. Nine surfaces read `bySession` to mean "running" and go on meaning exactly

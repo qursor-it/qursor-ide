@@ -367,9 +367,10 @@ export const cmd = {
 	 *  registered a single listener. */
 	routinePendingFires: () => invoke<RoutineFireEvent[]>('routine_pending_fires'),
 	/** The session id to open for a "new session" in this project — a fresh
-	 *  uuid, or a live one that has never been messaged. See ADR-0008. */
-	startSession: (projectId: string, agent?: AgentId) =>
-		invoke<string>('start_session', { projectId, agent }),
+	 *  uuid, or a live one that has never been messaged. See ADR-0008.
+	 *  `fresh` skips that reuse for a caller bringing a first message (ADR-0078). */
+	startSession: (projectId: string, agent?: AgentId, fresh?: boolean) =>
+		invoke<string>('start_session', { projectId, agent, fresh }),
 	terminalSpawn: (opts: SpawnOpts) => invoke<Spawned>('terminal_spawn', { opts }),
 	terminalWrite: (id: TerminalId, data: string) => invoke<void>('terminal_write', { id, data }),
 	terminalResize: (id: TerminalId, cols: number, rows: number) =>

@@ -115,6 +115,14 @@ interface TerminalState {
 	launchAgent: Record<string, AgentId>;
 	setLaunchAgent: (sessionId: string, agent: AgentId) => void;
 	takeLaunchAgent: (sessionId: string) => AgentId | undefined;
+	/** A first message and a working directory for a session about to be
+	 *  spawned (ADR-0078): written by a gesture that starts a session with
+	 *  something to say, such as a pull request review, and read once by
+	 *  `Terminal`'s spawn. Not persisted, for the same reason as `launchAgent`. */
+	launchPrompt: Record<string, string>;
+	launchCwd: Record<string, string>;
+	setLaunch: (sessionId: string, launch: { prompt?: string; cwd?: string }) => void;
+	takeLaunch: (sessionId: string) => { prompt?: string; cwd?: string };
 	/** A session took its agent's id (F30, ADR-0062): every record keyed by
 	 *  the provisional id moves to the adopted one, in one store transaction —
 	 *  the live PTY, the tab, the launch override, the routine origin, the
@@ -283,6 +291,8 @@ export const useTerminalStore = create<TerminalState>()(
 				})),
 
 			launchAgent: {},
+			launchPrompt: {},
+			launchCwd: {},
 			rebindSession: (from, to) =>
 				set((s) => {
 					if (from === to) return s;
@@ -294,6 +304,8 @@ export const useTerminalStore = create<TerminalState>()(
 					return {
 						bySession: move(s.bySession),
 						launchAgent: move(s.launchAgent),
+						launchPrompt: move(s.launchPrompt),
+						launchCwd: move(s.launchCwd),
 						routineBySession: move(s.routineBySession),
 						worktreeBySession: move(s.worktreeBySession),
 						restartEpoch: move(s.restartEpoch),
@@ -311,6 +323,25 @@ export const useTerminalStore = create<TerminalState>()(
 					});
 				}
 				return agent;
+			},
+			setLaunch: (sessionId, { prompt, cwd }) =>
+				set((s) => ({
+					launchPrompt:
+						prompt === undefined ? s.launchPrompt : { ...s.launchPrompt, [sessionId]: prompt },
+					launchCwd: cwd === undefined ? s.launchCwd : { ...s.launchCwd, [sessionId]: cwd },
+				})),
+			takeLaunch: (sessionId) => {
+				const { launchPrompt, launchCwd } = get();
+				const prompt = launchPrompt[sessionId];
+				const cwd = launchCwd[sessionId];
+				if (prompt !== undefined || cwd !== undefined) {
+					set((s) => {
+						const { [sessionId]: _p, ...restPrompt } = s.launchPrompt;
+						const { [sessionId]: _c, ...restCwd } = s.launchCwd;
+						return { launchPrompt: restPrompt, launchCwd: restCwd };
+					});
+				}
+				return { prompt, cwd };
 			},
 
 			setRoutineOrigin: (sessionId, routineId, routineName, startedAt) =>

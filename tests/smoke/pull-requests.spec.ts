@@ -222,3 +222,87 @@ test.describe('pull requests tab', () => {
 		await expect(page.getByTestId('pr-list')).toContainText('No open pull requests.');
 	});
 });
+
+test.describe('review with agent', () => {
+	const NEW_ID = '11111111-2222-4333-8444-555555555555';
+
+	async function openPr(page: Page) {
+		await page.goto(PROJECT);
+		await openPrs(page);
+		await page.getByTestId('pr-row-11').click();
+		await expect(page.getByTestId('pr-title')).toBeVisible();
+	}
+
+	test('@smoke starts a fresh session with the review prompt and opens it', async ({ page }) => {
+		await installMockBridge(page, { ...fixtureWithPullRequests(), newSessionId: NEW_ID });
+		await openPr(page);
+		await page.getByTestId('pr-review-agent').click();
+
+		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}/sessions/${NEW_ID}`));
+		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(1);
+
+		const start = (await calls(page, 'start_session'))[0];
+		expect(start?.args?.fresh).toBe(true);
+		const spawn = (await calls(page, 'terminal_spawn'))[0];
+		const opts = spawn?.args?.opts as { initialPrompt?: string; cwd?: string };
+		expect(opts.initialPrompt).toContain('gh pr diff 11 --repo github.com/acme/widgets');
+		expect(opts.initialPrompt).not.toContain('feat: add the widget switcher');
+		expect(opts.initialPrompt).not.toContain('keyboard friendly');
+		expect(await calls(page, 'set_session_worktree')).toHaveLength(0);
+	});
+
+	test('@smoke offers Codex when it is installed', async ({ page }) => {
+		const fixture = { ...fixtureWithPullRequests(), newSessionId: NEW_ID };
+		fixture.claudeCli = { installed: true, binaryPath: '/usr/bin/claude', version: '2.1.0' };
+		fixture.codexCli = { installed: true, binaryPath: '/usr/bin/codex', version: '0.44.0' };
+		await installMockBridge(page, fixture);
+		await openPr(page);
+		await page.getByTestId('pr-review-agent').click();
+		await page.getByTestId('pr-review-agent-codex').click();
+
+		await expect(page).toHaveURL(new RegExp(`/sessions/${NEW_ID}`));
+		const spawn = (await calls(page, 'terminal_spawn'))[0];
+		expect((spawn?.args?.opts as { agent?: string }).agent).toBe('codex');
+	});
+
+	test('@smoke runs in the worktree that has the head checked out', async ({ page }) => {
+		const fixture = { ...fixtureWithPullRequests(), newSessionId: NEW_ID };
+		const root = fixture.projects?.[0]?.realPath ?? '';
+		const wt = '/home/alice/code/worktrees/pr-11';
+		fixture.gitWorktrees = {
+			[root]: [
+				{
+					path: root,
+					name: null,
+					branch: 'main',
+					head: 'a'.repeat(40),
+					isMain: true,
+					locked: false,
+					prunable: false,
+					exists: true,
+				},
+				{
+					path: wt,
+					name: 'pr-11',
+					branch: 'review-11',
+					head: fixture.ghPrDetails?.['github.com/acme/widgets#11']?.headRefOid ?? null,
+					isMain: false,
+					locked: false,
+					prunable: false,
+					exists: true,
+				},
+			],
+		};
+		await installMockBridge(page, fixture);
+		await openPr(page);
+		await page.getByTestId('pr-review-agent').click();
+
+		await expect(page).toHaveURL(new RegExp(`/sessions/${NEW_ID}`));
+		const spawn = (await calls(page, 'terminal_spawn'))[0];
+		const opts = spawn?.args?.opts as { cwd?: string; initialPrompt?: string };
+		expect(opts.cwd).toBe(wt);
+		expect(opts.initialPrompt).toContain('checked out in the current directory');
+		const set = (await calls(page, 'set_session_worktree'))[0];
+		expect(set?.args?.path).toBe(wt);
+	});
+});

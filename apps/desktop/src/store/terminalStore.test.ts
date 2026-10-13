@@ -93,6 +93,18 @@ describe('adoptLive', () => {
 		expect(useTerminalStore.getState().bySession.real?.status).toBe('working');
 	});
 
+	it('hands a launch prompt and cwd out exactly once (ADR-0078)', () => {
+		useTerminalStore.getState().setLaunch('s', { prompt: 'review it', cwd: '/wt' });
+		expect(useTerminalStore.getState().takeLaunch('s')).toEqual({
+			prompt: 'review it',
+			cwd: '/wt',
+		});
+		expect(useTerminalStore.getState().takeLaunch('s')).toEqual({
+			prompt: undefined,
+			cwd: undefined,
+		});
+	});
+
 	it('hands a launch override out exactly once', () => {
 		useTerminalStore.getState().setLaunchAgent('s', 'codex');
 		expect(useTerminalStore.getState().takeLaunchAgent('s')).toBe('codex');

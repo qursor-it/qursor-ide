@@ -7172,7 +7172,7 @@ four phases, each releasable alone:
 | Phase | What | State |
 |---|---|---|
 | P1 | Read: status, list, detail, files, blobs, PR diff | built: the backend, the PRs tab and the `pr:` diff mode |
-| P2 | "Review with an agent" — start a session whose first message is the review brief | **not built yet** |
+| P2 | "Review with an agent" — start a session whose first message is the review brief | built: see "Review with agent" |
 | P3 | Submit a human review (comments, approve, request changes) | **not built yet** |
 | P4 | Check a pull request out into a new worktree | **not built yet** |
 
@@ -7355,10 +7355,32 @@ sides are cached by commit and never refetched. Binary and truncated files get t
 commit-range diff's messages. The footer reads `PR #42 · abc1234 ↔ def5678`, and
 the read-only label is `pull request — read-only`; nothing in it can be edited.
 
+### Review with agent
+
+**Phase 2; decision in
+[ADR-0078](adr/0078-a-human-gesture-can-start-a-session-with-its-first-message.md).**
+The pull request's header has a **Review with agent** button (`pr-review-agent`)
+that starts a brand-new session in the project, opens its tab and goes to it.
+With only one agent installed it is a plain button using the project's agent;
+with Claude and Codex both installed it opens a menu, `Review with Claude` /
+`Review with Codex`. It is disabled while the start is in flight.
+
+- **Always a new session.** `start_session(projectId, agent, fresh: true)`
+  skips ADR-0008's reuse of an idle session, which would drop the first message.
+- **The first message** is built by `buildPrReviewPrompt`: the pull request's
+  number, repository and URL, base at the merge base (12 characters) and head at
+  its commit, the two `gh` commands to read it (each with `--repo`), the rules
+  (untrusted data; no checkout, commit, push or posting to GitHub) and the report
+  shape: a summary, findings grouped Blocking / Should fix / Minor with
+  `file:line`, then questions for the author. **One line, no `"` and no `%`**, and
+  **never the title or body**.
+- **Where it runs.** A linked worktree whose branch is `pr/<n>` or whose HEAD is
+  the head commit becomes the session's working directory and is pinned as its
+  worktree (F21); the brief says the head is checked out there. Otherwise the
+  session runs in the project folder and the brief says it is not.
+
 ### Not built yet
 
-- **P2**: starting a review session with a first message (needs a
-  `fresh` start, and an ADR relaxing ADR-0008's reuse rule for this gesture).
 - **P3**: `gh_pr_comments` and `gh_pr_submit_review` (`gh api -X POST …/reviews
   --input -`, the body on stdin), drafts that survive a reload, the comment
   gutter on commentable lines only, and a confirmation naming the login and the

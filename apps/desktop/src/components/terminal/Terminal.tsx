@@ -686,19 +686,26 @@ function ensureTerminal(
 		// not read: a restart of the same session resolves the agent from its
 		// row like any resume, which is what the override was for one click of.
 		const agent = useTerminalStore.getState().takeLaunchAgent(sessionId);
+		// A human gesture may bring a first message and a directory of its own
+		// (ADR-0078). A routine passes its prompt as the parameter and takes none.
+		const launch =
+			initialPrompt === undefined
+				? useTerminalStore.getState().takeLaunch(sessionId)
+				: { prompt: undefined, cwd: undefined };
 		pending = cmd
 			.terminalSpawn({
 				sessionId,
 				projectId,
-				cwd: projectCwd ?? undefined,
+				cwd: launch.cwd ?? projectCwd ?? undefined,
 				cols,
 				rows,
-				initialPrompt,
+				initialPrompt: initialPrompt ?? launch.prompt,
 				agent,
 			})
 			.then(({ id, agent }) => {
-				// A prompt means a routine fired this (F22), and a routine's session
-				// gets no tab until a human opens it.
+				// A prompt *parameter* means a routine fired this (F22), and a
+				// routine's session gets no tab until a human opens it. A prompt a
+				// human brought (ADR-0078) is not the parameter, so it gets one.
 				useTerminalStore
 					.getState()
 					.attach(sessionId, id, projectId, { openTab: initialPrompt === undefined, agent });

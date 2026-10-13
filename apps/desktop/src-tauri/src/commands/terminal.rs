@@ -19,14 +19,18 @@ use crate::state::AppState;
 ///
 /// `agent` is the launch override (F30): the `+` menu naming an agent other
 /// than the project's. `None` resolves the project's agent.
+///
+/// `fresh` skips the reuse above and always mints a new id (ADR-0078): the
+/// caller is about to pass a first message, which a running session would drop.
 #[tauri::command]
 pub fn start_session(
 	state: State<'_, AppState>,
 	project_id: String,
 	agent: Option<String>,
+	fresh: Option<bool>,
 ) -> AppResult<String> {
 	let folder = state.db.with(|conn| project_path(conn, &project_id))?;
-	state.terminals.next_session_id(&project_id, &folder, agent.as_deref())
+	state.terminals.next_session_id(&project_id, &folder, agent.as_deref(), fresh.unwrap_or(false))
 }
 
 /// Spawn the PTY for a session.
