@@ -9,13 +9,13 @@ import {
 } from '@factorai/ui';
 import { useQuery } from '@tanstack/react-query';
 import { Bot, ChevronLeft, ExternalLink } from 'lucide-react';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { FileChangeRow } from '@components/files/FileChangeRow';
 import { AgentMark } from '@components/layout/AgentMark';
 import { CheckGlyph } from '@components/prs/CheckGlyph';
 import { CheckoutPr } from '@components/prs/CheckoutPr';
 import { ReviewTab } from '@components/prs/ReviewTab';
-import { usePrsTabActive, useResetOnUnauthenticated } from '@hooks/useGhStatus';
+import { useResetOnUnauthenticated } from '@hooks/useGhStatus';
 import { useFileViewer } from '@hooks/useFileViewer';
 import { useInstalledAgents } from '@hooks/useInstalledAgents';
 import { useStartReviewSession } from '@hooks/useStartReviewSession';
@@ -32,6 +32,7 @@ import {
 import { queryKeys } from '@lib/queryKeys';
 import { draftKey } from '@lib/reviewAnchors';
 import { cmd, openExternally } from '@lib/tauri';
+import { usePrTabStore } from '@store/prTabStore';
 import { useReviewDraftStore } from '@store/reviewDraftStore';
 
 /** The open pull request is re-read every 30s (F31): its checks finishing and a
@@ -46,7 +47,9 @@ interface PrDetailViewProps {
 	root: string;
 	status: GhStatus;
 	number: number;
-	onBack: () => void;
+	/** Absent on the pull request's own route, which has nowhere to go back to:
+	 *  the tab is closed from the strip. */
+	onBack?: () => void;
 }
 
 /**
@@ -59,7 +62,6 @@ interface PrDetailViewProps {
  * confirmation (ADR-0077). Nothing here merges or closes.
  */
 export function PrDetailView({ projectId, root, status, number, onBack }: PrDetailViewProps) {
-	const active = usePrsTabActive();
 	const slug = status.repo?.slug ?? '';
 	const [tab, setTab] = useState<SubTab>('files');
 	const drafts = useReviewDraftStore((s) => s.byPr[draftKey(slug, number)]?.comments.length ?? 0);
@@ -68,19 +70,29 @@ export function PrDetailView({ projectId, root, status, number, onBack }: PrDeta
 		queryKey: queryKeys.ghPr(slug, number),
 		queryFn: () => cmd.ghPrDetail(root, number),
 		staleTime: DETAIL_POLL_MS,
-		refetchInterval: active ? DETAIL_POLL_MS : false,
+		// The detail is the main area's page, so it is always the one being looked at.
+		refetchInterval: DETAIL_POLL_MS,
 		retry: false,
 	});
 	useResetOnUnauthenticated(root, query.error);
 
+	// Keeps the strip's label current when the title is edited on GitHub.
+	const title = query.data?.title;
+	const setTitle = usePrTabStore((s) => s.setTitle);
+	useEffect(() => {
+		if (title) setTitle(projectId, number, title);
+	}, [title, projectId, number, setTitle]);
+
 	return (
 		<div className="flex min-h-0 flex-1 flex-col" data-testid="pr-detail">
-			<div className="flex shrink-0 items-center gap-1 border-border border-b px-2 py-1">
-				<IconButton aria-label="Back to pull requests" title="Back" onClick={onBack}>
-					<ChevronLeft />
-				</IconButton>
-				<span className="text-muted-foreground text-xs">Pull requests</span>
-			</div>
+			{onBack && (
+				<div className="flex shrink-0 items-center gap-1 border-border border-b px-2 py-1">
+					<IconButton aria-label="Back to pull requests" title="Back" onClick={onBack}>
+						<ChevronLeft />
+					</IconButton>
+					<span className="text-muted-foreground text-xs">Pull requests</span>
+				</div>
+			)}
 
 			{query.isPending && <Note>Loading pull request…</Note>}
 			{query.isError && (

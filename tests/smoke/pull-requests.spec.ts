@@ -51,6 +51,24 @@ async function blobReads(page: Page) {
 	return (await calls(page, 'gh_pr_blob')).map((c) => `${c.args?.sha}:${c.args?.relPath}`);
 }
 
+/** The fixture with a detail for #12 as well (it lists one, the base fixture
+ *  only reads #11), so a second pull request can be opened. */
+function withSecondDetail() {
+	const fixture = fixtureWithPullRequests();
+	const detail = fixture.ghPrDetails?.['github.com/acme/widgets#11'];
+	if (!detail) throw new Error('fixture has no #11');
+	fixture.ghPrDetails = {
+		...fixture.ghPrDetails,
+		'github.com/acme/widgets#12': {
+			...detail,
+			number: 12,
+			title: 'wip: rewrite the renderer',
+			headRefName: 'feat/pr-12',
+		},
+	};
+	return fixture;
+}
+
 test.describe('pull requests tab', () => {
 	test('@smoke says how to install gh when there is none', async ({ page }) => {
 		// No `ghStatuses` at all: the browser-only default, a machine without gh.
@@ -134,7 +152,7 @@ test.describe('pull requests tab', () => {
 		expect(states).toContain('merged');
 	});
 
-	test('@smoke opens a pull request, reads its overview, and goes back', async ({ page }) => {
+	test('@smoke opens a pull request in the main area and reads its overview', async ({ page }) => {
 		await installMockBridge(page, fixtureWithPullRequests());
 		await page.goto(PROJECT);
 		await openPrs(page);
@@ -159,9 +177,100 @@ test.describe('pull requests tab', () => {
 		await expect(page.getByTestId('pr-labels')).toContainText('enhancement');
 		await expect(page.getByTestId('pr-mergeable')).toHaveText('No conflicts');
 
-		await page.getByRole('button', { name: 'Back to pull requests' }).click();
+		// The detail is the main area's page, not the panel's: the panel keeps the
+		// list, and there is no back arrow to leave a page the strip closes.
+		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}/prs/11$`));
+		await expect(page.getByTestId('pr-page').getByTestId('pr-detail')).toBeVisible();
+		await expect(page.getByTestId('pr-list').getByTestId('pr-detail')).toHaveCount(0);
 		await expect(page.getByTestId('pr-list')).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Back to pull requests' })).toHaveCount(0);
+		await expect(page.getByTestId('pr-row-11').getByRole('button')).toHaveAttribute(
+			'aria-current',
+			'true',
+		);
+	});
+
+	test('@smoke opens each pull request as a tab in the strip', async ({ page }) => {
+		await installMockBridge(page, withSecondDetail());
+		await page.goto(PROJECT);
+		await openPrs(page);
+		const strip = page.getByTestId('session-tabs');
+		await expect(strip).toHaveCount(0);
+
+		await page.getByTestId('pr-row-11').click();
+		const first = strip.locator(`[data-pr-tab="${FOO_ID}#11"]`);
+		await expect(first).toContainText('#11 feat: add the widget switcher');
+		await expect(first).toHaveAttribute('aria-selected', 'true');
+		await expect(strip.getByRole('tab')).toHaveCount(1);
+
+		await page.getByTestId('pr-row-12').click();
+		const second = strip.locator(`[data-pr-tab="${FOO_ID}#12"]`);
+		await expect(strip.getByRole('tab')).toHaveCount(2);
+		await expect(second).toHaveAttribute('aria-selected', 'true');
+		await expect(first).toHaveAttribute('aria-selected', 'false');
+		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
+
+		// Clicking the row of an open pull request does not add a third.
+		await page.getByTestId('pr-row-11').click();
+		await expect(strip.getByRole('tab')).toHaveCount(2);
+
+		await second.click();
+		await expect(page).toHaveURL(new RegExp(`/prs/12$`));
+		await first.click();
+		await expect(page).toHaveURL(new RegExp(`/prs/11$`));
+		await expect(first).toHaveAttribute('aria-selected', 'true');
+		await expect(page.getByTestId('pr-title')).toHaveText('feat: add the widget switcher');
+	});
+
+	test('@smoke closes a pull request tab without asking, and lands on the project', async ({
+		page,
+	}) => {
+		await installMockBridge(page, withSecondDetail());
+		await page.goto(PROJECT);
+		await openPrs(page);
+		await page.getByTestId('pr-row-11').click();
+		await page.getByTestId('pr-row-12').click();
+		const strip = page.getByTestId('session-tabs');
+		await expect(strip.getByRole('tab')).toHaveCount(2);
+
+		// Closing one you are not on leaves the page alone.
+		await strip.getByRole('button', { name: /^Close #11/ }).click({ force: true });
+		await expect(strip.getByRole('tab')).toHaveCount(1);
+		await expect(page).toHaveURL(new RegExp(`/prs/12$`));
+
+		await strip.getByRole('button', { name: /^Close #12/ }).click();
+		await expect(strip).toHaveCount(0);
+		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}$`));
 		await expect(page.getByTestId('pr-detail')).toHaveCount(0);
+		await expect(page.getByTestId('pr-list')).toBeVisible();
+	});
+
+	test('@smoke keeps a pull request tab across a reload', async ({ page }) => {
+		await installMockBridge(page, withSecondDetail());
+		await page.goto(PROJECT);
+		await openPrs(page);
+		await page.getByTestId('pr-row-11').click();
+		await page.getByTestId('pr-row-12').click();
+		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(2);
+		await expect
+			.poll(() => page.evaluate(() => localStorage.getItem('factorai.prTabs') ?? ''))
+			.toContain('"number":12');
+
+		await page.reload();
+		const strip = page.getByTestId('session-tabs');
+		await expect(strip.getByRole('tab')).toHaveCount(2);
+		await expect(strip.locator(`[data-pr-tab="${FOO_ID}#12"]`)).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
+		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
+	});
+
+	test('sends a bad pull request number to the project', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await page.goto(`/#/projects/${FOO_ID}/prs/abc`);
+		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}$`));
+		await expect(page.getByTestId('pr-page')).toHaveCount(0);
 	});
 
 	test('@smoke opens the pull request on GitHub through the shell', async ({ page }) => {
@@ -252,7 +361,8 @@ test.describe('review with agent', () => {
 		await page.getByTestId('pr-review-agent').click();
 
 		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}/sessions/${NEW_ID}`));
-		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(1);
+		// The pull request's own tab, then the review session.
+		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(2);
 
 		const start = (await calls(page, 'start_session'))[0];
 		expect(start?.args?.fresh).toBe(true);
@@ -663,12 +773,8 @@ test.describe('reviewing a pull request', () => {
 			.toContain('Still here after a reload');
 
 		await page.reload();
-		// The panel remembers what was open; get to the pull request from either.
-		await expect(page.getByTestId('file-tree-panel')).toBeVisible();
-		await page.getByRole('tab', { name: 'PRs' }).click();
-		const row = page.getByTestId('pr-row-11');
-		await expect(row.or(page.getByTestId('pr-detail'))).toBeVisible();
-		if (await row.isVisible()) await row.click();
+		// The pull request is a page, so the reload lands back on it.
+		await expect(page.getByTestId('pr-detail')).toBeVisible();
 		await expect(page.getByTestId('pr-review-tab-badge')).toHaveText('1');
 		await page.getByTestId('pr-files').getByTitle('src/switcher.ts').click();
 		await expect(page.getByTestId('review-draft')).toContainText('Still here after a reload');

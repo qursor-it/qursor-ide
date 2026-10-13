@@ -10,6 +10,7 @@ import {
 } from '@factorai/ui';
 import { useQuery } from '@tanstack/react-query';
 import { GitPullRequestArrow } from 'lucide-react';
+import { useEffect } from 'react';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { CheckGlyph } from '@components/prs/CheckGlyph';
 import { usePrsTabActive, useResetOnUnauthenticated } from '@hooks/useGhStatus';
@@ -20,6 +21,7 @@ import { checksSummaryText, ghErrorText, reviewDecisionLabel } from '@lib/pullRe
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { usePrPanelStore } from '@store/prPanelStore';
+import { usePrTabStore } from '@store/prTabStore';
 
 /** The list re-reads once a minute while the tab is showing (F31): a review
  *  request or a failing check is the news the tab exists for, and a minute is
@@ -37,7 +39,9 @@ const FILTERS: { value: PrStateFilter; label: string }[] = [
 interface PrListProps {
 	root: string;
 	status: GhStatus;
-	onOpen: (number: number) => void;
+	/** The pull request the main area is showing, if any: its row is marked. */
+	current: number | null;
+	onOpen: (pr: PrSummary) => void;
 }
 
 /**
@@ -46,7 +50,7 @@ interface PrListProps {
  * Keyed by the repository's slug, not the path, so two checkouts of one
  * repository share the answer. Nothing here writes: a row only opens the detail.
  */
-export function PrList({ root, status, onOpen }: PrListProps) {
+export function PrList({ root, status, current, onOpen }: PrListProps) {
 	const filter = usePrPanelStore((s) => s.filter);
 	const setFilter = usePrPanelStore((s) => s.setFilter);
 	const active = usePrsTabActive();
@@ -64,6 +68,15 @@ export function PrList({ root, status, onOpen }: PrListProps) {
 		retry: false,
 	});
 	useResetOnUnauthenticated(root, query.error);
+
+	// An open tab's label follows its title in the list, so a renamed pull
+	// request is renamed on the strip without opening it.
+	const projectId = useActiveCheckout().projectId;
+	const setTitle = usePrTabStore((s) => s.setTitle);
+	useEffect(() => {
+		if (!projectId || !query.data) return;
+		for (const pr of query.data) setTitle(projectId, pr.number, pr.title);
+	}, [projectId, query.data, setTitle]);
 
 	const repoName = status.repo ? `${status.repo.owner}/${status.repo.name}` : '';
 
@@ -119,7 +132,8 @@ export function PrList({ root, status, onOpen }: PrListProps) {
 								key={pr.number}
 								pr={pr}
 								thisCheckout={branch !== null && pr.headRefName === branch}
-								onOpen={() => onOpen(pr.number)}
+								isCurrent={pr.number === current}
+								onOpen={() => onOpen(pr)}
 							/>
 						))}
 					</ul>
@@ -143,10 +157,12 @@ function ListError({ error, onRetry }: { error: unknown; onRetry: () => void }) 
 function PrRow({
 	pr,
 	thisCheckout,
+	isCurrent,
 	onOpen,
 }: {
 	pr: PrSummary;
 	thisCheckout: boolean;
+	isCurrent: boolean;
 	onOpen: () => void;
 }) {
 	const decision = reviewDecisionLabel(pr.reviewDecision);
@@ -156,7 +172,10 @@ function PrRow({
 				type="button"
 				// The row rests at `secondary-foreground` and takes `foreground` from
 				// its hover (DESIGN.md, The Focus-Not-Default Rule).
-				className="group flex w-full flex-col gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-secondary/50"
+				className={`group flex w-full flex-col gap-0.5 px-3 py-1.5 text-left transition-colors hover:bg-secondary/50 ${
+					isCurrent ? 'bg-secondary' : ''
+				}`}
+				aria-current={isCurrent ? 'true' : undefined}
 				title={pr.title}
 				onClick={onOpen}
 			>

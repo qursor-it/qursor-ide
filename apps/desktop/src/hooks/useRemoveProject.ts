@@ -2,6 +2,7 @@ import { closeProjectShells } from '@components/terminal/shells';
 import { disposeTerminal } from '@components/terminal/Terminal';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
+import { usePrTabStore } from '@store/prTabStore';
 import { type LiveTerminal, useTerminalStore } from '@store/terminalStore';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -81,6 +82,8 @@ export function useRemoveProject(): (projectId: string) => Promise<void> {
 			// longer in `list_projects`, which the strip would then filter out on the
 			// next launch anyway — silently, and one launch too late.
 			closeProject(projectId);
+			// Its pull request tabs go with it, for the same reason.
+			usePrTabStore.getState().closeProject(projectId);
 
 			await cmd.removeProject(projectId);
 			await queryClient.invalidateQueries({ queryKey: queryKeys.projects() });

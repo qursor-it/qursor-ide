@@ -2837,6 +2837,10 @@ off the file-tree toggle (Q15). It belongs to the keybinding pass.
 **Behavior.** The top bar carries a tab per **open session**, for switching
 between agents without going through the sidebar.
 
+**Pull request tabs** (F31) share the strip: after the session tabs, in the same
+`tablist` (`aria-label` "Open tabs"), with their own store and persistence. The strip
+shows when there is at least one tab of either kind.
+
 **A tab is an open session. The dot says whether it is running. A tab goes when
 you close it, and only then.** Rewritten 2026-08-18, and this paragraph used to
 say the opposite: "a tab is a running PTY, not an open document", with the strip
@@ -7292,8 +7296,9 @@ and by its stderr otherwise.
 
 ### Cadence
 
-The list refreshes every 60 seconds and a detail every 30, **only while the
-panel is visible**; nothing is polled when it is hidden. File lists and blobs
+The list refreshes every 60 seconds **only while the panel is visible**, and an
+open pull request's page every 30 while it is mounted; nothing is polled when
+neither is showing. File lists and blobs
 are keyed by commit and never expire. Opening the panel, switching the state
 filter and the refresh button each fetch once.
 
@@ -7331,8 +7336,16 @@ words) and Retry. The list refetches every 60s while the tab is showing, with a 
 `staleTime`; the panel's refresh button re-reads the status, the list and the open
 pull request, and never the files or blobs.
 
-**Detail.** A row opens the pull request in place of the list, with a back chevron.
-The header has the title, `#N`, the state (Draft for an open draft), `base ← head`,
+**Detail, as a tab.** A row opens the pull request as **a tab in the top strip**,
+after the session tabs, and shows it as a page in the **main area**
+(`/projects/$projectId/prs/$number`); the panel keeps only the list, and the row of
+the pull request on screen is marked. The tab is a `role="tab"` in the same strip,
+labelled `#N title` with a pull request glyph; clicking it returns to the page,
+the × or a middle-click closes it **without asking** (nothing is running behind it)
+and, if it is the page you are on, lands on the project. Tabs persist across
+reloads (`factorai.prTabs`, subject to the restore-tabs setting), are removed with
+their project, and are part of next/previous tab and close-tab. The page has no back
+arrow. The header has the title, `#N`, the state (Draft for an open draft), `base ← head`,
 a chip with the fork's owner when the head is cross-repository (`deleted fork` when
 the owner is `null`), and **Open on GitHub**, which hands the URL to the OS through
 `openExternally`. Sub-tabs, **Files** first:
@@ -7345,7 +7358,8 @@ the owner is `null`), and **Open on GitHub**, which hands the URL to the OS thro
   (author, state, date), requested reviewers, labels and mergeability. No network
   avatars: people are names.
 
-The detail refetches every 30s while it is open and the tab is the active one.
+The detail refetches every 30s while its page is open. File diffs open in the viewer
+exactly as before: the viewer is app-level, so it appears beside the page.
 
 **An `Unauthenticated` from any `gh` query** (list, detail, files, a diff side)
 forces a `gh_status` re-probe, so a login that lapses mid-session replaces the

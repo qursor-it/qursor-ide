@@ -4,14 +4,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Check, Copy } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
-import { PrDetailView } from '@components/prs/PrDetail';
 import { PrList } from '@components/prs/PrList';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
 import { refreshGhStatus, useGhStatus } from '@hooks/useGhStatus';
 import { isMacOS, isWindows } from '@lib/platform';
 import { ghInstallCommand, ghStatusText } from '@lib/pullRequests';
 import { copyText } from '@lib/tauri';
-import { usePrPanelStore } from '@store/prPanelStore';
+import { usePrTabStore } from '@store/prTabStore';
+import { useNavigate, useParams } from '@tanstack/react-router';
 
 /**
  * The panel's PRs tab (specs/05-features.md F31).
@@ -20,7 +20,7 @@ import { usePrPanelStore } from '@store/prPanelStore';
  * `gh`, so everything short of `ready` is an empty state that says how to get
  * there. The tab sits outside the panel's shared scroll wrapper, like the
  * graph — the list and the detail each own their scrolling — so its empty
- * states repeat the wrapper's 4px (`Empty`).
+ * states repeat the wrapper's 4px (`PrsEmpty`).
  */
 export function PrsView() {
 	// **The checkout, not the project folder** (F21), like Changes and the tree:
@@ -29,14 +29,14 @@ export function PrsView() {
 	const { projectId, root, isLoading } = useActiveCheckout();
 	const status = useGhStatus(root);
 
-	if (!projectId) return <Empty>Select a project to see its pull requests.</Empty>;
-	if (isLoading || (root && status.isPending)) return <Empty>Loading…</Empty>;
-	if (!root) return <Empty>Project folder not found on disk.</Empty>;
-	if (!status.data) return <Empty>Could not check the GitHub CLI.</Empty>;
+	if (!projectId) return <PrsEmpty>Select a project to see its pull requests.</PrsEmpty>;
+	if (isLoading || (root && status.isPending)) return <PrsEmpty>Loading…</PrsEmpty>;
+	if (!root) return <PrsEmpty>Project folder not found on disk.</PrsEmpty>;
+	if (!status.data) return <PrsEmpty>Could not check the GitHub CLI.</PrsEmpty>;
 
 	const gh = status.data;
 	if (gh.state !== 'ready' || !gh.repo) {
-		return <Gate status={gh} root={root} />;
+		return <PrsGate status={gh} root={root} />;
 	}
 	// Keyed on the repository, so the list's state cannot carry from one
 	// repository's pull requests to another's when the checkout moves.
@@ -44,25 +44,31 @@ export function PrsView() {
 }
 
 function Ready({ projectId, root, status }: { projectId: string; root: string; status: GhStatus }) {
-	const selected = usePrPanelStore((s) => s.selected[projectId] ?? null);
-	const select = usePrPanelStore((s) => s.select);
+	const open = usePrTabStore((s) => s.open);
+	const navigate = useNavigate();
+	// The pull request the main area shows, from the route (`/prs/$number`).
+	const { number } = useParams({ strict: false }) as { number?: string };
 
-	if (selected !== null) {
-		return (
-			<PrDetailView
-				projectId={projectId}
-				root={root}
-				status={status}
-				number={selected}
-				onBack={() => select(projectId, null)}
-			/>
-		);
-	}
-	return <PrList root={root} status={status} onOpen={(n) => select(projectId, n)} />;
+	return (
+		<PrList
+			root={root}
+			status={status}
+			current={number ? Number(number) : null}
+			onOpen={(pr) => {
+				// A row opens a tab in the top strip and the page in the main area;
+				// the panel keeps only the list (F31).
+				open(projectId, pr.number, pr.title);
+				void navigate({
+					to: '/projects/$projectId/prs/$number',
+					params: { projectId, number: String(pr.number) },
+				});
+			}}
+		/>
+	);
 }
 
 /** The empty state for a status that is not `ready`. */
-function Gate({ status, root }: { status: GhStatus; root: string }) {
+export function PrsGate({ status, root }: { status: GhStatus; root: string }) {
 	const queryClient = useQueryClient();
 	const [retrying, setRetrying] = useState(false);
 	const retry = () => {
@@ -161,7 +167,7 @@ function CommandLine({ command }: { command: string }) {
 }
 
 /** `PanelEmpty` with the 4px of the scroll wrapper this tab sits outside. */
-function Empty({ children }: { children: string }) {
+export function PrsEmpty({ children }: { children: string }) {
 	return (
 		<div className="py-1">
 			<PanelEmpty>{children}</PanelEmpty>

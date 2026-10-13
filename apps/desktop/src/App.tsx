@@ -4,11 +4,18 @@ import { installQueryFocusListener } from '@lib/queryFocus';
 import { ErrorBoundary } from './components/layout/ErrorBoundary';
 import { indexRoute } from './routes/index';
 import { projectRoute } from './routes/project';
+import { pullRequestRoute } from './routes/pullRequest';
 import { rootRoute } from './routes/__root';
 import { searchRoute } from './routes/search';
 import { sessionRoute } from './routes/session';
 
-const routeTree = rootRoute.addChildren([indexRoute, projectRoute, sessionRoute, searchRoute]);
+const routeTree = rootRoute.addChildren([
+	indexRoute,
+	projectRoute,
+	sessionRoute,
+	pullRequestRoute,
+	searchRoute,
+]);
 
 const router = createRouter({ routeTree, history: createHashHistory() });
 

@@ -21,10 +21,11 @@ import { queryKeys } from '@lib/queryKeys';
 import { tabsInKnownProjects } from '@lib/sessionGroups';
 import { cmd } from '@lib/tauri';
 import { usePrefsStore } from '@store/prefsStore';
+import { usePrTabStore } from '@store/prTabStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { X } from 'lucide-react';
+import { GitPullRequest, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
@@ -75,7 +76,14 @@ export function SessionTabs() {
 	const routineOrigins = useTerminalStore((s) => s.routineBySession);
 	const reorder = useTerminalStore((s) => s.reorder);
 	const detach = useTerminalStore((s) => s.detach);
-	const { sessionId: activeId } = useParams({ strict: false }) as { sessionId?: string };
+	const prTabsAll = usePrTabStore((s) => s.tabs);
+	const closePrTab = usePrTabStore((s) => s.close);
+	const reorderPr = usePrTabStore((s) => s.reorder);
+	const {
+		sessionId: activeId,
+		projectId: routeProjectId,
+		number: routeNumber,
+	} = useParams({ strict: false }) as { sessionId?: string; projectId?: string; number?: string };
 	const navigate = useNavigate();
 
 	const [closing, setClosing] = useState<string | null>(null);
@@ -110,6 +118,22 @@ export function SessionTabs() {
 	// renders it doesn't change in.
 	const tabIds = useMemo(() => tabs.map((t) => t.id), [tabs]);
 
+	// Pull request tabs follow the session tabs in the same strip (F31). Same
+	// staleness gate: a tab naming a project that no longer exists does not paint.
+	const prTabs = useMemo(
+		() =>
+			tabsInKnownProjects(prTabsAll, projectsQ.data).map((t) => ({
+				...t,
+				key: prTabKey(t.projectId, t.number),
+			})),
+		[prTabsAll, projectsQ.data],
+	);
+	const prKeys = useMemo(() => prTabs.map((t) => t.key), [prTabs]);
+	const activePrKey =
+		!activeId && routeProjectId && routeNumber
+			? prTabKey(routeProjectId, Number(routeNumber))
+			: null;
+
 	const titles = useSessionTitles(tabs);
 	const projectById = useMemo(
 		() => new Map((projectsQ.data ?? []).map((p) => [p.id, p])),
@@ -123,11 +147,39 @@ export function SessionTabs() {
 	// Switching sessions from the sidebar (or a keyboard, later) must not leave
 	// you looking at the wrong end of a scrolled strip.
 	useEffect(() => {
-		if (!activeId) return;
+		const selector = activeId
+			? `[data-session-id="${CSS.escape(activeId)}"]`
+			: activePrKey
+				? `[data-pr-tab="${CSS.escape(activePrKey.slice(PR_KEY_PREFIX.length))}"]`
+				: null;
+		if (!selector) return;
 		stripRef.current
-			?.querySelector(`[data-session-id="${CSS.escape(activeId)}"]`)
+			?.querySelector(selector)
 			?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-	}, [activeId]);
+	}, [activeId, activePrKey]);
+
+	const openPr = useCallback(
+		(projectId: string, number: number) => {
+			void navigate({
+				to: '/projects/$projectId/prs/$number',
+				params: { projectId, number: String(number) },
+			});
+		},
+		[navigate],
+	);
+
+	/** A pull request tab has no process behind it, so closing is not asking:
+	 *  there is nothing to lose. Leaving the page you were on lands on the
+	 *  project, the way closing the session you were looking at does. */
+	const closePr = useCallback(
+		(projectId: string, number: number) => {
+			closePrTab(projectId, number);
+			if (activePrKey === prTabKey(projectId, number)) {
+				void navigate({ to: '/projects/$id', params: { id: projectId } });
+			}
+		},
+		[activePrKey, closePrTab, navigate],
+	);
 
 	const openSession = useCallback(
 		(sessionId: string, projectId: string) => {
@@ -206,7 +258,11 @@ export function SessionTabs() {
 	 */
 	useShortcuts({
 		closeFocusedTab: () => {
-			if (!activeId) return;
+			if (!activeId) {
+				const pr = prTabs.find((t) => t.key === activePrKey);
+				if (pr) closePr(pr.projectId, pr.number);
+				return;
+			}
 			const tab = tabs.find((t) => t.id === activeId);
 			if (tab) requestClose(activeId, tab.projectId, 'button');
 		},
@@ -225,13 +281,17 @@ export function SessionTabs() {
 	/** One tab along the strip, in the order the tabs are actually in. */
 	const stepToTab = useCallback(
 		(delta: 1 | -1) => {
-			if (!activeId) return;
-			const nextId = stepTab(tabIds, activeId, delta);
-			if (!nextId || nextId === activeId) return;
-			const tab = tabs.find((t) => t.id === nextId);
+			// One order across both kinds: the sessions, then the pull requests.
+			const current = activeId ?? activePrKey;
+			if (!current) return;
+			const next = stepTab([...tabIds, ...prKeys], current, delta);
+			if (!next || next === current) return;
+			const pr = prTabs.find((t) => t.key === next);
+			if (pr) return openPr(pr.projectId, pr.number);
+			const tab = tabs.find((t) => t.id === next);
 			if (tab) openSession(tab.id, tab.projectId);
 		},
-		[activeId, openSession, tabIds, tabs],
+		[activeId, activePrKey, openPr, openSession, prKeys, prTabs, tabIds, tabs],
 	);
 
 	/** `arrayMove` semantics, which is what `terminalStore.reorder` already does:
@@ -240,11 +300,19 @@ export function SessionTabs() {
 		(event: DragEndEvent) => {
 			const { active, over } = event;
 			if (!over || active.id === over.id) return;
+			// A session tab is only ever dropped among sessions and a pull request
+			// tab among pull requests; a drop across the divide does nothing.
+			const prFrom = prTabs.find((t) => t.key === String(active.id));
+			if (prFrom) {
+				const prTo = prKeys.indexOf(String(over.id));
+				if (prTo >= 0) reorderPr(prFrom.projectId, prFrom.number, prTo);
+				return;
+			}
 			const to = tabIds.indexOf(String(over.id));
 			if (to < 0) return;
 			reorder(String(active.id), to);
 		},
-		[reorder, tabIds],
+		[prKeys, prTabs, reorder, reorderPr, tabIds],
 	);
 
 	/**
@@ -266,7 +334,7 @@ export function SessionTabs() {
 		[reorder, tabIds],
 	);
 
-	if (tabs.length === 0) {
+	if (tabs.length === 0 && prTabs.length === 0) {
 		// Nothing open, but the row still needs something between the brand and the
 		// panel toggle: the strip is the only flexible element in that flex line,
 		// so returning null slides the toggle across to sit beside the app name.
@@ -274,6 +342,14 @@ export function SessionTabs() {
 		// which is what made the strip half-width in the first place.
 		return <div className="flex-1" aria-hidden />;
 	}
+
+	const nudgePr = (key: string, delta: -1 | 1) => {
+		const from = prKeys.indexOf(key);
+		const to = from + delta;
+		const tab = prTabs[from];
+		if (!tab || to < 0 || to >= prKeys.length) return;
+		reorderPr(tab.projectId, tab.number, to);
+	};
 
 	const closingTab = closing ? tabs.find((t) => t.id === closing) : undefined;
 
@@ -290,24 +366,24 @@ export function SessionTabs() {
 				modifiers={[restrictToHorizontalAxis]}
 				onDragEnd={onDragEnd}
 			>
-				<SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
-					<div
-						ref={stripRef}
-						role="tablist"
-						aria-label="Open sessions"
-						data-testid="session-tabs"
-						// `overflow-x-auto` with the bar hidden: at 42px tall a scrollbar
-						// would eat a third of the strip. The wheel handler below is what
-						// makes it reachable without one.
-						className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1"
-						onWheel={(e) => {
-							// A vertical wheel over a horizontal strip does nothing by default,
-							// which reads as "these tabs are stuck".
-							if (e.deltaY !== 0 && stripRef.current) {
-								stripRef.current.scrollLeft += e.deltaY;
-							}
-						}}
-					>
+				<div
+					ref={stripRef}
+					role="tablist"
+					aria-label="Open tabs"
+					data-testid="session-tabs"
+					// `overflow-x-auto` with the bar hidden: at 42px tall a scrollbar
+					// would eat a third of the strip. The wheel handler below is what
+					// makes it reachable without one.
+					className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1"
+					onWheel={(e) => {
+						// A vertical wheel over a horizontal strip does nothing by default,
+						// which reads as "these tabs are stuck".
+						if (e.deltaY !== 0 && stripRef.current) {
+							stripRef.current.scrollLeft += e.deltaY;
+						}
+					}}
+				>
+					<SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
 						{tabs.map(({ id, projectId, status }) => (
 							<SessionTab
 								key={id}
@@ -323,8 +399,24 @@ export function SessionTabs() {
 								routine={routineOrigins[id]}
 							/>
 						))}
-					</div>
-				</SortableContext>
+					</SortableContext>
+					<SortableContext items={prKeys} strategy={horizontalListSortingStrategy}>
+						{prTabs.map((t) => (
+							<PrTabItem
+								key={t.key}
+								tabKey={t.key}
+								projectId={t.projectId}
+								number={t.number}
+								project={projectById.get(t.projectId)}
+								title={t.title}
+								isActive={t.key === activePrKey}
+								onOpen={openPr}
+								onClose={closePr}
+								onNudge={nudgePr}
+							/>
+						))}
+					</SortableContext>
+				</div>
 			</DndContext>
 
 			<CloseSessionConfirm
@@ -458,6 +550,100 @@ function SessionTab({
 				onClick={(e) => {
 					e.stopPropagation();
 					onRequestClose(id, projectId, 'button');
+				}}
+			>
+				<X className="size-3.5" />
+			</button>
+		</div>
+	);
+}
+
+const PR_KEY_PREFIX = 'pr:';
+
+/** The id a pull request tab sorts and is found by: the project's id keeps the
+ *  same number in two projects apart. */
+function prTabKey(projectId: string, number: number): string {
+	return `${PR_KEY_PREFIX}${projectId}#${number}`;
+}
+
+interface PrTabItemProps {
+	tabKey: string;
+	projectId: string;
+	number: number;
+	project: Project | undefined;
+	title: string | undefined;
+	isActive: boolean;
+	onOpen: (projectId: string, number: number) => void;
+	onClose: (projectId: string, number: number) => void;
+	onNudge: (tabKey: string, delta: -1 | 1) => void;
+}
+
+/**
+ * A pull request tab (F31): the same shape as a session tab, without a status
+ * badge — there is no process behind it — and a close that never asks.
+ */
+function PrTabItem({
+	tabKey,
+	projectId,
+	number,
+	project,
+	title,
+	isActive,
+	onOpen,
+	onClose,
+	onNudge,
+}: PrTabItemProps) {
+	const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({ id: tabKey });
+	const label = title ? `#${number} ${title}` : `#${number}`;
+
+	return (
+		<div
+			ref={setNodeRef}
+			role="tab"
+			aria-selected={isActive}
+			aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
+			data-pr-tab={tabKey.slice(PR_KEY_PREFIX.length)}
+			{...listeners}
+			style={{ transform: DndCss.Translate.toString(transform), transition }}
+			className={`group flex h-7.5 max-w-60 shrink-0 cursor-pointer touch-none items-center gap-1.5 rounded px-2 text-sm ${
+				isDragging
+					? 'z-10 bg-secondary text-foreground shadow-lg'
+					: isActive
+						? 'bg-secondary text-foreground transition-colors'
+						: 'text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground'
+			}`}
+			onClick={() => onOpen(projectId, number)}
+			onAuxClick={(e) => {
+				if (e.button !== 1) return;
+				e.preventDefault();
+				onClose(projectId, number);
+			}}
+			onKeyDown={(e) => {
+				if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+					e.preventDefault();
+					onNudge(tabKey, e.key === 'ArrowLeft' ? -1 : 1);
+					return;
+				}
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					onOpen(projectId, number);
+				}
+			}}
+			tabIndex={0}
+			title={`${project?.displayName ?? projectId} — ${label}`}
+		>
+			<GitPullRequest className="size-4 shrink-0" aria-hidden />
+			<span className="min-w-0 flex-1 truncate">{label}</span>
+			<button
+				type="button"
+				aria-label={`Close ${label}`}
+				className={`-mr-1 rounded p-0.5 text-muted-foreground/70 transition-all hover:text-primary focus-visible:opacity-100 ${
+					isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+				}`}
+				onPointerDown={(e) => e.stopPropagation()}
+				onClick={(e) => {
+					e.stopPropagation();
+					onClose(projectId, number);
 				}}
 			>
 				<X className="size-3.5" />

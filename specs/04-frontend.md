@@ -74,6 +74,7 @@ apps/desktop/src/
 | `/projects`                | ProjectsView          | grid of project cards                       |
 | `/projects/$id`            | ProjectView           | `Sessions \| Routines` tabs; `?tab=routines` selects (F22)  |
 | `/projects/$id/sessions/$sessionId` | SessionView  | terminal-only (header + xterm)              |
+| `/projects/$projectId/prs/$number` | PullRequestView | one pull request in the main area, opened as a tab in the top strip (F31); a bad number redirects to the project |
 | `/search?q=...`            | SearchView            | global FTS; a hit opens its session         |
 | `/settings`                | SettingsView          | theme, font, paths                          |
 
@@ -235,7 +236,7 @@ session, but not every running session is a tab. Anything that read `bySession`
 as "has a tab" is wrong as of that feature, and nothing in the types will say
 so.
 
-Persisted as `factorai.terminals` v1, `partialize`d down to `tabs` alone. A
+Persisted as `factorai.terminals` v1, `partialize`d down to `tabs` alone (pull request tabs are a separate store, `factorai.prTabs`, below). A
 `terminalId` from a previous run names nothing, and a persisted status would be a
 claim about a process that is gone; restored entries come back with neither, which
 is what makes them `stopped` by construction rather than by a rule someone has to
@@ -316,29 +317,55 @@ on.
 
 ### `prPanelStore` (F31)
 
-Where the PRs tab is, and nothing else. **Not persisted.**
+The PRs tab's list state, and nothing else. **Not persisted.**
 
 ```ts
 type PrPanelState = {
-  selected: Record<string, number | null>;  // per project id; null = the list
   filter: 'open' | 'closed' | 'merged' | 'all';  // default 'open'
-  select(projectId, number | null): void;
   setFilter(filter): void;
 };
 ```
 
-A pull request number from last session may be merged, on a repository whose
-`origin` has changed, or gone; reopening on a stale detail is worse than opening
-on the list. The data is TanStack Query's (`gh-status`, `gh-prs`, `gh-pr`,
-`gh-pr-files`, `gh-pr-side`); the store holds navigation only. `components/prs/`:
-`PrsView` (the `gh_status` gate and its empty states: install, sign in, no
-origin, not GitHub, too old, unreachable), `PrList` (the state filter and the
-rows) and `PrDetail` (the header, then Files and Overview sub-tabs, as
-`CommitDetail` does for a commit; its header carries `CheckoutPr`, F31 P4). The tab sits outside the panel's shared scroll
-wrapper, like the graph. Polls (60s list, 30s detail) run only while the panel is
-open and the PRs tab is the active one. An `Unauthenticated` rejection from any
-`gh` query forces a `gh_status` re-probe, which turns the panel into the sign-in
-state.
+Which pull request is open is not here: it is a tab (`prTabStore`, below) and a
+route. The data is TanStack Query's (`gh-status`, `gh-prs`, `gh-pr`,
+`gh-pr-files`, `gh-pr-side`). `components/prs/`: `PrsView` (the panel's
+`gh_status` gate and its empty states: install, sign in, no origin, not GitHub,
+too old, unreachable; exports the gate and the empty line for the page to reuse),
+`PrList` (the state filter and the rows; a row opens a tab and the route, and the
+row of the pull request on screen is `aria-current`), `PrDetailPage` (the main-area
+page: resolves `root` and `gh_status` like the panel, then `PrDetailView` in a
+`max-w-4xl` column) and `PrDetail` (the header, then Files, Overview and Review
+sub-tabs, as `CommitDetail` does for a commit; its header carries `CheckoutPr`,
+F31 P4; `onBack` is optional and the page passes none). The list sits outside the
+panel's shared scroll wrapper, like the graph. The list polls (60s) only while the
+panel is open and the PRs tab is the active one; the detail polls (30s) whenever
+its page is mounted. An `Unauthenticated` rejection from any `gh` query forces a
+`gh_status` re-probe, which turns the panel (and the page) into the sign-in state.
+
+### `prTabStore` (F31)
+
+The pull requests open as tabs in the top strip, after the session tabs.
+
+```ts
+type PrTabState = {
+  tabs: Array<{ projectId: string; number: number; title?: string }>;  // persisted, tab order
+  open(projectId, number, title?): void;     // dedupes, appends
+  setTitle(projectId, number, title): void; // kept fresh from the list and the detail
+  close(projectId, number): void;
+  reorder(projectId, number, toIndex): void;
+  closeProject(projectId): void;            // called where terminalStore.closeProject is
+};
+```
+
+Persisted as `factorai.prTabs` v1 (`tabs` only), honouring `restoreTabs` at
+hydration exactly as `factorai.terminals` does. Unlike the old in-panel selection
+a restored tab may name a pull request that has since merged: a tab is a document
+you opened, and the detail reads whatever state it is in now. `SessionTabs` renders
+them in the same `tablist` (`data-pr-tab="<projectId>#<n>"`), selected when the
+route is theirs; close never asks (no process) and, on the active one, navigates to
+the project. Next/previous tab and close-focused-tab cover both kinds in one order
+(sessions, then pull requests); drag and `Alt`+arrows reorder within the pull
+request tabs only.
 
 ### Which checkout the panel is rooted at (F21)
 
