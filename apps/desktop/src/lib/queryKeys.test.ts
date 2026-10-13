@@ -37,4 +37,19 @@ describe('queryKeys', () => {
 		expect(queryKeys.file('/a/b.ts', false)).toEqual(['file', '/a/b.ts', 'capped']);
 		expect(queryKeys.file('/a/b.ts', true)).not.toEqual(queryKeys.file('/a/b.ts', false));
 	});
+
+	it('ghPrSide() is content-addressed and distinct per side and path', () => {
+		const left = queryKeys.ghPrSide('/r', 7, 'a'.repeat(40), '/r/x.ts');
+		const right = queryKeys.ghPrSide('/r', 7, 'b'.repeat(40), '/r/x.ts');
+		expect(left).not.toEqual(right);
+		expect(left[0]).toBe('gh-pr-side');
+	});
+
+	it('the PR keys do not share a prefix the refresh button could over-match', () => {
+		// The tab refreshes ['gh-status'], ['gh-prs'] and ['gh-pr'] by first element;
+		// files and sides are SHA-keyed and must stay out of it.
+		expect(queryKeys.ghPrFiles('/r', 7, 'a')[0]).toBe('gh-pr-files');
+		expect(queryKeys.ghPrSide('/r', 7, 'a', 'p')[0]).toBe('gh-pr-side');
+		expect(queryKeys.ghPr('s', 7)[0]).toBe('gh-pr');
+	});
 });

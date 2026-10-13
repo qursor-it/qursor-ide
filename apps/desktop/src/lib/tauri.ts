@@ -402,7 +402,11 @@ export const cmd = {
  * than a rejected invoke.
  */
 export async function openExternally(path: string): Promise<void> {
-	if (!isTauri()) return;
+	if (!isTauri()) {
+		// Recorded so a smoke test can assert what a control tried to open (F31).
+		recordMockCall('openExternally', { path });
+		return;
+	}
 	// plugin-shell 2.3.x calls this `open`; the capability grant is
 	// `shell:allow-open` in capabilities/default.json.
 	const { open } = await import('@tauri-apps/plugin-shell');
@@ -593,11 +597,11 @@ export function mockUpdateFailure(): { message: string; version?: string } | nul
 }
 
 /** Record a call the mock bridge can't perform, so tests can assert it was
- *  attempted. `relaunch()` is the only one so far. */
-export function recordMockCall(name: string): void {
+ *  attempted. `relaunch()` and, since F31, `openExternally()`. */
+export function recordMockCall(name: string, args?: Record<string, unknown>): void {
 	if (typeof window === 'undefined' || !testFixture()) return;
 	window.__FACTORAI_TEST_CALLS__ ??= [];
-	window.__FACTORAI_TEST_CALLS__.push({ name });
+	window.__FACTORAI_TEST_CALLS__.push(args ? { name, args } : { name });
 }
 
 export const events = {

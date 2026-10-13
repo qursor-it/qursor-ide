@@ -8,3 +8,10 @@ export function isMacOS(): boolean {
 	if (typeof navigator === 'undefined') return false;
 	return navigator.userAgent.includes('Mac OS X');
 }
+
+/** The Windows twin of `isMacOS`, from the same user agent for the same reason.
+ *  Only used to pick which install command to show for `gh` (F31). */
+export function isWindows(): boolean {
+	if (typeof navigator === 'undefined') return false;
+	return navigator.userAgent.includes('Windows');
+}

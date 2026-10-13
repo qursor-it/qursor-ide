@@ -1,9 +1,11 @@
 import type { FileContents } from '@factorai/types';
 import { Button } from '@factorai/ui';
-import { useQuery } from '@tanstack/react-query';
+import { type QueryClient, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Columns2, Rows2 } from 'lucide-react';
 import { type MutableRefObject, useEffect, useRef } from 'react';
-import { type DiffMode, parseCommitRange } from '@hooks/useFileViewer';
+import { type DiffMode, parseCommitRange, parsePrRange } from '@hooks/useFileViewer';
+import { useActiveCheckout } from '@hooks/useActiveCheckout';
+import { useResetOnUnauthenticated } from '@hooks/useGhStatus';
 import { useEditBuffer } from '@hooks/useEditBuffer';
 import { diffEditsWorktree, diffReadOnlyReason, eolOf, readOnlyReason } from '@lib/editable';
 import { iconKeyFor } from '@lib/fileIcon';
@@ -78,9 +80,14 @@ interface Side {
  *
  * Three of the four modes are working-tree pairs; the fourth is a commit against
  * its parent, which is why `git_blob_at` exists as a third command rather than
- * `GitRev` growing an object member (F18).
+ * `GitRev` growing an object member (F18). A fifth, `pr:`, is one file of a
+ * pull request, read through `gh_pr_blob` (F31).
  */
-function sidesFor(path: string, mode: DiffMode): { left: Side; right: Side } {
+function sidesFor(
+	path: string,
+	mode: DiffMode,
+	pr: { root: string | null; queryClient: QueryClient },
+): { left: Side; right: Side } {
 	const worktree: Side = {
 		key: queryKeys.file(path, false),
 		load: () => readWorktree(path),
@@ -91,6 +98,48 @@ function sidesFor(path: string, mode: DiffMode): { left: Side; right: Side } {
 		load: () => cmd.gitBlob(path, rev),
 		freshness: REREAD_ON_OPEN,
 	});
+
+	const prRange = parsePrRange(mode);
+	if (prRange) {
+		const { number, mergeBase, head } = prRange;
+		const { root, queryClient } = pr;
+		// **Both sides read through the pull request's own file list** (F31): the
+		// viewer knows the file by its absolute path, and only `PrFile` knows the
+		// repository-relative one `gh_pr_blob` takes — and, for a rename, the path
+		// the left side lived at. The list is the query the detail pane already
+		// ran for this head, so opening a file is a cache hit.
+		const read = async (side: 'left' | 'right'): Promise<FileContents | null> => {
+			if (!root) throw { kind: 'NotFound', message: 'No checkout to read this pull request from.' };
+			const listing = await queryClient.fetchQuery({
+				queryKey: queryKeys.ghPrFiles(root, number, head),
+				queryFn: () => cmd.ghPrFiles(root, number),
+				staleTime: IMMUTABLE_REV.staleTime,
+			});
+			const file = listing.files.find((f) => f.path === path);
+			if (!file) throw { kind: 'NotFound', message: 'That file is not in this pull request.' };
+			// An added file has no merge-base side and a removed one no head side:
+			// an absent blob is what they look like, not an error (as at a root
+			// commit).
+			if (side === 'left') {
+				return file.status === 'added'
+					? null
+					: cmd.ghPrBlob(root, file.oldRelPath ?? file.relPath, mergeBase);
+			}
+			return file.status === 'removed' ? null : cmd.ghPrBlob(root, file.relPath, head);
+		};
+		return {
+			left: {
+				key: queryKeys.ghPrSide(root ?? '', number, mergeBase, path),
+				load: () => read('left'),
+				freshness: IMMUTABLE_REV,
+			},
+			right: {
+				key: queryKeys.ghPrSide(root ?? '', number, head, path),
+				load: () => read('right'),
+				freshness: IMMUTABLE_REV,
+			},
+		};
+	}
 
 	const range = parseCommitRange(mode);
 	if (range) {
@@ -188,7 +237,11 @@ function MediaDiff({ path }: { path: string }) {
 function DiffViewInner({ path, mode, sides = null }: DiffViewProps) {
 	const inline = usePrefsStore((s) => s.diffInline);
 	const setInline = usePrefsStore((s) => s.setDiffInline);
-	const { left, right } = sidesFor(path, mode);
+	// The checkout the pull request's files were listed from (F31). Read here,
+	// not in `sidesFor`, because a hook cannot be called from there.
+	const { root } = useActiveCheckout();
+	const queryClient = useQueryClient();
+	const { left, right } = sidesFor(path, mode, { root, queryClient });
 
 	// Disabled rather than absent when the strings were handed to us: hooks run
 	// in the same order either way, and nothing should read a revision whose
@@ -212,6 +265,9 @@ function DiffViewInner({ path, mode, sides = null }: DiffViewProps) {
 	// kind of diff this is.
 	const pending = !sides && (leftQ.isPending || rightQ.isPending);
 	const error = sides ? null : (leftQ.error ?? rightQ.error);
+	// A pull request's sides come from `gh`: a login that lapsed while the diff
+	// was open sends the panel back to its sign-in state (F31).
+	useResetOnUnauthenticated(root, error);
 	// Both sides absent means the file exists at neither revision — nothing to
 	// show, and not worth an error either.
 	const original = sides ? { contents: sides.original } : (leftQ.data ?? null);
@@ -380,6 +436,8 @@ const MODE_LABELS: Record<'staged' | 'unstaged' | 'head', string> = {
  *  went blank for every one of them. Short SHAs, because the footer is 288px
  *  wide at worst and eighty hex characters is not a label. */
 function modeLabel(mode: DiffMode): string {
+	const pr = parsePrRange(mode);
+	if (pr) return `PR #${pr.number} · ${pr.mergeBase.slice(0, 7)} ↔ ${pr.head.slice(0, 7)}`;
 	const range = parseCommitRange(mode);
 	if (!range) return MODE_LABELS[mode as 'staged' | 'unstaged' | 'head'];
 	const short = (sha: string) => sha.slice(0, 7);

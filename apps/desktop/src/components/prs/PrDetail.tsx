@@ -1,0 +1,367 @@
+import type { GhStatus, PrDetail } from '@factorai/types';
+import { Button, IconButton } from '@factorai/ui';
+import { useQuery } from '@tanstack/react-query';
+import { ChevronLeft, ExternalLink } from 'lucide-react';
+import { type ReactNode, useState } from 'react';
+import { FileChangeRow } from '@components/files/FileChangeRow';
+import { CheckGlyph } from '@components/prs/CheckGlyph';
+import { usePrsTabActive, useResetOnUnauthenticated } from '@hooks/useGhStatus';
+import { useFileViewer } from '@hooks/useFileViewer';
+import { formatAbsolute, formatRelative } from '@lib/format';
+import {
+	checkStateLabel,
+	forkLabel,
+	ghErrorText,
+	mergeableLabel,
+	prDiffMode,
+	reviewStateLabel,
+} from '@lib/pullRequests';
+import { queryKeys } from '@lib/queryKeys';
+import { cmd, openExternally } from '@lib/tauri';
+
+/** The open pull request is re-read every 30s (F31): its checks finishing and a
+ *  review landing are what you have it open to see. The list's minute is for a
+ *  screen you are scanning, not reading. */
+const DETAIL_POLL_MS = 30_000;
+
+type SubTab = 'files' | 'overview';
+
+interface PrDetailViewProps {
+	root: string;
+	status: GhStatus;
+	number: number;
+	onBack: () => void;
+}
+
+/**
+ * One pull request (specs/05-features.md F31): identity above, then Files and
+ * Overview as sub-tabs, in the shape of the graph's `CommitDetail`.
+ *
+ * **Files first**, because a reviewer opens a pull request to read its diff;
+ * the description is one click away. Read-only: nothing here approves, comments
+ * or merges.
+ */
+export function PrDetailView({ root, status, number, onBack }: PrDetailViewProps) {
+	const active = usePrsTabActive();
+	const slug = status.repo?.slug ?? '';
+	const [tab, setTab] = useState<SubTab>('files');
+
+	const query = useQuery({
+		queryKey: queryKeys.ghPr(slug, number),
+		queryFn: () => cmd.ghPrDetail(root, number),
+		staleTime: DETAIL_POLL_MS,
+		refetchInterval: active ? DETAIL_POLL_MS : false,
+		retry: false,
+	});
+	useResetOnUnauthenticated(root, query.error);
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col" data-testid="pr-detail">
+			<div className="flex shrink-0 items-center gap-1 border-border border-b px-2 py-1">
+				<IconButton aria-label="Back to pull requests" title="Back" onClick={onBack}>
+					<ChevronLeft />
+				</IconButton>
+				<span className="text-muted-foreground text-xs">Pull requests</span>
+			</div>
+
+			{query.isPending && <Note>Loading pull request…</Note>}
+			{query.isError && (
+				<div data-testid="pr-error" className="flex flex-col gap-2 px-3 py-2 text-xs">
+					<p className="text-destructive">{ghErrorText(query.error)}</p>
+					<Button
+						variant="outline"
+						size="sm"
+						className="self-start"
+						onClick={() => void query.refetch()}
+					>
+						Retry
+					</Button>
+				</div>
+			)}
+			{query.data && (
+				<>
+					<Header pr={query.data} />
+					<div
+						role="tablist"
+						aria-label="Pull request"
+						className="flex shrink-0 items-center gap-1 border-border border-b px-2 pb-1"
+					>
+						<SubTabButton id="files" active={tab} onSelect={setTab} label="Files" />
+						<SubTabButton id="overview" active={tab} onSelect={setTab} label="Overview" />
+					</div>
+					<div className="min-h-0 flex-1 overflow-y-auto">
+						{tab === 'files' ? (
+							<FilesTab root={root} pr={query.data} />
+						) : (
+							<Overview pr={query.data} />
+						)}
+					</div>
+				</>
+			)}
+		</div>
+	);
+}
+
+function Header({ pr }: { pr: PrDetail }) {
+	const fork = forkLabel(pr);
+	return (
+		<div className="shrink-0 px-3 pt-2 pb-1.5">
+			<div className="flex items-start gap-1">
+				<p
+					className="line-clamp-2 min-w-0 flex-1 font-medium text-sm"
+					title={pr.title}
+					data-testid="pr-title"
+				>
+					{pr.title}
+				</p>
+				<IconButton
+					aria-label="Open on GitHub"
+					title="Open on GitHub"
+					className="shrink-0"
+					data-testid="pr-open-github"
+					onClick={() => void openExternally(pr.url)}
+				>
+					<ExternalLink />
+				</IconButton>
+			</div>
+			<p className="flex flex-wrap items-center gap-x-1.5 pt-1 text-muted-foreground text-xs">
+				<span className="tabular-nums">#{pr.number}</span>
+				<span data-testid="pr-state">
+					{pr.isDraft && pr.state === 'open' ? 'Draft' : stateLabel(pr.state)}
+				</span>
+				<span
+					className="min-w-0 truncate font-mono"
+					title={`${pr.baseRefName} ← ${pr.headRefName}`}
+				>
+					{pr.baseRefName} ← {pr.headRefName}
+				</span>
+				{fork && (
+					<span
+						className="rounded border border-border px-1"
+						title="The head branch lives in a fork"
+						data-testid="pr-fork"
+					>
+						{fork}
+					</span>
+				)}
+			</p>
+			<p className="pt-1 text-muted-foreground text-xs">
+				{pr.author}
+				<span className="text-muted-foreground/60">
+					{' · '}
+					{formatRelative(pr.updatedAt)}
+				</span>
+			</p>
+		</div>
+	);
+}
+
+function stateLabel(state: PrDetail['state']): string {
+	return state === 'open' ? 'Open' : state === 'merged' ? 'Merged' : 'Closed';
+}
+
+function FilesTab({ root, pr }: { root: string; pr: PrDetail }) {
+	const { open } = useFileViewer();
+	// **The head is in the key**, so a force-push is a new entry and the files of
+	// a given head never expire (F31, `queryKeys.ghPrFiles`).
+	const query = useQuery({
+		queryKey: queryKeys.ghPrFiles(root, pr.number, pr.headRefOid),
+		queryFn: () => cmd.ghPrFiles(root, pr.number),
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+	useResetOnUnauthenticated(root, query.error);
+
+	if (query.isPending) return <Note>Loading files…</Note>;
+	if (query.isError) {
+		return (
+			<div data-testid="pr-error" className="flex flex-col gap-2 px-3 py-2 text-xs">
+				<p className="text-destructive">{ghErrorText(query.error)}</p>
+				<Button
+					variant="outline"
+					size="sm"
+					className="self-start"
+					onClick={() => void query.refetch()}
+				>
+					Retry
+				</Button>
+			</div>
+		);
+	}
+	const { files, total, truncated } = query.data;
+	if (files.length === 0) return <Note>This pull request changes no files.</Note>;
+
+	const mode = prDiffMode(pr.number, pr.mergeBaseOid, pr.headRefOid);
+	return (
+		<>
+			<ul className="py-1" data-testid="pr-files">
+				{files.map((file) => (
+					<FileChangeRow
+						key={file.path}
+						relPath={file.relPath}
+						oldRelPath={file.oldRelPath}
+						kind={file.kind}
+						additions={file.additions}
+						deletions={file.deletions}
+						// Whether a file is binary is learned from its blob when the diff
+						// opens (the same path a commit range takes), not from this row.
+						isBinary={false}
+						onClick={() => open(file.path, { diff: mode })}
+					/>
+				))}
+			</ul>
+			{(truncated || total > files.length) && (
+				<p className="px-3 pb-2 text-muted-foreground/60 text-xs" data-testid="pr-files-truncated">
+					… {total - files.length} more files on GitHub
+				</p>
+			)}
+		</>
+	);
+}
+
+function Overview({ pr }: { pr: PrDetail }) {
+	return (
+		<div className="flex flex-col gap-3 px-3 py-2 text-xs" data-testid="pr-overview">
+			{pr.body ? (
+				// Plain text, the author's own line breaks kept: no markdown in v1, and
+				// nothing from the body is ever interpreted as markup.
+				<p className="whitespace-pre-wrap text-muted-foreground" data-testid="pr-body">
+					{pr.body}
+				</p>
+			) : (
+				<p className="text-muted-foreground/60">
+					<em>No description.</em>
+				</p>
+			)}
+
+			<Section title="Checks" count={pr.checkRuns.length}>
+				{pr.checkRuns.length === 0 ? (
+					<p className="text-muted-foreground/60">No checks.</p>
+				) : (
+					<ul className="flex flex-col gap-1" data-testid="pr-checks">
+						{pr.checkRuns.map((check) => (
+							<li
+								key={`${check.workflow ?? ''}/${check.name}`}
+								className="flex items-center gap-1.5"
+							>
+								<CheckGlyph state={check.state} label={checkStateLabel(check.state)} />
+								<span
+									className="min-w-0 flex-1 truncate text-secondary-foreground"
+									title={check.name}
+								>
+									{check.name}
+									{check.workflow && (
+										<span className="text-muted-foreground/60"> · {check.workflow}</span>
+									)}
+								</span>
+								{check.url && (
+									<IconButton
+										aria-label={`Open ${check.name} on GitHub`}
+										title="Open on GitHub"
+										onClick={() => void openExternally(check.url ?? '')}
+									>
+										<ExternalLink />
+									</IconButton>
+								)}
+							</li>
+						))}
+					</ul>
+				)}
+			</Section>
+
+			<Section title="Reviews" count={pr.latestReviews.length}>
+				{pr.latestReviews.length === 0 ? (
+					<p className="text-muted-foreground/60">No reviews yet.</p>
+				) : (
+					<ul className="flex flex-col gap-1" data-testid="pr-reviews">
+						{pr.latestReviews.map((review) => (
+							<li key={review.author} className="text-secondary-foreground">
+								{review.author}
+								<span className="text-muted-foreground/60">
+									{' · '}
+									{reviewStateLabel(review.state)}
+									{review.submittedAt !== null && ` · ${formatAbsolute(review.submittedAt)}`}
+								</span>
+							</li>
+						))}
+					</ul>
+				)}
+			</Section>
+
+			{pr.reviewRequests.length > 0 && (
+				<Section title="Review requested" count={pr.reviewRequests.length}>
+					<p className="text-secondary-foreground" data-testid="pr-requests">
+						{pr.reviewRequests.join(', ')}
+					</p>
+				</Section>
+			)}
+
+			{pr.labels.length > 0 && (
+				<Section title="Labels" count={pr.labels.length}>
+					<p className="text-secondary-foreground" data-testid="pr-labels">
+						{pr.labels.join(', ')}
+					</p>
+				</Section>
+			)}
+
+			<Section title="Merge">
+				<p className="text-secondary-foreground" data-testid="pr-mergeable">
+					{mergeableLabel(pr.mergeable)}
+				</p>
+			</Section>
+		</div>
+	);
+}
+
+function Section({
+	title,
+	count,
+	children,
+}: {
+	title: string;
+	count?: number;
+	children: ReactNode;
+}) {
+	return (
+		<section className="flex flex-col gap-1">
+			<h3 className="flex items-center gap-1.5 font-medium text-muted-foreground uppercase tracking-wide">
+				{title}
+				{count !== undefined && <span className="text-muted-foreground/60">{count}</span>}
+			</h3>
+			{children}
+		</section>
+	);
+}
+
+/** One of the pane's two tabs: visually the panel header's `TabButton`, local
+ *  state by design, like `CommitDetail`'s. */
+function SubTabButton({
+	id,
+	active,
+	onSelect,
+	label,
+}: {
+	id: SubTab;
+	active: SubTab;
+	onSelect: (tab: SubTab) => void;
+	label: string;
+}) {
+	const selected = active === id;
+	return (
+		<button
+			type="button"
+			role="tab"
+			aria-selected={selected}
+			className={`rounded px-1.5 py-0.5 font-medium text-sm transition-colors ${
+				selected ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+			}`}
+			onClick={() => onSelect(id)}
+		>
+			{label}
+		</button>
+	);
+}
+
+function Note({ children }: { children: string }) {
+	return <p className="px-3 py-2 text-muted-foreground text-xs">{children}</p>;
+}

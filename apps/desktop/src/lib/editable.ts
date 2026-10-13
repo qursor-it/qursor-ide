@@ -1,5 +1,5 @@
 import type { FileContents } from '@factorai/types';
-import type { DiffMode } from '@hooks/useFileViewer';
+import { type DiffMode, parsePrRange } from '@hooks/useFileViewer';
 
 /**
  * Whether a file the viewer opened can be edited, and what to say when it
@@ -68,7 +68,9 @@ export function diffEditsWorktree(mode: DiffMode): boolean {
  */
 export function diffReadOnlyReason(mode: DiffMode): string | null {
 	if (diffEditsWorktree(mode)) return null;
-	return mode === 'staged' ? 'index — read-only' : 'commit — read-only';
+	if (mode === 'staged') return 'index — read-only';
+	// A pull request's two sides are blobs GitHub or the clone holds (F31).
+	return parsePrRange(mode) ? 'pull request — read-only' : 'commit — read-only';
 }
 
 /**

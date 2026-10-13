@@ -7171,7 +7171,7 @@ four phases, each releasable alone:
 
 | Phase | What | State |
 |---|---|---|
-| P1 | Read: status, list, detail, files, blobs, PR diff | the backend is built; the panel and the diff mode follow |
+| P1 | Read: status, list, detail, files, blobs, PR diff | built: the backend, the PRs tab and the `pr:` diff mode |
 | P2 | "Review with an agent" — start a session whose first message is the review brief | **not built yet** |
 | P3 | Submit a human review (comments, approve, request changes) | **not built yet** |
 | P4 | Check a pull request out into a new worktree | **not built yet** |
@@ -7289,10 +7289,74 @@ panel is visible**; nothing is polled when it is hidden. File lists and blobs
 are keyed by commit and never expire. Opening the panel, switching the state
 filter and the refresh button each fetch once.
 
+### The PRs tab
+
+A fourth tab, **PRs**, after Graph (`PanelTab` `'prs'`; Q18). It is rooted at the
+**active checkout** (F21), not the project folder: `gh_status` reads `origin` from
+whichever repository that path is in, and "this checkout" is compared against that
+checkout's branch.
+
+**Gate.** `gh_status` first; anything short of `ready` is one empty state that
+names the fix:
+
+- `notInstalled`: "Install GitHub CLI", the command (`winget install GitHub.cli`
+  on Windows, `brew install gh` on macOS, none on Linux) with a copy button, and
+  "Then restart Qursor IDE".
+- `notAuthenticated`: "Run `gh auth login`" with the command and a copy button,
+  and **Retry**, which calls `gh_status` with `refresh: true`.
+- `notRepository`, `noOrigin`, `notGitHub`, `unreachable`, `tooOld`: a short
+  sentence (the backend's `message` when it sent one); `unreachable` and `tooOld`
+  also get Retry.
+
+**List.** A state filter (Open default, Closed, Merged, All) beside the repository's
+`owner/name` (the slug, `host/owner/name`, is only the cache key). A row is `#N` and
+the title on one line, then `author · updated` and, when they apply: a **Draft**
+chip, the review decision (Approved / Changes requested / Review required) and a
+**this checkout** mark when `headRefName` is the branch the active checkout is on.
+The checks mark is a green tick (the `git-added` colour) for success, a red cross
+for failure, a muted ring for pending, nothing when there are no checks; it is
+static, never animated. **The only blue on a row is the dot for
+`reviewRequestedFromViewer`** (DESIGN.md, The One Accent Rule): a review asked of
+you is the human's turn; a draft or a checkout match is not. Loading shows
+"Loading…"; an error shows the message (a `Remote` error's text is the remote's own
+words) and Retry. The list refetches every 60s while the tab is showing, with a 60s
+`staleTime`; the panel's refresh button re-reads the status, the list and the open
+pull request, and never the files or blobs.
+
+**Detail.** A row opens the pull request in place of the list, with a back chevron.
+The header has the title, `#N`, the state (Draft for an open draft), `base ← head`,
+a chip with the fork's owner when the head is cross-repository (`deleted fork` when
+the owner is `null`), and **Open on GitHub**, which hands the URL to the OS through
+`openExternally`. Sub-tabs, **Files** first:
+
+- **Files**: the changed files as the same rows the commit detail uses. A click
+  opens the viewer on `pr:<n>:<mergeBase>..<head>` (below). When GitHub lists fewer
+  than the pull request's `total`, the list says how many more there are on GitHub.
+- **Overview**: the body as plain text with its own line breaks (no markdown in
+  v1), the checks (name, workflow, outcome mark, a link out), the latest reviews
+  (author, state, date), requested reviewers, labels and mergeability. No network
+  avatars: people are names.
+
+The detail refetches every 30s while it is open and the tab is the active one.
+
+**An `Unauthenticated` from any `gh` query** (list, detail, files, a diff side)
+forces a `gh_status` re-probe, so a login that lapses mid-session replaces the
+list with the sign-in state instead of an error nobody can act on.
+
+### The diff
+
+The file viewer gains the mode `pr:<number>:<mergeBase>..<head>` (both full 40-hex
+SHAs; `PR_RANGE`, separate from the anchored `COMMIT_RANGE`). The viewer finds the
+file in the `gh_pr_files` list by its absolute path, then reads the left at the
+merge base under `oldRelPath ?? relPath` and the right at the head under `relPath`
+through `gh_pr_blob`. A missing side is empty rather than an error: an **added**
+file is never asked for a left side and a **removed** one never for a right. Both
+sides are cached by commit and never refetched. Binary and truncated files get the
+commit-range diff's messages. The footer reads `PR #42 · abc1234 ↔ def5678`, and
+the read-only label is `pull request — read-only`; nothing in it can be edited.
+
 ### Not built yet
 
-- **P1 UI**: the PRs tab (`PanelTab`), `components/prs/`, and the `pr:` mode of
-  the file viewer (`PR #42 · abc1234 ↔ def5678`, read-only).
 - **P2**: starting a review session with a first message (needs a
   `fresh` start, and an ADR relaxing ADR-0008's reuse rule for this gesture).
 - **P3**: `gh_pr_comments` and `gh_pr_submit_review` (`gh api -X POST …/reviews

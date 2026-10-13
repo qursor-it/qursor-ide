@@ -61,6 +61,13 @@ export const queryKeys = {
 	/** One file at one commit of a pull request (F31). Content-addressed by SHA,
 	 *  so it never goes stale. */
 	ghBlob: (slug: string, sha: string, rel: string) => ['gh-blob', slug, sha, rel] as const,
+	/** One side of one file of a pull request's diff (F31). Its own namespace
+	 *  rather than `ghBlob`: the viewer knows the file by its absolute path and
+	 *  learns the repository-relative one (and a rename's old one) only from the
+	 *  files query, so the side is keyed by what the viewer has. Content-addressed
+	 *  by `sha`, so it never goes stale. */
+	ghPrSide: (root: string, number: number, sha: string, path: string) =>
+		['gh-pr-side', root, number, sha, path] as const,
 	/** Repository state for one project. **One key per project, shared by the
 	 *  Changes tab and the tree's decorations** — they read the same poll, which
 	 *  is why the interval follows the panel rather than the tab (Q20). */

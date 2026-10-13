@@ -18,8 +18,18 @@ import { deferredLocalStorage } from '@lib/persistStorage';
  *  pushed to 2px off the panel edge, eating the `px-2` padding. 244 is the true
  *  minimum for the widest tab; 256 is that plus enough slack that a font
  *  fallback or a fourth control doesn't put it back over. A stored width below
- *  this is re-clamped on the next launch, so no migration is needed. */
-export const MIN_PANEL_WIDTH = 256;
+ *  this is re-clamped on the next launch, so no migration is needed.
+ *
+ *  **288 since the PRs tab (F31), up from 256.** The header now lays out `Files
+ *  Changes Graph PRs` and, on the Files tab, three icon buttons, and the fourth
+ *  label is worth about 36px. Measured the same way as above, in the browser
+ *  lane with Playwright: the Files tab (the widest header) overflows below 280px
+ *  — the close button is pushed under the `px-2` padding — while Graph and PRs
+ *  need 258 and Changes 236. 288 is that 280 plus 8px of slack, and is also
+ *  `DEFAULT_PANEL_WIDTH`, so a fresh install opens at exactly the floor and
+ *  every stored width at or above the old 288 default is untouched. A stored
+ *  width between 256 and 288 is re-clamped on the next launch. */
+export const MIN_PANEL_WIDTH = 288;
 export const MAX_PANEL_WIDTH = 600;
 export const DEFAULT_PANEL_WIDTH = 288;
 
@@ -124,9 +134,21 @@ export function withExpanded(
 	return next;
 }
 
-/** The panel's three tabs (F12, F13, F18). Hardcoded rather than a registry —
- *  see 07-open-questions.md Q18, amended when the graph took a third slot. */
-export type PanelTab = 'files' | 'changes' | 'graph';
+/** The panel's four tabs (F12, F13, F18, F31). Hardcoded rather than a registry —
+ *  see 07-open-questions.md Q18, amended when pull requests took a fourth slot.
+ *
+ *  The union widened without a store version bump, like `ProjectSort`: every
+ *  value an older build persisted is still a member, so nothing needs migrating.
+ *  `isPanelTab` is the other direction — a stored value this build does not know
+ *  (a newer build's tab, after a downgrade) falls back to `files` instead of
+ *  rendering a panel with no body. */
+export type PanelTab = 'files' | 'changes' | 'graph' | 'prs';
+
+const PANEL_TABS: readonly PanelTab[] = ['files', 'changes', 'graph', 'prs'];
+
+export function isPanelTab(value: unknown): value is PanelTab {
+	return PANEL_TABS.includes(value as PanelTab);
+}
 
 interface PanelState {
 	/** Is the file tree panel showing? Persisted. */
@@ -315,6 +337,11 @@ export const usePanelStore = create<PanelState>()(
 			// `lib/persistStorage`.
 			storage: deferredLocalStorage(),
 			version: 3,
+			// The shallow default, plus the one field whose value is a closed set.
+			merge: (persisted, current) => {
+				const stored = (persisted ?? {}) as Partial<PersistedPanelState>;
+				return { ...current, ...stored, tab: isPanelTab(stored.tab) ? stored.tab : current.tab };
+			},
 			/**
 			 * v1 → v2: `DEFAULT_DETAIL_HEIGHT` went 200 → 280.
 			 *

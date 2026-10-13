@@ -276,6 +276,40 @@ without the route changing, and the checkout path is the thing the paths inside
 are actually relative to. Same "never seeded" vs "collapsed everything"
 distinction, one key deeper.
 
+**The tab strip is four tabs since F31**: `PanelTab` is `'files' | 'changes' |
+'graph' | 'prs'`. The union widened without a store version bump (every value an
+older build persisted is still a member), and a persisted value this build does
+not know, such as a newer build's tab after a downgrade, is dropped by `merge`
+back to Files rather than rendering a panel with no body. `MIN_PANEL_WIDTH` is 288
+(it was 256), measured with the fourth label: the Files tab's header, the widest,
+overflows below 280px. See Q18.
+
+### `prPanelStore` (F31)
+
+Where the PRs tab is, and nothing else. **Not persisted.**
+
+```ts
+type PrPanelState = {
+  selected: Record<string, number | null>;  // per project id; null = the list
+  filter: 'open' | 'closed' | 'merged' | 'all';  // default 'open'
+  select(projectId, number | null): void;
+  setFilter(filter): void;
+};
+```
+
+A pull request number from last session may be merged, on a repository whose
+`origin` has changed, or gone; reopening on a stale detail is worse than opening
+on the list. The data is TanStack Query's (`gh-status`, `gh-prs`, `gh-pr`,
+`gh-pr-files`, `gh-pr-side`); the store holds navigation only. `components/prs/`:
+`PrsView` (the `gh_status` gate and its empty states: install, sign in, no
+origin, not GitHub, too old, unreachable), `PrList` (the state filter and the
+rows) and `PrDetail` (the header, then Files and Overview sub-tabs, as
+`CommitDetail` does for a commit). The tab sits outside the panel's shared scroll
+wrapper, like the graph. Polls (60s list, 30s detail) run only while the panel is
+open and the PRs tab is the active one. An `Unauthenticated` rejection from any
+`gh` query forces a `gh_status` re-probe, which turns the panel into the sign-in
+state.
+
 ### Which checkout the panel is rooted at (F21)
 
 Not a store of its own. The resolution is a hook over three sources, first match
@@ -377,7 +411,12 @@ a link, and xterm owns that painting.
 
 ## Search params on the root route
 
-`?file=` is the open path (F7). `&diff=` turns it into a diff (F13). **`&line=`
+`?file=` is the open path (F7). `&diff=` turns it into a diff (F13): one of
+`staged`, `unstaged`, `head`, a commit range `<parent>..<sha>` (F18), or, since
+F31, `pr:<number>:<mergeBase>..<head>`, one file of a pull request with both ends
+full SHAs, read-only. The two ranges have **separate patterns** (`COMMIT_RANGE`,
+`PR_RANGE` in `hooks/useFileViewer.ts`) and `COMMIT_RANGE` stays anchored, so a
+`pr:` value can never satisfy it. **`&line=`
 and `&col=` place the cursor** (F19) — validated on the root route with the
 other two, so a hand-edited URL cannot reach Monaco with a negative line, and
 dropped whenever `file` is absent, since a position in no file is not a state.
@@ -500,6 +539,16 @@ editor for one path; instead every text file is editable with an explicit Save,
 and F9 is the remainder. Four cases stay read-only and say why in the footer:
 binary, truncated, invalid UTF-8, and a plan. A diff is read-only too —
 "accept / reject" of diffs ships in v2 alongside the MCP/IDE emulator.
+
+**A pull request's diff** (F31) reads its two sides through `gh_pr_blob`, not
+through a path on disk. `DiffView.sidesFor` finds the file in the `gh_pr_files`
+list (the query the PRs tab already ran for this head) by its absolute path, reads
+the left at `mergeBaseOid` under `oldRelPath ?? relPath` and the right at
+`headRefOid` under `relPath`, and treats a missing side as empty: an added file has
+no left read and a removed one no right read. Sides are cached by commit
+(`staleTime: Infinity`). Binary and truncated files take the commit-range path's
+messages. The footer reads `PR #42 · abc1234 ↔ def5678` and the read-only label
+`pull request — read-only`.
 
 ## Session content rendering
 

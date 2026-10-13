@@ -118,6 +118,18 @@ describe('diffEditsWorktree', () => {
 	});
 });
 
+describe('pull request diffs (F31)', () => {
+	const PR = `pr:42:${PARENT}..${SHA}` as const;
+
+	it('never put the working tree on the right', () => {
+		expect(diffEditsWorktree(PR)).toBe(false);
+	});
+
+	it('say which kind of read-only they are', () => {
+		expect(diffReadOnlyReason(PR)).toBe('pull request — read-only');
+	});
+});
+
 describe('diffReadOnlyReason', () => {
 	it('lets the worktree side through, so uncommitted work is edited where it is reviewed', () => {
 		expect(diffReadOnlyReason('unstaged')).toBeNull();

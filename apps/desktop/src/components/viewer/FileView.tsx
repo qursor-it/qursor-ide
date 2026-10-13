@@ -492,7 +492,7 @@ function TextFileView({ path, position, onOpenPath }: FileViewProps) {
 							    gone this one plus the metadata is ~340px, so it survives
 							    every width the viewer column can take (its floor is 400).
 							    22rem is where the *split* host gets narrow enough to matter
-							    — a panel dragged to its 256px minimum. Measured at 410px,
+							    — a panel dragged to its 288px minimum. Measured at 410px,
 							    the column at the 1400px default window, where an earlier
 							    26rem threshold hid it for no reason. */}
 							<span className="@max-[22rem]:hidden">{preview ? 'View source' : 'Preview'}</span>

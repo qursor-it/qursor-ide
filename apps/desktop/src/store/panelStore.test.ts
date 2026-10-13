@@ -16,6 +16,7 @@ import {
 	MIN_DETAIL_HEIGHT,
 	MIN_PANEL_WIDTH,
 	MIN_SHELL_HEIGHT,
+	isPanelTab,
 	withExpanded,
 } from './panelStore';
 
@@ -136,5 +137,17 @@ describe('clampViewerHeight', () => {
 		expect(clampViewerHeight(0)).toBe(MIN_VIEWER_HEIGHT);
 		expect(clampViewerHeight(4000)).toBe(MAX_VIEWER_HEIGHT);
 		expect(clampViewerHeight(Number.NaN)).toBe(DEFAULT_VIEWER_HEIGHT);
+	});
+});
+
+describe('isPanelTab', () => {
+	it('accepts every tab, including the ones an older build persisted', () => {
+		for (const tab of ['files', 'changes', 'graph', 'prs']) expect(isPanelTab(tab)).toBe(true);
+	});
+
+	it('rejects a value this build does not know, so the panel falls back to Files', () => {
+		for (const bad of ['', 'review', 'PRs', null, undefined, 3]) {
+			expect(isPanelTab(bad), String(bad)).toBe(false);
+		}
 	});
 });

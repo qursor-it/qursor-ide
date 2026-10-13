@@ -14,6 +14,11 @@ import { useViewerStore } from '@store/viewerStore';
  * parent. Git's own range notation, with **both ends explicit** so nothing in the
  * renderer has to resolve `sha^`. The left side is empty for a root commit, whose
  * parent is the empty tree.
+ *
+ * A fifth arrives with F31: `pr:<number>:<mergeBase>..<head>`, one file of a
+ * pull request. It also matches the template type below, which is only a
+ * compile-time shape — what tells the two apart at runtime is the two regexes,
+ * and they never overlap.
  */
 export type DiffMode = 'staged' | 'unstaged' | 'head' | `${string}..${string}`;
 
@@ -24,9 +29,25 @@ const DIFF_MODES: DiffMode[] = ['staged', 'unstaged', 'head'];
  *  `..` alone through as a diff of nothing against nothing. */
 const COMMIT_RANGE = /^(?:[0-9a-f]{40})?\.\.[0-9a-f]{40}$/;
 
+/** A pull request's diff (F31): its number, then the merge base and the head
+ *  as full SHAs. A separate pattern rather than a looser `COMMIT_RANGE`, which
+ *  stays anchored at `^` so a `pr:` prefix can never satisfy it. The number is
+ *  1 to 10 digits with no leading zero, so it is always a safe integer. */
+const PR_RANGE = /^pr:([1-9]\d{0,9}):([0-9a-f]{40})\.\.([0-9a-f]{40})$/;
+
 export function isDiffMode(value: unknown): value is DiffMode {
 	if (typeof value !== 'string') return false;
-	return DIFF_MODES.includes(value as DiffMode) || COMMIT_RANGE.test(value);
+	return DIFF_MODES.includes(value as DiffMode) || COMMIT_RANGE.test(value) || PR_RANGE.test(value);
+}
+
+/** The pull request, merge base and head a `pr:` mode names, or null when the
+ *  mode isn't one. */
+export function parsePrRange(
+	mode: DiffMode,
+): { number: number; mergeBase: string; head: string } | null {
+	const match = PR_RANGE.exec(mode);
+	if (!match) return null;
+	return { number: Number(match[1]), mergeBase: match[2], head: match[3] };
 }
 
 /** The two commits a range compares, or null when the mode isn't a range.

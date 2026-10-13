@@ -1963,3 +1963,20 @@ export function fixtureWithPullRequests(): TestFixture {
 		},
 	};
 }
+
+/**
+ * The same repository with `gh` installed and no login (F31): `gh_status` says
+ * `notAuthenticated`, which is the empty state with `gh auth login` in it.
+ */
+export function fixtureWithPullRequestsSignedOut(): TestFixture {
+	const base = fixtureWithPullRequests();
+	const root = base.projects?.[0]?.realPath ?? '';
+	const status = base.ghStatuses?.[root];
+	if (!status) return base;
+	return {
+		...base,
+		ghStatuses: {
+			[root]: { ...status, state: 'notAuthenticated', login: null, message: null },
+		},
+	};
+}

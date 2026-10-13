@@ -8,6 +8,7 @@ import { ChangesView } from '@components/files/ChangesView';
 import { FileTreeNode } from '@components/files/FileTreeNode';
 import { FileTreeProvider } from '@components/files/fileTreeContext';
 import { GraphView } from '@components/graph/GraphView';
+import { PrsView } from '@components/prs/PrsView';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
 import { useGitDecorations } from '@hooks/useGitDecorations';
 import { checkoutLabel } from '@hooks/useWorktrees';
@@ -148,13 +149,15 @@ function PanelBody() {
 	return (
 		<>
 			<header className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
-				{/* Three tabs, hardcoded — not a registry (Q18, amended when the graph
-				    took a third slot). Appended rather than reordered, so Files and
-				    Changes keep the positions muscle memory already has. */}
+				{/* Four tabs, hardcoded — not a registry (Q18, amended when pull
+				    requests took a fourth slot). Appended rather than reordered, so
+				    Files, Changes and Graph keep the positions muscle memory already
+				    has. */}
 				<div className="flex flex-1 items-center gap-0.5" role="tablist" aria-label="Panel">
 					<TabButton tab="files" label="Files" />
 					<TabButton tab="changes" label="Changes" />
 					<TabButton tab="graph" label="Graph" />
+					<TabButton tab="prs" label="PRs" />
 				</div>
 				{tab === 'files' && (
 					<>
@@ -166,14 +169,21 @@ function PanelBody() {
 						>
 							<ChevronsDownUp />
 						</IconButton>
-						<RefreshButton label="Refresh tree" queryKey={['dir']} />
+						<RefreshButton label="Refresh tree" queryKeys={[['dir']]} />
 					</>
 				)}
 				{tab === 'graph' && (
 					// The graph polls at 30s, not the Changes tab's 3s, so an explicit
 					// refresh is the answer for a commit that just landed while you were
 					// looking at it (F18).
-					<RefreshButton label="Refresh graph" queryKey={['git-graph']} />
+					<RefreshButton label="Refresh graph" queryKeys={[['git-graph']]} />
+				)}
+				{tab === 'prs' && (
+					// The list polls at 60s and the open pull request at 30s, so a
+					// review that just landed is one click away (F31). Only the lists
+					// and details: the files and blobs of a head never change, and
+					// re-fetching them would spend the rate limit on nothing.
+					<RefreshButton label="Refresh pull requests" queryKeys={PR_REFRESH_KEYS} />
 				)}
 				<IconButton
 					aria-label="Close file tree"
@@ -187,9 +197,12 @@ function PanelBody() {
 			{/* The graph owns its own scrolling and docks a detail pane at the
 			    bottom, so it sits outside the shared scroll wrapper rather than
 			    inside it — a pane docked to the bottom of a scroll container scrolls
-			    away with the content. */}
+			    away with the content. The PRs tab sits out here too (F31): its list
+			    and its detail each scroll on their own under a fixed header. */}
 			{tab === 'graph' ? (
 				<GraphView />
+			) : tab === 'prs' ? (
+				<PrsView />
 			) : (
 				/* `pr-2` is the scrollbar gutter: with a long tree or a big change
 				   set, rows would otherwise run under the scrollbar. */
@@ -264,9 +277,19 @@ function PanelBody() {
  * also the essential-feedback case rather than decoration, and like
  * `StatusDot`'s pulse it moves only while something is actually happening.
  */
-function RefreshButton({ label, queryKey }: { label: string; queryKey: readonly unknown[] }) {
+function RefreshButton({
+	label,
+	queryKeys,
+}: {
+	label: string;
+	/** Key prefixes this button refetches. More than one for a tab whose data
+	 *  lives under several namespaces (the PRs tab, F31). */
+	queryKeys: readonly (readonly unknown[])[];
+}) {
 	const queryClient = useQueryClient();
-	const fetching = useIsFetching({ queryKey }) > 0;
+	const predicate = (query: { queryKey: readonly unknown[] }) =>
+		queryKeys.some((prefix) => prefix.every((part, i) => query.queryKey[i] === part));
+	const fetching = useIsFetching({ predicate }) > 0;
 	const [spinning, setSpinning] = useState(false);
 
 	return (
@@ -276,7 +299,7 @@ function RefreshButton({ label, queryKey }: { label: string; queryKey: readonly 
 			aria-busy={spinning}
 			onClick={() => {
 				setSpinning(true);
-				void queryClient.invalidateQueries({ queryKey });
+				void queryClient.invalidateQueries({ predicate });
 			}}
 		>
 			{/* The handler is re-attached every render, so it closes over the current
@@ -309,6 +332,11 @@ function TabButton({ tab, label }: { tab: PanelTab; label: string }) {
 		</button>
 	);
 }
+
+/** What the PRs tab's refresh re-reads: the status, the list and the open
+ *  pull request. Not `gh-pr-files` / `gh-pr-side`, which are keyed by SHA and
+ *  cannot be stale (F31). */
+const PR_REFRESH_KEYS = [['gh-status'], ['gh-prs'], ['gh-pr']] as const;
 
 /** The project directory as a tree node, so the root row behaves like any
  *  other directory (chevron, expand, refetch). */

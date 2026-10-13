@@ -304,11 +304,11 @@ still goes stale until you focus the window or press refresh.
 
 ---
 
-## Q18 — Who owns the panel's tab strip? → **hardcoded; `Files | Changes | Graph`**
+## Q18 — Who owns the panel's tab strip? → **hardcoded; `Files | Changes | Graph | PRs`**
 
 **Decision.** The strip is **hardcoded** — a fixed list in `panelStore`, not a
-registry and not a plugin point. It carries Files (F12), Changes (F13) and Graph
-(F18).
+registry and not a plugin point. It carries Files (F12), Changes (F13), Graph
+(F18) and PRs (F31).
 
 Selection persists **app-wide** in `panelStore` (next to `open` and `width`),
 defaults to Files, and never switches itself. A tab strip that moves under you
@@ -339,6 +339,17 @@ criterion that decided this question the first time.
 
 The width objection is therefore live rather than answered, and it is what Q22
 holds.
+
+**Amended 2026-10-13, when F31 took a fourth slot.** The answer to *who owns the
+strip* is unchanged: a fourth tab is another line in the union, appended after
+Graph so the other three keep their positions. The test above was put to pull
+requests and they pass it better than the graph did: a review request or a failing
+check is news you want while the agent's terminal is in front of you, and the list
+is a glance, not a surface that wants more width. The cost is paid in width, not in
+principle: four labels plus the Files tab's three icons overflow below 280px, so
+`MIN_PANEL_WIDTH` went from 256 to 288 (measured in the browser lane; the default
+was already 288). A fifth tab would have to either pay for another ~40px or earn a
+different home. The strip is not a place to keep adding to.
 
 ---
 
