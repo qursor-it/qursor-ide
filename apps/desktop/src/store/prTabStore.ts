@@ -11,6 +11,9 @@ interface PrTab {
 	projectId: string;
 	number: number;
 	title?: string;
+	/** The changed file last selected on the page (repository-relative), so
+	 *  switching back to the tab shows the diff you left. */
+	file?: string;
 }
 
 interface PrTabState {
@@ -19,6 +22,7 @@ interface PrTabState {
 	 *  is already open. A later title fills a missing one but never blanks it. */
 	open: (projectId: string, number: number, title?: string) => void;
 	setTitle: (projectId: string, number: number, title: string) => void;
+	setFile: (projectId: string, number: number, file: string) => void;
 	close: (projectId: string, number: number) => void;
 	/** Move a tab to `toIndex` within the pull request tabs. */
 	reorder: (projectId: string, number: number, toIndex: number) => void;
@@ -65,6 +69,14 @@ export const usePrTabStore = create<PrTabState>()(
 					if (i < 0 || s.tabs[i].title === title) return s;
 					const next = [...s.tabs];
 					next[i] = { ...next[i], title };
+					return { tabs: next };
+				}),
+			setFile: (projectId, number, file) =>
+				set((s) => {
+					const i = s.tabs.findIndex((t) => same(t, projectId, number));
+					if (i < 0 || s.tabs[i].file === file) return s;
+					const next = [...s.tabs];
+					next[i] = { ...next[i], file };
 					return { tabs: next };
 				}),
 			close: (projectId, number) =>

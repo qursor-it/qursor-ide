@@ -12,6 +12,8 @@ interface FileChangeRowProps {
 	deletions: number | null;
 	isBinary: boolean;
 	onClick: () => void;
+	/** The row the main area is showing (the pull request's file list). */
+	selected?: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ export function FileChangeRow({
 	deletions,
 	isBinary,
 	onClick,
+	selected = false,
 }: FileChangeRowProps) {
 	const { dir, name } = splitPath(relPath);
 
@@ -39,7 +42,10 @@ export function FileChangeRow({
 			<button
 				type="button"
 				title={oldRelPath ? `${relPath} ← ${oldRelPath}` : relPath}
-				className="flex w-full items-center gap-1.5 py-[3px] pr-2 pl-3 text-left text-muted-foreground text-sm transition-colors hover:bg-secondary/50"
+				aria-current={selected ? 'true' : undefined}
+				className={`flex w-full items-center gap-1.5 py-[3px] pr-2 pl-3 text-left text-muted-foreground text-sm transition-colors hover:bg-secondary/50 ${
+					selected ? 'bg-secondary' : ''
+				}`}
 				onClick={onClick}
 			>
 				<FileIcon fileName={name} />

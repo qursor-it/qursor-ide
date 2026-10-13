@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Check, Copy } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
+import { PrFilesPanel } from '@components/prs/PrFileList';
 import { PrList } from '@components/prs/PrList';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
 import { refreshGhStatus, useGhStatus } from '@hooks/useGhStatus';
@@ -47,16 +48,37 @@ function Ready({ projectId, root, status }: { projectId: string; root: string; s
 	const open = usePrTabStore((s) => s.open);
 	const navigate = useNavigate();
 	// The pull request the main area shows, from the route (`/prs/$number`).
-	const { number } = useParams({ strict: false }) as { number?: string };
+	const params = useParams({ strict: false }) as { projectId?: string; number?: string };
+	const number = params.number ? Number(params.number) : null;
+	const current = number !== null && Number.isInteger(number) ? number : null;
+	// A pull request of this project is open: the panel lists *its files*, until
+	// "Pull requests" asks for the list. That ask is held per pull request, so
+	// moving to another tab shows that one's files again (F31).
+	const key = current !== null && params.projectId === projectId ? `${projectId}#${current}` : null;
+	const [listFor, setListFor] = useState<string | null>(null);
+
+	if (key !== null && current !== null && listFor !== key) {
+		return (
+			<PrFilesPanel
+				key={key}
+				projectId={projectId}
+				root={root}
+				status={status}
+				number={current}
+				onBack={() => setListFor(key)}
+			/>
+		);
+	}
 
 	return (
 		<PrList
 			root={root}
 			status={status}
-			current={number ? Number(number) : null}
+			current={current}
 			onOpen={(pr) => {
 				// A row opens a tab in the top strip and the page in the main area;
-				// the panel keeps only the list (F31).
+				// the panel then lists that pull request's files (F31).
+				setListFor(null);
 				open(projectId, pr.number, pr.title);
 				void navigate({
 					to: '/projects/$projectId/prs/$number',

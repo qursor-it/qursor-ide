@@ -39,6 +39,13 @@ async function openPrs(page: Page) {
 	await page.getByRole('tab', { name: 'PRs' }).click();
 }
 
+/** The panel's file list (a pull request's page is open), as opposed to the list
+ *  of pull requests: back to the latter without leaving the tab. */
+async function backToList(page: Page) {
+	await page.getByTestId('pr-files-back').click();
+	await expect(page.getByTestId('pr-list')).toBeVisible();
+}
+
 function calls(page: Page, name: string) {
 	return page.evaluate(
 		(n) => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === n),
@@ -66,6 +73,9 @@ function withSecondDetail() {
 			headRefName: 'feat/pr-12',
 		},
 	};
+	const root = fixture.projects?.[0]?.realPath ?? '';
+	const files = fixture.ghPrFiles?.[`${root}#11`];
+	if (files) fixture.ghPrFiles = { ...fixture.ghPrFiles, [`${root}#12`]: files };
 	return fixture;
 }
 
@@ -162,7 +172,8 @@ test.describe('pull requests tab', () => {
 		await expect(detail.getByTestId('pr-title')).toHaveText('feat: add the widget switcher');
 		await expect(detail).toContainText('#11');
 		await expect(detail).toContainText('main ← feat/pr-11');
-		// Files is the default sub-tab.
+		// Changes is the default sub-tab, and the panel lists the files.
+		await expect(page.getByTestId('pr-changes')).toBeVisible();
 		await expect(page.getByTestId('pr-files')).toBeVisible();
 
 		await detail.getByRole('tab', { name: 'Overview' }).click();
@@ -177,13 +188,14 @@ test.describe('pull requests tab', () => {
 		await expect(page.getByTestId('pr-labels')).toContainText('enhancement');
 		await expect(page.getByTestId('pr-mergeable')).toHaveText('No conflicts');
 
-		// The detail is the main area's page, not the panel's: the panel keeps the
-		// list, and there is no back arrow to leave a page the strip closes.
+		// The detail is the main area's page, not the panel's: the panel lists the
+		// files, and there is no back arrow to leave a page the strip closes.
 		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}/prs/11$`));
 		await expect(page.getByTestId('pr-page').getByTestId('pr-detail')).toBeVisible();
-		await expect(page.getByTestId('pr-list').getByTestId('pr-detail')).toHaveCount(0);
-		await expect(page.getByTestId('pr-list')).toBeVisible();
+		await expect(page.getByTestId('pr-files-panel').getByTestId('pr-detail')).toHaveCount(0);
+		await expect(page.getByTestId('pr-list')).toHaveCount(0);
 		await expect(page.getByRole('button', { name: 'Back to pull requests' })).toHaveCount(0);
+		await backToList(page);
 		await expect(page.getByTestId('pr-row-11').getByRole('button')).toHaveAttribute(
 			'aria-current',
 			'true',
@@ -203,6 +215,7 @@ test.describe('pull requests tab', () => {
 		await expect(first).toHaveAttribute('aria-selected', 'true');
 		await expect(strip.getByRole('tab')).toHaveCount(1);
 
+		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
 		const second = strip.locator(`[data-pr-tab="${FOO_ID}#12"]`);
 		await expect(strip.getByRole('tab')).toHaveCount(2);
@@ -211,6 +224,7 @@ test.describe('pull requests tab', () => {
 		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
 
 		// Clicking the row of an open pull request does not add a third.
+		await backToList(page);
 		await page.getByTestId('pr-row-11').click();
 		await expect(strip.getByRole('tab')).toHaveCount(2);
 
@@ -229,6 +243,7 @@ test.describe('pull requests tab', () => {
 		await page.goto(PROJECT);
 		await openPrs(page);
 		await page.getByTestId('pr-row-11').click();
+		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
 		const strip = page.getByTestId('session-tabs');
 		await expect(strip.getByRole('tab')).toHaveCount(2);
@@ -250,6 +265,7 @@ test.describe('pull requests tab', () => {
 		await page.goto(PROJECT);
 		await openPrs(page);
 		await page.getByTestId('pr-row-11').click();
+		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
 		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(2);
 		await expect
@@ -293,6 +309,9 @@ test.describe('pull requests tab', () => {
 
 		await page.getByTestId('pr-files').getByTitle('src/switcher.ts').click();
 
+		// The diff is the page's own, not the viewer column's.
+		await expect(page.getByTestId('pr-page').getByTestId('diff-view-editor')).toBeVisible();
+		await expect(page.getByTestId('viewer-column')).toHaveCount(0);
 		await expect(side(page, 'original')).toContainText('export const switcher = 1;');
 		await expect(side(page, 'modified')).toContainText('export const switcher = 2;');
 		await expect(page.getByText(`PR #11 · ${MERGE_BASE_SHORT} ↔ ${HEAD_SHORT}`)).toBeVisible();
@@ -342,6 +361,144 @@ test.describe('pull requests tab', () => {
 		await openPrs(page);
 
 		await expect(page.getByTestId('pr-list')).toContainText('No open pull requests.');
+	});
+});
+
+test.describe('pull request page layout', () => {
+	async function openPr(page: Page) {
+		await installMockBridge(page, withSecondDetail());
+		await page.goto(PROJECT);
+		await openPrs(page);
+		await page.getByTestId('pr-row-11').click();
+		await expect(page.getByTestId('pr-files')).toBeVisible();
+	}
+
+	test('@smoke brings the PRs tab forward with the files, even from another tab', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await page.goto(PROJECT);
+		await page.getByRole('button', { name: 'Toggle file tree' }).click();
+		await page.getByRole('tab', { name: 'PRs' }).click();
+		await page.getByTestId('pr-row-11').click();
+		await expect(page.getByTestId('pr-files')).toBeVisible();
+		await page.getByRole('tab', { name: 'Files' }).click();
+		await expect(page.getByTestId('pr-files')).toHaveCount(0);
+
+		// Entering the pull request's tab again switches the panel, once.
+		await page.goto(PROJECT);
+		const strip = page.getByTestId('session-tabs');
+		await strip.locator(`[data-pr-tab="${FOO_ID}#11"]`).click();
+		await expect(page.getByRole('tab', { name: 'PRs' })).toHaveAttribute('aria-selected', 'true');
+		const files = page.getByTestId('pr-files');
+		await expect(files.getByTitle('src/switcher.ts')).toBeVisible();
+		await expect(files.getByTitle('src/added.ts')).toBeVisible();
+		await expect(files.getByTitle(/src\/new-name\.ts/)).toBeVisible();
+
+		// ...and does not fight a tab chosen afterwards.
+		await page.getByRole('tab', { name: 'Files' }).click();
+		await expect(page.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
+		await expect(page.getByTestId('pr-files')).toHaveCount(0);
+	});
+
+	test('@smoke selects the first file and shows its diff in the page', async ({ page }) => {
+		await openPr(page);
+
+		const first = page.getByTestId('pr-files').getByTitle('src/switcher.ts');
+		await expect(first).toHaveAttribute('aria-current', 'true');
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/switcher.ts');
+		await expect(page.getByTestId('pr-file-position')).toHaveText('1 / 4');
+		await expect(page.getByTestId('pr-page').getByTestId('diff-view-editor')).toBeVisible();
+		await expect(side(page, 'modified')).toContainText('export const switcher = 2;');
+		// No viewer column for a pull request's file.
+		await expect(page.getByTestId('viewer-column')).toHaveCount(0);
+	});
+
+	test('@smoke clicking another file updates the page and the highlight', async ({ page }) => {
+		await openPr(page);
+
+		const files = page.getByTestId('pr-files');
+		await files.getByTitle('src/added.ts').click();
+
+		await expect(files.getByTitle('src/added.ts')).toHaveAttribute('aria-current', 'true');
+		await expect(files.getByTitle('src/switcher.ts')).not.toHaveAttribute('aria-current', 'true');
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
+		await expect(page.getByTestId('pr-file-position')).toHaveText('2 / 4');
+		await expect(side(page, 'modified')).toContainText('export const added = true;');
+		await expect(page).toHaveURL(/[?&]change=src(%2F|\/)added\.ts/);
+		await expect(page.getByTestId('viewer-column')).toHaveCount(0);
+	});
+
+	test('@smoke steps through the files with Previous and Next', async ({ page }) => {
+		await openPr(page);
+
+		await page.getByTestId('pr-next-file').click();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
+		await page.getByTestId('pr-next-file').click();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/removed.ts');
+		await page.getByTestId('pr-next-file').click();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/new-name.ts');
+		await expect(page.getByTestId('pr-file-position')).toHaveText('4 / 4');
+		// Wraps at the end, and back again.
+		await page.getByTestId('pr-next-file').click();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/switcher.ts');
+		await page.getByTestId('pr-prev-file').click();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/new-name.ts');
+		await expect(page.getByTestId('pr-files').getByTitle(/src\/new-name\.ts/)).toHaveAttribute(
+			'aria-current',
+			'true',
+		);
+	});
+
+	test('@smoke remembers the file of a tab when switching away and back', async ({ page }) => {
+		await openPr(page);
+		await page.getByTestId('pr-files').getByTitle('src/added.ts').click();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
+
+		const strip = page.getByTestId('session-tabs');
+		await backToList(page);
+		await page.getByTestId('pr-row-12').click();
+		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
+		await strip.locator(`[data-pr-tab="${FOO_ID}#11"]`).click();
+
+		await expect(page.getByTestId('pr-title')).toHaveText('feat: add the widget switcher');
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
+	});
+
+	test('@smoke "Pull requests" shows the list without leaving the tab', async ({ page }) => {
+		await openPr(page);
+
+		await backToList(page);
+		await expect(page.getByTestId('pr-files')).toHaveCount(0);
+		await expect(page).toHaveURL(new RegExp(`/prs/11`));
+		await expect(page.getByTestId('pr-title')).toHaveText('feat: add the widget switcher');
+		await expect(page.getByTestId('pr-row-11').getByRole('button')).toHaveAttribute(
+			'aria-current',
+			'true',
+		);
+
+		// Moving to another pull request shows that one's files again.
+		await page.getByTestId('pr-row-12').click();
+		await expect(page.getByTestId('pr-files-panel')).toContainText('#12');
+		await expect(page.getByTestId('pr-files')).toBeVisible();
+	});
+
+	test('returns to the diff when a file is picked from Overview', async ({ page }) => {
+		await openPr(page);
+
+		await page.getByRole('tab', { name: 'Overview' }).click();
+		await expect(page.getByTestId('pr-body')).toBeVisible();
+		await expect(page.getByTestId('pr-changes')).toHaveCount(0);
+
+		await page.getByTestId('pr-files').getByTitle('src/added.ts').click();
+		await expect(page.getByTestId('pr-changes')).toBeVisible();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
+	});
+
+	test('reads an unknown ?change= as the first file', async ({ page }) => {
+		await installMockBridge(page, fixtureWithPullRequests());
+		await page.goto(`/#/projects/${FOO_ID}/prs/11?change=nope.ts`);
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/switcher.ts');
 	});
 });
 
@@ -586,12 +743,31 @@ test.describe('reviewing a pull request', () => {
 		await page.getByTestId('pr-row-11').click();
 		await page.getByTestId('pr-files').getByTitle('src/switcher.ts').click();
 		await expect(side(page, 'modified')).toContainText('export const switcher = 2;');
+		// The review layer is attached once the file list and the comments are in;
+		// the thread already on GitHub is what says it is, and a key pressed
+		// before it is silently dropped.
+		await expect(page.getByTestId('review-thread')).toHaveCount(1);
 	}
 
 	/** Line 2 of the modified side, found by its text: Monaco recycles line
 	 *  elements, so their order in the DOM is not the order of the lines. */
 	function secondLine(page: Page) {
 		return side(page, 'modified').locator('.view-line', { hasText: 'widgets' });
+	}
+
+	/** Puts the cursor on line 2 and waits for the editor to hold the focus. A
+	 *  thread's view zone is measured after it first paints and moves the line
+	 *  down, so a click aimed before that lands on the zone; a chord sent before
+	 *  the editor has focus goes to the page. Either way the test would fail on
+	 *  timing rather than on behaviour, so the click is repeated until it took. */
+	async function clickSecondLine(page: Page) {
+		const input = page
+			.getByTestId('diff-view-editor')
+			.locator('.editor.modified :is(textarea.inputarea, .native-edit-context)');
+		await expect(async () => {
+			await secondLine(page).click({ timeout: 1000 });
+			await expect(input).toBeFocused({ timeout: 500 });
+		}).toPass({ timeout: 10_000 });
 	}
 
 	/** A review draft already in storage, as an earlier visit would have left it. */
@@ -691,7 +867,7 @@ test.describe('reviewing a pull request', () => {
 		await installMockBridge(page, fixtureWithPullRequests());
 		await openSwitcherDiff(page);
 
-		await secondLine(page).click();
+		await clickSecondLine(page);
 		await page.keyboard.press('Control+Alt+M');
 		const text = page.getByTestId('review-composer-text');
 		await expect(text).toBeFocused();
@@ -706,7 +882,7 @@ test.describe('reviewing a pull request', () => {
 		await installMockBridge(page, fixtureWithPullRequests());
 		await openSwitcherDiff(page);
 
-		await secondLine(page).click();
+		await clickSecondLine(page);
 		await page.keyboard.press('Home');
 		await page.keyboard.press('Control+Home');
 		await page.keyboard.press('Shift+ArrowDown');
@@ -728,7 +904,7 @@ test.describe('reviewing a pull request', () => {
 		await installMockBridge(page, fixtureWithPullRequests());
 		await openSwitcherDiff(page);
 
-		await secondLine(page).click();
+		await clickSecondLine(page);
 		await page.keyboard.press('Control+Alt+M');
 		await expect(page.getByTestId('review-composer-text')).toBeFocused();
 		await page.keyboard.type('abc');
@@ -752,7 +928,7 @@ test.describe('reviewing a pull request', () => {
 		await installMockBridge(page, fixture);
 		await openSwitcherDiff(page);
 
-		await secondLine(page).click();
+		await clickSecondLine(page);
 		await page.keyboard.press('Control+Alt+M');
 		await expect(page.getByText("This line isn't part of the diff.")).toBeVisible();
 		await expect(page.getByTestId('review-composer')).toHaveCount(0);
@@ -762,7 +938,7 @@ test.describe('reviewing a pull request', () => {
 		await installMockBridge(page, fixtureWithPullRequests());
 		await openSwitcherDiff(page);
 
-		await secondLine(page).click();
+		await clickSecondLine(page);
 		await page.keyboard.press('Control+Alt+M');
 		await expect(page.getByTestId('review-composer-text')).toBeFocused();
 		await page.keyboard.type('Still here after a reload');
@@ -778,6 +954,30 @@ test.describe('reviewing a pull request', () => {
 		await expect(page.getByTestId('pr-review-tab-badge')).toHaveText('1');
 		await page.getByTestId('pr-files').getByTitle('src/switcher.ts').click();
 		await expect(page.getByTestId('review-draft')).toContainText('Still here after a reload');
+	});
+
+	test('@smoke opening a pending comment selects its file in the page', async ({ page }) => {
+		const fixture = fixtureWithPullRequests();
+		const head = fixture.ghPrDetails?.[`${SLUG}#11`]?.headRefOid ?? '';
+		await installMockBridge(page, fixture);
+		await seedDraft(page, head);
+		await openReviewTab(page);
+		await page.getByTestId('pr-files').getByTitle('src/added.ts').click();
+		await page.getByTestId('pr-review-tab').click();
+		await expect(page.getByTestId('pr-review-panel')).toBeVisible();
+
+		await page
+			.getByTestId('pr-review-draft')
+			.getByRole('button', { name: /src\/switcher\.ts:1/ })
+			.click();
+
+		await expect(page.getByTestId('pr-changes')).toBeVisible();
+		await expect(page.getByTestId('pr-file-path')).toHaveText('src/switcher.ts');
+		await expect(page.getByTestId('pr-files').getByTitle('src/switcher.ts')).toHaveAttribute(
+			'aria-current',
+			'true',
+		);
+		await expect(page.getByTestId('viewer-column')).toHaveCount(0);
 	});
 
 	test('@smoke cannot approve or request changes on your own pull request', async ({ page }) => {

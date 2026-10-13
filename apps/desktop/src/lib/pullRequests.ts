@@ -140,3 +140,35 @@ export function forkLabel(pr: Pick<PrSummary, 'isCrossRepository' | 'headOwner'>
 export function prDiffMode(number: number, mergeBase: string, head: string): DiffMode {
 	return `pr:${number}:${mergeBase}..${head}`;
 }
+
+/**
+ * The file a pull request's page is showing (F31): the one the `change` search
+ * param names, else the one remembered for the tab, else the first. An unknown
+ * path is "none", so a stale URL or a force-push that dropped the file lands on
+ * the first file rather than on an empty page.
+ */
+export function pickPrFile<T extends { relPath: string }>(
+	files: readonly T[],
+	...wanted: (string | undefined)[]
+): T | null {
+	for (const path of wanted) {
+		const hit = path ? files.find((f) => f.relPath === path) : undefined;
+		if (hit) return hit;
+	}
+	return files[0] ?? null;
+}
+
+/** The file `delta` places from `current`, wrapping at both ends; null for an
+ *  empty list. */
+export function stepPrFile<T extends { relPath: string }>(
+	files: readonly T[],
+	current: string | undefined,
+	delta: number,
+): T | null {
+	if (files.length === 0) return null;
+	const at = Math.max(
+		0,
+		files.findIndex((f) => f.relPath === current),
+	);
+	return files[(((at + delta) % files.length) + files.length) % files.length] ?? null;
+}

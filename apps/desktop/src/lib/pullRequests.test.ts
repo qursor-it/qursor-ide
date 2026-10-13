@@ -7,8 +7,10 @@ import {
 	ghStatusText,
 	isUnauthenticated,
 	mergeableLabel,
+	pickPrFile,
 	prDiffMode,
 	reviewDecisionLabel,
+	stepPrFile,
 } from './pullRequests';
 import { isDiffMode, parsePrRange } from '@hooks/useFileViewer';
 
@@ -104,5 +106,35 @@ describe('prDiffMode', () => {
 			mergeBase: 'a'.repeat(40),
 			head: 'b'.repeat(40),
 		});
+	});
+});
+
+describe('pickPrFile', () => {
+	const files = [{ relPath: 'a.ts' }, { relPath: 'b.ts' }, { relPath: 'c.ts' }];
+
+	it('takes the first wanted path that exists', () => {
+		expect(pickPrFile(files, 'b.ts', 'c.ts')?.relPath).toBe('b.ts');
+		expect(pickPrFile(files, 'gone.ts', 'c.ts')?.relPath).toBe('c.ts');
+	});
+
+	it('falls back to the first file, and to null for none', () => {
+		expect(pickPrFile(files, 'gone.ts', undefined)?.relPath).toBe('a.ts');
+		expect(pickPrFile(files)?.relPath).toBe('a.ts');
+		expect(pickPrFile([], 'a.ts')).toBeNull();
+	});
+});
+
+describe('stepPrFile', () => {
+	const files = [{ relPath: 'a.ts' }, { relPath: 'b.ts' }, { relPath: 'c.ts' }];
+
+	it('moves and wraps in both directions', () => {
+		expect(stepPrFile(files, 'a.ts', 1)?.relPath).toBe('b.ts');
+		expect(stepPrFile(files, 'c.ts', 1)?.relPath).toBe('a.ts');
+		expect(stepPrFile(files, 'a.ts', -1)?.relPath).toBe('c.ts');
+	});
+
+	it('starts from the first file when the current one is unknown', () => {
+		expect(stepPrFile(files, 'gone.ts', 1)?.relPath).toBe('b.ts');
+		expect(stepPrFile([], 'a.ts', 1)).toBeNull();
 	});
 });

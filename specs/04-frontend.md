@@ -74,7 +74,7 @@ apps/desktop/src/
 | `/projects`                | ProjectsView          | grid of project cards                       |
 | `/projects/$id`            | ProjectView           | `Sessions \| Routines` tabs; `?tab=routines` selects (F22)  |
 | `/projects/$id/sessions/$sessionId` | SessionView  | terminal-only (header + xterm)              |
-| `/projects/$projectId/prs/$number` | PullRequestView | one pull request in the main area, opened as a tab in the top strip (F31); a bad number redirects to the project |
+| `/projects/$projectId/prs/$number` | PullRequestView | one pull request in the main area, opened as a tab in the top strip (F31); `?change=<relPath>` selects the changed file shown; a bad number redirects to the project |
 | `/search?q=...`            | SearchView            | global FTS; a hit opens its session         |
 | `/settings`                | SettingsView          | theme, font, paths                          |
 
@@ -332,11 +332,22 @@ route. The data is TanStack Query's (`gh-status`, `gh-prs`, `gh-pr`,
 `gh_status` gate and its empty states: install, sign in, no origin, not GitHub,
 too old, unreachable; exports the gate and the empty line for the page to reuse),
 `PrList` (the state filter and the rows; a row opens a tab and the route, and the
-row of the pull request on screen is `aria-current`), `PrDetailPage` (the main-area
-page: resolves `root` and `gh_status` like the panel, then `PrDetailView` in a
-`max-w-4xl` column) and `PrDetail` (the header, then Files, Overview and Review
-sub-tabs, as `CommitDetail` does for a commit; its header carries `CheckoutPr`,
-F31 P4; `onBack` is optional and the page passes none). The list sits outside the
+row of the pull request on screen is `aria-current`), `PrFilesPanel` in
+`PrFileList.tsx` (what `PrsView` shows instead of the list while the route is a pull
+request of the active project: a "← Pull requests" button, `#N title`, and the
+changed files as `FileChangeRow`s, the selected one `aria-current`; the "show the
+list" ask is `PrsView` state held per pull request), `PrDetailPage` (the main-area
+page, full width: resolves `root` and `gh_status` like the panel, brings the panel's
+PRs tab forward once per pull request entered, then `PrDetailView`) and `PrDetail`
+(the header with `CheckoutPr` (F31 P4) and Review with agent, then Changes,
+Overview and Review sub-tabs; Changes is a file bar plus the lazy `DiffView` of
+the selected file, embedded in the page, so no viewer column opens for a pull
+request; Overview and Review keep a `max-w-4xl` column; `onBack` is optional and
+the page passes none). The selected file is the pull request route's `change`
+search param (`hooks/usePrChanges.ts`: `usePrFiles`, `usePrSelection`; the pure
+`pickPrFile` / `stepPrFile` are in `lib/pullRequests.ts`), replaced rather than
+pushed and mirrored into the tab's `file`. The sub-tab is `prViewStore` (not
+persisted), because the panel's list asks for Changes. The list sits outside the
 panel's shared scroll wrapper, like the graph. The list polls (60s) only while the
 panel is open and the PRs tab is the active one; the detail polls (30s) whenever
 its page is mounted. An `Unauthenticated` rejection from any `gh` query forces a
@@ -348,9 +359,10 @@ The pull requests open as tabs in the top strip, after the session tabs.
 
 ```ts
 type PrTabState = {
-  tabs: Array<{ projectId: string; number: number; title?: string }>;  // persisted, tab order
+  tabs: Array<{ projectId: string; number: number; title?: string; file?: string }>;  // persisted, tab order
   open(projectId, number, title?): void;     // dedupes, appends
   setTitle(projectId, number, title): void; // kept fresh from the list and the detail
+  setFile(projectId, number, file): void;   // the changed file last selected (relPath)
   close(projectId, number): void;
   reorder(projectId, number, toIndex): void;
   closeProject(projectId): void;            // called where terminalStore.closeProject is

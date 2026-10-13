@@ -9,14 +9,14 @@ import {
 } from '@factorai/ui';
 import { useQuery } from '@tanstack/react-query';
 import { Bot, ChevronLeft, ExternalLink } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
-import { FileChangeRow } from '@components/files/FileChangeRow';
+import { type ReactNode, Suspense, useEffect, useState } from 'react';
 import { AgentMark } from '@components/layout/AgentMark';
 import { CheckGlyph } from '@components/prs/CheckGlyph';
 import { CheckoutPr } from '@components/prs/CheckoutPr';
 import { ReviewTab } from '@components/prs/ReviewTab';
+import { LazyDiffView } from '@components/viewer/lazyViews';
 import { useResetOnUnauthenticated } from '@hooks/useGhStatus';
-import { useFileViewer } from '@hooks/useFileViewer';
+import { DETAIL_POLL_MS, usePrFiles, usePrSelection } from '@hooks/usePrChanges';
 import { useInstalledAgents } from '@hooks/useInstalledAgents';
 import { useStartReviewSession } from '@hooks/useStartReviewSession';
 import { agentName } from '@lib/agents';
@@ -28,19 +28,16 @@ import {
 	mergeableLabel,
 	prDiffMode,
 	reviewStateLabel,
+	stepPrFile,
 } from '@lib/pullRequests';
 import { queryKeys } from '@lib/queryKeys';
 import { draftKey } from '@lib/reviewAnchors';
 import { cmd, openExternally } from '@lib/tauri';
 import { usePrTabStore } from '@store/prTabStore';
+import { type PrSubTab, prViewKey, usePrViewStore } from '@store/prViewStore';
 import { useReviewDraftStore } from '@store/reviewDraftStore';
 
-/** The open pull request is re-read every 30s (F31): its checks finishing and a
- *  review landing are what you have it open to see. The list's minute is for a
- *  screen you are scanning, not reading. */
-const DETAIL_POLL_MS = 30_000;
-
-type SubTab = 'files' | 'overview' | 'review';
+type SubTab = PrSubTab;
 
 interface PrDetailViewProps {
 	projectId: string;
@@ -53,17 +50,20 @@ interface PrDetailViewProps {
 }
 
 /**
- * One pull request (specs/05-features.md F31): identity above, then Files,
- * Overview and Review as sub-tabs, in the shape of the graph's `CommitDetail`.
+ * One pull request (specs/05-features.md F31): identity above, then Changes,
+ * Overview and Review as sub-tabs.
  *
- * **Files first**, because a reviewer opens a pull request to read its diff;
- * the description is one click away. The Review tab is where comments written in
+ * **Changes first**, and it is the file's diff itself, full width: a reviewer
+ * opens a pull request to read it, and the list of files lives in the panel
+ * (`PrFilesPanel`). The description is one click away. The Review tab is where comments written in
  * the diff are published (P3): the one write the app makes to GitHub, behind a
  * confirmation (ADR-0077). Nothing here merges or closes.
  */
 export function PrDetailView({ projectId, root, status, number, onBack }: PrDetailViewProps) {
 	const slug = status.repo?.slug ?? '';
-	const [tab, setTab] = useState<SubTab>('files');
+	const viewKey = prViewKey(projectId, number);
+	const tab = usePrViewStore((s) => s.tabByPr[viewKey] ?? 'files');
+	const setTab = (next: SubTab) => usePrViewStore.getState().setTab(viewKey, next);
 	const drafts = useReviewDraftStore((s) => s.byPr[draftKey(slug, number)]?.comments.length ?? 0);
 
 	const query = useQuery({
@@ -75,6 +75,8 @@ export function PrDetailView({ projectId, root, status, number, onBack }: PrDeta
 		retry: false,
 	});
 	useResetOnUnauthenticated(root, query.error);
+	const files = usePrFiles(root, query.data);
+	const { select } = usePrSelection(projectId, number, files.data?.files);
 
 	// Keeps the strip's label current when the title is edited on GitHub.
 	const title = query.data?.title;
@@ -116,7 +118,7 @@ export function PrDetailView({ projectId, root, status, number, onBack }: PrDeta
 						aria-label="Pull request"
 						className="flex shrink-0 items-center gap-1 border-border border-b px-2 pb-1"
 					>
-						<SubTabButton id="files" active={tab} onSelect={setTab} label="Files" />
+						<SubTabButton id="files" active={tab} onSelect={setTab} label="Changes" />
 						<SubTabButton id="overview" active={tab} onSelect={setTab} label="Overview" />
 						<SubTabButton
 							id="review"
@@ -126,11 +128,17 @@ export function PrDetailView({ projectId, root, status, number, onBack }: PrDeta
 							badge={drafts}
 						/>
 					</div>
-					<div className="min-h-0 flex-1 overflow-y-auto">
-						{tab === 'files' && <FilesTab root={root} pr={query.data} />}
-						{tab === 'overview' && <Overview pr={query.data} />}
-						{tab === 'review' && <ReviewTab root={root} pr={query.data} status={status} />}
-					</div>
+					{tab === 'files' && <ChangesTab projectId={projectId} root={root} pr={query.data} />}
+					{tab !== 'files' && (
+						<div className="min-h-0 flex-1 overflow-y-auto">
+							<div className="mx-auto max-w-4xl">
+								{tab === 'overview' && <Overview pr={query.data} />}
+								{tab === 'review' && (
+									<ReviewTab root={root} pr={query.data} status={status} onOpenFile={select} />
+								)}
+							</div>
+						</div>
+					)}
 				</>
 			)}
 		</div>
@@ -268,8 +276,10 @@ function Header({
 					</span>
 				)}
 			</p>
-			<CheckoutPr pr={pr} projectId={projectId} root={root} />
-			{repo && <ReviewWithAgent pr={pr} repo={repo} projectId={projectId} root={root} />}
+			<div className="flex flex-wrap items-start gap-x-2">
+				<CheckoutPr pr={pr} projectId={projectId} root={root} />
+				{repo && <ReviewWithAgent pr={pr} repo={repo} projectId={projectId} root={root} />}
+			</div>
 			<p className="pt-1 text-muted-foreground text-xs">
 				{pr.author}
 				<span className="text-muted-foreground/60">
@@ -285,17 +295,9 @@ function stateLabel(state: PrDetail['state']): string {
 	return state === 'open' ? 'Open' : state === 'merged' ? 'Merged' : 'Closed';
 }
 
-function FilesTab({ root, pr }: { root: string; pr: PrDetail }) {
-	const { open } = useFileViewer();
-	// **The head is in the key**, so a force-push is a new entry and the files of
-	// a given head never expire (F31, `queryKeys.ghPrFiles`).
-	const query = useQuery({
-		queryKey: queryKeys.ghPrFiles(root, pr.number, pr.headRefOid),
-		queryFn: () => cmd.ghPrFiles(root, pr.number),
-		staleTime: Number.POSITIVE_INFINITY,
-		retry: false,
-	});
-	useResetOnUnauthenticated(root, query.error);
+function ChangesTab({ projectId, root, pr }: { projectId: string; root: string; pr: PrDetail }) {
+	const query = usePrFiles(root, pr);
+	const { selected, select } = usePrSelection(projectId, pr.number, query.data?.files);
 
 	if (query.isPending) return <Note>Loading files…</Note>;
 	if (query.isError) {
@@ -313,34 +315,66 @@ function FilesTab({ root, pr }: { root: string; pr: PrDetail }) {
 			</div>
 		);
 	}
-	const { files, total, truncated } = query.data;
-	if (files.length === 0) return <Note>This pull request changes no files.</Note>;
+	const { files } = query.data;
+	if (files.length === 0 || !selected) return <Note>This pull request changes no files.</Note>;
 
-	const mode = prDiffMode(pr.number, pr.mergeBaseOid, pr.headRefOid);
+	const index = files.indexOf(selected);
+	const step = (delta: number) => {
+		const next = stepPrFile(files, selected.relPath, delta);
+		if (next) select(next.relPath);
+	};
+
 	return (
-		<>
-			<ul className="py-1" data-testid="pr-files">
-				{files.map((file) => (
-					<FileChangeRow
-						key={file.path}
-						relPath={file.relPath}
-						oldRelPath={file.oldRelPath}
-						kind={file.kind}
-						additions={file.additions}
-						deletions={file.deletions}
-						// Whether a file is binary is learned from its blob when the diff
-						// opens (the same path a commit range takes), not from this row.
-						isBinary={false}
-						onClick={() => open(file.path, { diff: mode })}
-					/>
-				))}
-			</ul>
-			{(truncated || total > files.length) && (
-				<p className="px-3 pb-2 text-muted-foreground/60 text-xs" data-testid="pr-files-truncated">
-					… {total - files.length} more files on GitHub
-				</p>
-			)}
-		</>
+		<div className="flex min-h-0 flex-1 flex-col" data-testid="pr-changes">
+			<div className="flex shrink-0 items-center gap-2 border-border border-b px-3 py-1 text-xs">
+				<span
+					className="min-w-0 flex-1 truncate font-mono text-foreground"
+					title={selected.relPath}
+					data-testid="pr-file-path"
+				>
+					{selected.relPath}
+				</span>
+				<span className="shrink-0 text-muted-foreground" data-testid="pr-file-status">
+					{selected.status}
+				</span>
+				<span className="shrink-0 tabular-nums">
+					<span className="text-git-added">+{selected.additions}</span>{' '}
+					<span className="text-git-deleted">−{selected.deletions}</span>
+				</span>
+				<span
+					className="shrink-0 text-muted-foreground tabular-nums"
+					data-testid="pr-file-position"
+				>
+					{index + 1} / {files.length}
+				</span>
+				<Button
+					variant="outline"
+					size="sm"
+					className="shrink-0"
+					disabled={files.length < 2}
+					data-testid="pr-prev-file"
+					onClick={() => step(-1)}
+				>
+					Previous file
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					className="shrink-0"
+					disabled={files.length < 2}
+					data-testid="pr-next-file"
+					onClick={() => step(1)}
+				>
+					Next file
+				</Button>
+			</div>
+			<Suspense fallback={<Note>Loading editor…</Note>}>
+				<LazyDiffView
+					path={selected.path}
+					mode={prDiffMode(pr.number, pr.mergeBaseOid, pr.headRefOid)}
+				/>
+			</Suspense>
+		</div>
 	);
 }
 

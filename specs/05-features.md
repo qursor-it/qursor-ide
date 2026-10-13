@@ -7338,8 +7338,8 @@ pull request, and never the files or blobs.
 
 **Detail, as a tab.** A row opens the pull request as **a tab in the top strip**,
 after the session tabs, and shows it as a page in the **main area**
-(`/projects/$projectId/prs/$number`); the panel keeps only the list, and the row of
-the pull request on screen is marked. The tab is a `role="tab"` in the same strip,
+(`/projects/$projectId/prs/$number`). The page is the diff, full width; the
+**panel lists that pull request's changed files** (below). The tab is a `role="tab"` in the same strip,
 labelled `#N title` with a pull request glyph; clicking it returns to the page,
 the × or a middle-click closes it **without asking** (nothing is running behind it)
 and, if it is the page you are on, lands on the project. Tabs persist across
@@ -7348,18 +7348,41 @@ their project, and are part of next/previous tab and close-tab. The page has no 
 arrow. The header has the title, `#N`, the state (Draft for an open draft), `base ← head`,
 a chip with the fork's owner when the head is cross-repository (`deleted fork` when
 the owner is `null`), and **Open on GitHub**, which hands the URL to the OS through
-`openExternally`. Sub-tabs, **Files** first:
+`openExternally`, with **Check out** and **Review with agent** beside it. Sub-tabs,
+**Changes** first:
 
-- **Files**: the changed files as the same rows the commit detail uses. A click
-  opens the viewer on `pr:<n>:<mergeBase>..<head>` (below). When GitHub lists fewer
-  than the pull request's `total`, the list says how many more there are on GitHub.
+- **Changes**: a file bar (path, status, `+N −M`, "3 / 12", **Previous file** and
+  **Next file**, which wrap), then that file's diff in `pr:<n>:<mergeBase>..<head>`
+  (below), read-only, filling the page, with the review layer of "Reviewing a pull
+  request". The diff is **in the page, not in the viewer column**: the page never
+  opens the app-level viewer for a pull request's file. A pull request with no files
+  says so.
 - **Overview**: the body as plain text with its own line breaks (no markdown in
   v1), the checks (name, workflow, outcome mark, a link out), the latest reviews
   (author, state, date), requested reviewers, labels and mergeability. No network
   avatars: people are names.
 
-The detail refetches every 30s while its page is open. File diffs open in the viewer
-exactly as before: the viewer is app-level, so it appears beside the page.
+The detail refetches every 30s while its page is open.
+
+**The panel on a pull request's page.** Opening the page (a row, a tab in the strip,
+a reload onto its URL) switches the panel to the PRs tab and opens the panel, **once
+per pull request entered**; a panel tab chosen afterwards stays chosen. While the
+route is a pull request of the active project, the PRs tab shows **its changed
+files** instead of the list: a header with **← Pull requests** (`pr-files-back`) and
+`#N title`, then the same rows the commit detail uses (status, `+N −M`), the
+selected one `aria-current`, and, when GitHub lists fewer than the pull request's
+`total`, how many more there are on GitHub. **← Pull requests** shows the list
+without leaving the tab (held per pull request: moving to another tab, or opening a
+row, shows files again). In the narrow-window layout the viewer split under the tree
+is unrelated; the file list is the panel's body either way.
+
+**Which file.** The page's route takes `?change=<repository-relative path>`
+(`PrFile.relPath`; not `file`, which is the viewer's and holds an absolute path).
+A click in the list, **Previous/Next file** and a draft in the Review tab all
+select by replacing the URL (Back is not flooded), mirror the choice into the tab
+(`prTabStore`, so switching away and back keeps it) and bring the page back to
+**Changes**. With no (or an unknown) path the remembered file is used, else the
+first one.
 
 **An `Unauthenticated` from any `gh` query** (list, detail, files, a diff side)
 forces a `gh_status` re-probe, so a login that lapses mid-session replaces the
@@ -7428,7 +7451,7 @@ GitHub.
   deferred) per pull request, with the head commit they were written against. They
   survive a reload; nothing reaches GitHub until the confirmed submit.
 - **The Review tab** (`pr-review-tab`, badge = draft count) lists the drafts (click
-  opens the file's diff; remove), takes a general comment and a verdict (Comment /
+  selects the file and shows its diff in Changes; remove), takes a general comment and a verdict (Comment /
   Approve / Request changes). **Approve and Request changes are disabled on one's
   own pull request** (`viewerIsAuthor`). A banner offers "Discard drafts" when the
   head moved since the first draft; the review is still submitted against the

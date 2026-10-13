@@ -11,12 +11,11 @@ import {
 	Textarea,
 	toast,
 } from '@factorai/ui';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { useState } from 'react';
-import { useFileViewer } from '@hooks/useFileViewer';
 import { useResetOnUnauthenticated } from '@hooks/useGhStatus';
-import { ghErrorText, prDiffMode } from '@lib/pullRequests';
+import { ghErrorText } from '@lib/pullRequests';
 import { queryKeys } from '@lib/queryKeys';
 import { draftKey } from '@lib/reviewAnchors';
 import { cmd, openExternally } from '@lib/tauri';
@@ -52,7 +51,18 @@ function plural(count: number, word: string): string {
 	return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
-export function ReviewTab({ root, pr, status }: { root: string; pr: PrDetail; status: GhStatus }) {
+export function ReviewTab({
+	root,
+	pr,
+	status,
+	onOpenFile,
+}: {
+	root: string;
+	pr: PrDetail;
+	status: GhStatus;
+	/** Show a file's diff on the page (a draft's path is repository-relative). */
+	onOpenFile: (relPath: string) => void;
+}) {
 	const slug = status.repo?.slug ?? '';
 	const key = draftKey(slug, pr.number);
 	const draft = useReviewDraftStore((s) => s.byPr[key]);
@@ -60,16 +70,6 @@ export function ReviewTab({ root, pr, status }: { root: string; pr: PrDetail; st
 	const store = useReviewDraftStore.getState;
 	const queryClient = useQueryClient();
 	const [confirming, setConfirming] = useState(false);
-
-	// Ordinarily a cache hit: the Files tab ran it for this head. It is what maps
-	// a draft's path back to the file to open.
-	const files = useQuery({
-		queryKey: queryKeys.ghPrFiles(root, pr.number, pr.headRefOid),
-		queryFn: () => cmd.ghPrFiles(root, pr.number),
-		staleTime: Number.POSITIVE_INFINITY,
-		retry: false,
-	});
-	const { open } = useFileViewer();
 
 	// The stored verdict may be one this pull request cannot take: it is the
 	// reader's own, and GitHub refuses both on it.
@@ -107,11 +107,6 @@ export function ReviewTab({ root, pr, status }: { root: string; pr: PrDetail; st
 		},
 	});
 	useResetOnUnauthenticated(root, submit.error);
-
-	const openDraft = (draftComment: ReviewDraftComment) => {
-		const file = files.data?.files.find((f) => f.relPath === draftComment.path);
-		if (file) open(file.path, { diff: prDiffMode(pr.number, pr.mergeBaseOid, pr.headRefOid) });
-	};
 
 	const login = status.login ? `@${status.login}` : 'you';
 	const count = comments.length === 0 ? 'no line comments' : plural(comments.length, 'comment');
@@ -161,7 +156,7 @@ export function ReviewTab({ root, pr, status }: { root: string; pr: PrDetail; st
 									variant="quiet"
 									size="sm"
 									className="h-auto min-w-0 flex-1 flex-col items-start gap-0 whitespace-normal px-0 py-0 text-left font-normal text-xs"
-									onClick={() => openDraft(c)}
+									onClick={() => onOpenFile(c.path)}
 									title="Open the diff"
 								>
 									<span className="max-w-full truncate font-mono text-foreground">
