@@ -1294,3 +1294,30 @@ pub struct SubmittedReview {
 	pub url: String,
 	pub state: String,
 }
+
+/// What checking a pull request out would do, before it does it (F31 P4,
+/// ADR-0079). Read from GitHub and the repository's worktree list; nothing is
+/// written to compute it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrCheckoutPlan {
+	/// The repository's main checkout, which the fetch and `worktree add` run in.
+	/// It is never modified.
+	pub main_path: String,
+	/// Where the new worktree would go: next to the main checkout.
+	pub worktree_path: String,
+	/// `pr/<number>`.
+	pub branch: String,
+	/// A linked worktree already on `pr/<number>`, or at the pull request's head.
+	pub existing: Option<GitWorktree>,
+	/// A local branch named `pr/<number>` exists.
+	pub branch_exists: bool,
+	/// The commit that branch points at, when it exists.
+	pub branch_at: Option<String>,
+	/// The head lives in a fork.
+	pub from_fork: bool,
+	/// Owner of the head repository; `None` when the fork was deleted.
+	pub head_owner: Option<String>,
+	/// The pull request's head commit now.
+	pub head_oid: String,
+}

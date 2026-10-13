@@ -4,12 +4,13 @@
 //! inside (reading `origin`, a merge base, a local blob) is moved to the
 //! blocking pool by the service, as `commands/git.rs` does. Every command reads,
 //! except `gh_pr_submit_review`: the one write to GitHub (ADR-0077), a review
-//! the user confirmed. Nothing here writes to the repository.
+//! the user confirmed. Only `gh_pr_checkout` writes to the repository, by adding
+//! a worktree (ADR-0079).
 
 use crate::error::AppResult;
 use crate::models::{
-	FileContents, GhStatus, PrComment, PrDetail, PrFiles, PrStateFilter, PrSummary,
-	ReviewSubmission, SubmittedReview,
+	FileContents, GhStatus, GitWorktree, PrCheckoutPlan, PrComment, PrDetail, PrFiles,
+	PrStateFilter, PrSummary, ReviewSubmission, SubmittedReview,
 };
 use crate::services::gh;
 
@@ -72,4 +73,25 @@ pub async fn gh_pr_submit_review(
 	review: ReviewSubmission,
 ) -> AppResult<SubmittedReview> {
 	gh::submit_review(&project_path, number, &review).await
+}
+
+/// What checking a pull request out would do: where the worktree would go, whether
+/// `pr/<n>` is taken, whether the head is a fork's. Writes nothing.
+#[tauri::command]
+pub async fn gh_pr_checkout_plan(project_path: String, number: u64) -> AppResult<PrCheckoutPlan> {
+	gh::checkout::plan(&project_path, number).await
+}
+
+/// Fetch a pull request's head and add a new linked worktree for it on `pr/<n>`
+/// (or detached). **Never touches an existing checkout, its index or its HEAD**
+/// (ADR-0079); the renderer calls it only after the user confirmed. Returns the
+/// existing worktree, untouched, when the pull request already has one.
+#[tauri::command]
+pub async fn gh_pr_checkout(
+	project_path: String,
+	number: u64,
+	head_oid: String,
+	detached: bool,
+) -> AppResult<GitWorktree> {
+	gh::checkout::checkout(&project_path, number, &head_oid, detached).await
 }

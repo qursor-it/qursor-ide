@@ -19,13 +19,15 @@
 //! - [`review`] — checking a review before it is sent, and its JSON body.
 //! - [`blob`] — a file at a commit, from the clone when it is there.
 //!
-//! **Reads, and one write.** Every call here is a GET except [`submit_review`],
-//! which POSTs a review the user confirmed (ADR-0077) and passes it on stdin.
-//! Nothing is written to the repository: no `git fetch`, so a fork's head commit
-//! is read from GitHub rather than pulled in.
+//! **Reads, and two writes.** Every call here is a GET except [`submit_review`],
+//! which POSTs a review the user confirmed (ADR-0077) and passes it on stdin, and
+//! [`checkout`], which the user confirmed too (ADR-0079). Everything else writes
+//! nothing to the repository: no `git fetch`, so a fork's head commit is read
+//! from GitHub rather than pulled in.
 
 pub mod args;
 pub mod blob;
+pub mod checkout;
 pub mod parse;
 pub mod patch;
 pub mod repo;

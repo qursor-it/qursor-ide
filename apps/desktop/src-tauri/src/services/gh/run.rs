@@ -117,7 +117,7 @@ fn locate() -> Option<PathBuf> {
 /// `CreateProcess` does — which the review submission in a later phase needs. It
 /// would also put `gh`'s arguments through a shell. `gh.exe` is what the MSI,
 /// winget and scoop all install, so refusing the shim costs nothing in practice.
-fn is_native(path: &Path) -> bool {
+pub(super) fn is_native(path: &Path) -> bool {
 	!path.extension().is_some_and(|ext| {
 		ext.to_string_lossy().eq_ignore_ascii_case("cmd")
 			|| ext.to_string_lossy().eq_ignore_ascii_case("bat")

@@ -24,7 +24,8 @@ commands/
   git.rs              # git_status, git_blob, git_graph, git_commit, git_blob_at
                       #   (+ git_worktrees — F21, planned)
   gh.rs               # gh_status, gh_pr_list, gh_pr_detail, gh_pr_files,
-                      #   gh_pr_blob, gh_pr_comments, gh_pr_submit_review —
+                      #   gh_pr_blob, gh_pr_comments, gh_pr_submit_review,
+                      #   gh_pr_checkout_plan, gh_pr_checkout —
                       #   pull requests of `origin` (F31)
   ide.rs              # the IDE bridge's command surface (F20)
   routines.rs         # list/create/update/delete/set_enabled/run_now
@@ -57,7 +58,8 @@ services/
   gh/                 # pull requests through the user's `gh` (F31, ADR-0077):
                       #   run (find + run `gh`), repo (`origin` -> owner/name),
                       #   args (every argv), parse (JSON + failures), patch
-                      #   (commentable lines), blob (a file at a commit)
+                      #   (commentable lines), blob (a file at a commit),
+                      #   checkout (the `git` CLI runner and the worktree add, ADR-0079)
   file_watch.rs       # FileWatch — the one watch on the file the viewer has
                       #   open (F7), replaced on open and dropped on close
   webview_health.rs   # reload the view when its web process dies, rate-limited,
@@ -424,6 +426,21 @@ gh_pr_comments(project_path: String, number: u64) -> Vec<PrComment>
 // with the JSON body on stdin (never in argv). Never retried. A 422 carries
 // GitHub's own sentence in `AppError::Remote`.
 gh_pr_submit_review(project_path: String, number: u64, review: ReviewSubmission) -> SubmittedReview
+// What checking a pull request out would do (F31 P4, ADR-0079): the main
+// checkout, the proposed worktree path (`<main>-pr-<n>`, suffixed while taken),
+// whether `pr/<n>` exists and where, whether the head is a fork's, and an
+// existing worktree for the pull request. Writes nothing.
+gh_pr_checkout_plan(project_path: String, number: u64) -> PrCheckoutPlan
+// THE ONE WRITE to git (ADR-0079): through the `git` CLI (found on the PATH, no
+// .cmd/.bat shim, GIT_TERMINAL_PROMPT=0), every call `git -C <main> ...`:
+// `fetch --no-tags --no-write-fetch-head origin refs/pull/<n>/head`, then
+// `worktree add -b pr/<n> <path> <oid>` (or the existing `pr/<n>`, or
+// `--detach <path> <oid>`). Never checkout/reset/switch/stash/push/--force, so no
+// existing checkout, index or HEAD changes. Returns the existing worktree, run
+// nothing, when the pull request has one. A `pr/<n>` at another commit is
+// `InvalidInput` unless `detached`; a failed fetch is `Remote` with git's last
+// stderr line; no `git` is `NotFound`. Timeouts 120 s fetch, 60 s add.
+gh_pr_checkout(project_path: String, number: u64, head_oid: String, detached: bool) -> GitWorktree
 
 // memory / plans — PLANNED. Neither is registered yet (roadmap item 2 (#14)).
 // `read_claude_md` / `write_claude_md` were here and are dropped: F26 makes

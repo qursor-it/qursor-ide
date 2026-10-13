@@ -308,6 +308,152 @@ test.describe('review with agent', () => {
 	});
 });
 
+test.describe('checking a pull request out', () => {
+	const NEW_ID = '11111111-2222-4333-8444-555555555555';
+
+	/** The fixture with the project's main checkout listed, as a repository has. */
+	function withMain() {
+		const fixture = { ...fixtureWithPullRequests(), newSessionId: NEW_ID };
+		const root = fixture.projects?.[0]?.realPath ?? '';
+		fixture.gitWorktrees = {
+			[root]: [
+				{
+					path: root,
+					name: null,
+					branch: 'main',
+					head: 'a'.repeat(40),
+					isMain: true,
+					locked: false,
+					prunable: false,
+					exists: true,
+				},
+			],
+		};
+		return { fixture, root };
+	}
+
+	async function openPr(page: Page) {
+		await page.goto(PROJECT);
+		await openPrs(page);
+		await page.getByTestId('pr-row-11').click();
+		await expect(page.getByTestId('pr-title')).toBeVisible();
+	}
+
+	test('@smoke asks, adds the worktree, and turns into Open checkout', async ({ page }) => {
+		const { fixture, root } = withMain();
+		await installMockBridge(page, fixture);
+		await openPr(page);
+		await expect(page.getByTestId('pr-open-checkout')).toHaveCount(0);
+
+		await page.getByTestId('pr-checkout').click();
+		const dialog = page.getByTestId('pr-checkout-dialog');
+		await expect(dialog).toBeVisible();
+		await expect(page.getByTestId('pr-checkout-path')).toContainText('-pr-11');
+		await expect(page.getByTestId('pr-checkout-branch')).toHaveText('pr/11');
+		await expect(page.getByTestId('pr-checkout-fork')).toHaveCount(0);
+		// Reading the plan writes nothing.
+		expect(await calls(page, 'gh_pr_checkout')).toHaveLength(0);
+
+		await page.getByTestId('pr-checkout-confirm').click();
+
+		await expect(page.getByTestId('pr-open-checkout')).toBeVisible();
+		await expect(dialog).toHaveCount(0);
+		await expect(page.getByText('Checked out PR #11')).toBeVisible();
+		const sent = await calls(page, 'gh_pr_checkout');
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.args).toMatchObject({
+			projectPath: root,
+			number: 11,
+			headOid: fixture.ghPrDetails?.['github.com/acme/widgets#11']?.headRefOid,
+			detached: false,
+		});
+	});
+
+	test('@smoke warns when the code comes from a fork', async ({ page }) => {
+		const { fixture } = withMain();
+		const detail = fixture.ghPrDetails?.['github.com/acme/widgets#11'];
+		if (!detail) throw new Error('fixture has no #11');
+		fixture.ghPrDetails = {
+			'github.com/acme/widgets#11': { ...detail, isCrossRepository: true, headOwner: 'mallory' },
+		};
+		await installMockBridge(page, fixture);
+		await openPr(page);
+
+		await page.getByTestId('pr-checkout').click();
+
+		await expect(page.getByTestId('pr-checkout-fork')).toContainText(
+			'This code comes from a fork (mallory). Running it can execute anything it contains.',
+		);
+	});
+
+	test('@smoke offers detached when pr/N is somewhere else', async ({ page }) => {
+		const { fixture, root } = withMain();
+		fixture.ghPrCheckoutPlans = {
+			[`${root}#11`]: { branchExists: true, branchAt: 'b'.repeat(40) },
+		};
+		await installMockBridge(page, fixture);
+		await openPr(page);
+
+		await page.getByTestId('pr-checkout').click();
+		await expect(page.getByTestId('pr-checkout-diverged')).toContainText('bbbbbbb');
+		await page.getByTestId('pr-checkout-confirm').click();
+
+		await expect(page.getByTestId('pr-open-checkout')).toBeVisible();
+		expect((await calls(page, 'gh_pr_checkout'))[0]?.args?.detached).toBe(true);
+	});
+
+	test('@smoke keeps the dialog and adds nothing when the checkout fails', async ({ page }) => {
+		const { fixture } = withMain();
+		fixture.ghPrCheckoutFails = {
+			kind: 'Remote',
+			message: 'git could not fetch pull request #11: fatal: could not read Username',
+		};
+		await installMockBridge(page, fixture);
+		await openPr(page);
+
+		await page.getByTestId('pr-checkout').click();
+		await page.getByTestId('pr-checkout-confirm').click();
+
+		await expect(page.getByTestId('pr-checkout-error')).toContainText('could not read Username');
+		await expect(page.getByTestId('pr-checkout-dialog')).toBeVisible();
+		await expect(page.getByTestId('pr-open-checkout')).toHaveCount(0);
+		expect(await calls(page, 'gh_pr_checkout')).toHaveLength(1);
+	});
+
+	test('@smoke starts a session in the checkout from Open checkout', async ({ page }) => {
+		const { fixture } = withMain();
+		await installMockBridge(page, fixture);
+		await openPr(page);
+		await page.getByTestId('pr-checkout').click();
+		const path = (await page.getByTestId('pr-checkout-path').textContent()) ?? '';
+		await page.getByTestId('pr-checkout-confirm').click();
+
+		await page.getByTestId('pr-open-checkout').click();
+
+		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}/sessions/${NEW_ID}`));
+		expect((await calls(page, 'start_session'))[0]?.args?.fresh).toBe(true);
+		const spawn = (await calls(page, 'terminal_spawn'))[0];
+		expect((spawn?.args?.opts as { cwd?: string }).cwd).toBe(path);
+		expect((await calls(page, 'set_session_worktree'))[0]?.args?.path).toBe(path);
+	});
+
+	test('@smoke reviews with the agent in the checkout once it exists', async ({ page }) => {
+		const { fixture } = withMain();
+		await installMockBridge(page, fixture);
+		await openPr(page);
+		await page.getByTestId('pr-checkout').click();
+		const path = (await page.getByTestId('pr-checkout-path').textContent()) ?? '';
+		await page.getByTestId('pr-checkout-confirm').click();
+		await expect(page.getByTestId('pr-open-checkout')).toBeVisible();
+
+		await page.getByTestId('pr-review-agent').click();
+
+		await expect(page).toHaveURL(new RegExp(`/sessions/${NEW_ID}`));
+		const spawn = (await calls(page, 'terminal_spawn'))[0];
+		expect((spawn?.args?.opts as { cwd?: string }).cwd).toBe(path);
+	});
+});
+
 test.describe('reviewing a pull request', () => {
 	const SLUG = 'github.com/acme/widgets';
 	const DRAFTS_KEY = 'factorai.reviewDrafts';

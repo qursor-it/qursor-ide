@@ -67,6 +67,8 @@ Specifically:
 
 Everything is **read-only**. No staging, no discard, no commit — see F13.
 
+*Amended by [ADR-0079](./0079-checking-out-a-pull-request-writes-a-new-worktree-and-nothing-else.md): checking a pull request out adds one new worktree through the `git` CLI. `git2` itself stays read-only and transport-free.*
+
 ## Consequences
 
 **Good.**

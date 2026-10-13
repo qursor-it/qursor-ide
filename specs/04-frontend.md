@@ -334,7 +334,7 @@ on the list. The data is TanStack Query's (`gh-status`, `gh-prs`, `gh-pr`,
 `PrsView` (the `gh_status` gate and its empty states: install, sign in, no
 origin, not GitHub, too old, unreachable), `PrList` (the state filter and the
 rows) and `PrDetail` (the header, then Files and Overview sub-tabs, as
-`CommitDetail` does for a commit). The tab sits outside the panel's shared scroll
+`CommitDetail` does for a commit; its header carries `CheckoutPr`, F31 P4). The tab sits outside the panel's shared scroll
 wrapper, like the graph. Polls (60s list, 30s detail) run only while the panel is
 open and the PRs tab is the active one. An `Unauthenticated` rejection from any
 `gh` query forces a `gh_status` re-probe, which turns the panel into the sign-in

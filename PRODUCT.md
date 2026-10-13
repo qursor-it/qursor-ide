@@ -106,7 +106,9 @@ table that is not built yet. Treat it as the thinnest of the four verbs.
 - Read-only on the agent's own state (`~/.claude/`) and on git. The app observes;
   the agent writes. Reading a project's pull requests from GitHub is allowed, only
   through the user's `gh` and only while the panel is open; the one write the
-  feature may make is submitting a review, behind a confirmation (ADR-0077).
+  feature may make to GitHub is submitting a review, behind a confirmation
+  (ADR-0077). The one write to git is adding a new worktree for a pull request,
+  behind a confirmation and touching no existing checkout (ADR-0079).
 - Kill-on-quit is non-optional — no orphaned agent processes, ever.
 - No cloud sync, no accounts, no telemetry, no analytics, no crash reporting in
   the app. The site counts page views, cookielessly (ADR-0063); the app counts

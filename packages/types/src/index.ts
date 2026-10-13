@@ -1306,3 +1306,27 @@ export interface SubmittedReview {
 	/** GitHub's word: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`. */
 	state: string;
 }
+
+/** What checking a pull request out would do, before it does it (F31 P4,
+ *  ADR-0079). Mirrors Rust `PrCheckoutPlan`. */
+export interface PrCheckoutPlan {
+	/** The repository's main checkout. The fetch and `worktree add` run there and
+	 *  never modify it. */
+	mainPath: string;
+	/** Where the new worktree would go: next to the main checkout. */
+	worktreePath: string;
+	/** `pr/<number>`. */
+	branch: string;
+	/** A linked worktree already on `pr/<number>` or at the head commit. */
+	existing: GitWorktree | null;
+	/** A local branch `pr/<number>` exists. */
+	branchExists: boolean;
+	/** The commit that branch points at, when it exists. */
+	branchAt: string | null;
+	/** The head lives in a fork. */
+	fromFork: boolean;
+	/** Owner of the head repository; null when the fork was deleted. */
+	headOwner: string | null;
+	/** The pull request's head commit now. */
+	headOid: string;
+}

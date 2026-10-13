@@ -13,6 +13,7 @@ import { type ReactNode, useState } from 'react';
 import { FileChangeRow } from '@components/files/FileChangeRow';
 import { AgentMark } from '@components/layout/AgentMark';
 import { CheckGlyph } from '@components/prs/CheckGlyph';
+import { CheckoutPr } from '@components/prs/CheckoutPr';
 import { ReviewTab } from '@components/prs/ReviewTab';
 import { usePrsTabActive, useResetOnUnauthenticated } from '@hooks/useGhStatus';
 import { useFileViewer } from '@hooks/useFileViewer';
@@ -255,6 +256,7 @@ function Header({
 					</span>
 				)}
 			</p>
+			<CheckoutPr pr={pr} projectId={projectId} root={root} />
 			{repo && <ReviewWithAgent pr={pr} repo={repo} projectId={projectId} root={root} />}
 			<p className="pt-1 text-muted-foreground text-xs">
 				{pr.author}

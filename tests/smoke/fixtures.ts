@@ -8,6 +8,7 @@
  */
 
 import type {
+	AppError,
 	ClaudeCliStatus,
 	DirEntry,
 	DirListing,
@@ -24,6 +25,7 @@ import type {
 	MediaProbe,
 	ImportCandidate,
 	PdfContents,
+	PrCheckoutPlan,
 	PrComment,
 	PrDetail,
 	PrFile,
@@ -155,6 +157,10 @@ export interface TestFixture {
 	/** Blob text keyed by `<sha>:<relPath>`. A key not listed answers null — the
 	 *  file does not exist at that commit. */
 	ghBlobs?: Record<string, string>;
+	/** Overrides for `gh_pr_checkout_plan`, keyed `<projectPath>#<number>`. */
+	ghPrCheckoutPlans?: Record<string, Partial<PrCheckoutPlan>>;
+	/** Makes `gh_pr_checkout` reject with this error. */
+	ghPrCheckoutFails?: AppError;
 }
 
 declare global {

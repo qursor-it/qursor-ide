@@ -19,6 +19,7 @@ import type {
 	Mention,
 	PathKind,
 	PdfContents,
+	PrCheckoutPlan,
 	PrComment,
 	PrDetail,
 	PrFiles,
@@ -301,6 +302,18 @@ export const cmd = {
 	 *  refuse and `Remote` with GitHub's own sentence for a 422. */
 	ghPrSubmitReview: (projectPath: string, number: number, review: ReviewSubmission) =>
 		invoke<SubmittedReview>('gh_pr_submit_review', { projectPath, number, review }),
+	/** What checking a pull request out would do: where the worktree would go,
+	 *  whether `pr/<n>` is taken, whether the head is a fork's. Writes nothing. */
+	ghPrCheckoutPlan: (projectPath: string, number: number) =>
+		invoke<PrCheckoutPlan>('gh_pr_checkout_plan', { projectPath, number }),
+	/** Fetch a pull request's head and add a **new** linked worktree for it
+	 *  (ADR-0079): `pr/<n>`, or detached. Never touches an existing checkout, its
+	 *  index or HEAD. Call it only after the user confirmed. Resolves the existing
+	 *  worktree untouched when there is one; rejects `InvalidInput` when `pr/<n>`
+	 *  sits at another commit and `detached` is false, `Remote` for a fetch
+	 *  failure, `NotFound` without `git`. */
+	ghPrCheckout: (projectPath: string, number: number, headOid: string, detached: boolean) =>
+		invoke<GitWorktree>('gh_pr_checkout', { projectPath, number, headOid, detached }),
 	/** One file at one commit of a pull request (a full 40-hex `sha`): the clone's
 	 *  copy when it has the commit, GitHub's when it does not. Resolves null when
 	 *  the file is not there — an added file has no merge-base side. */
@@ -824,6 +837,13 @@ interface TestFixture {
 	/** Makes `gh_pr_submit_review` reject with this error, so a test can reach
 	 *  the "drafts are kept" path. */
 	ghSubmitReviewFails?: AppError;
+	/** Overrides for `gh_pr_checkout_plan`, keyed `<projectPath>#<number>`: what
+	 *  the plan reports about `pr/<n>` (`branchExists`, `branchAt`). The rest is
+	 *  computed from `ghPrDetails` and `gitWorktrees`. */
+	ghPrCheckoutPlans?: Record<string, Partial<PrCheckoutPlan>>;
+	/** Makes `gh_pr_checkout` reject with this error: the "nothing was added"
+	 *  path. */
+	ghPrCheckoutFails?: AppError;
 	/** Blob text keyed by `<sha>:<relPath>`; absent answers null (no such file at
 	 *  that commit). */
 	ghBlobs?: Record<string, string>;
@@ -882,6 +902,45 @@ function seededDefaultProfile(): Profile {
 		missing: false,
 		createdAt: 0,
 	};
+}
+
+/** `gh_pr_checkout_plan` for a fixture: the head and fork flag from the pull
+ *  request, the main checkout and what already exists from `gitWorktrees`. */
+function mockCheckoutPlan(
+	fx: TestFixture | undefined,
+	projectPath: string,
+	number: number,
+): PrCheckoutPlan {
+	const status = fx?.ghStatuses?.[projectPath];
+	const detail = status?.repo ? fx?.ghPrDetails?.[`${status.repo.slug}#${number}`] : undefined;
+	if (!detail) throw { kind: 'NotFound', message: `pull request #${number} was not found` };
+	const list = fx?.gitWorktrees?.[projectPath] ?? [];
+	const main = list.find((w) => w.isMain)?.path ?? projectPath;
+	const sep = main.includes('\\') ? '\\' : '/';
+	const cut = main.lastIndexOf(sep);
+	const parent = cut > 0 ? main.slice(0, cut) : main;
+	let worktreePath = `${parent}${sep}${main.slice(cut + 1)}-pr-${number}`;
+	for (let n = 2; list.some((w) => w.path === worktreePath); n += 1) {
+		worktreePath = `${parent}${sep}${main.slice(cut + 1)}-pr-${number}-${n}`;
+	}
+	const existing = list.find(
+		(w) =>
+			!w.isMain &&
+			w.exists &&
+			(w.branch === `pr/${number}` || (w.head !== null && w.head === detail.headRefOid)),
+	);
+	return {
+		mainPath: main,
+		worktreePath,
+		branch: `pr/${number}`,
+		existing: existing ?? null,
+		branchExists: false,
+		branchAt: null,
+		fromFork: detail.isCrossRepository,
+		headOwner: detail.headOwner,
+		headOid: detail.headRefOid,
+		...fx?.ghPrCheckoutPlans?.[`${projectPath}#${number}`],
+	} satisfies PrCheckoutPlan;
 }
 
 async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Promise<T> {
@@ -1391,6 +1450,36 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 				url: `${detail?.url ?? `https://github.com/o/r/pull/${number}`}#pullrequestreview-1`,
 				state,
 			} as unknown as T;
+		}
+		case 'gh_pr_checkout_plan':
+			return mockCheckoutPlan(
+				fx,
+				String(args?.projectPath ?? ''),
+				Number(args?.number),
+			) as unknown as T;
+		case 'gh_pr_checkout': {
+			const projectPath = String(args?.projectPath ?? '');
+			const number = Number(args?.number);
+			if (fx?.ghPrCheckoutFails) throw fx.ghPrCheckoutFails;
+			const plan = mockCheckoutPlan(fx, projectPath, number);
+			if (plan.existing) return plan.existing as unknown as T;
+			const made: GitWorktree = {
+				path: plan.worktreePath,
+				name: plan.worktreePath.split(/[\\/]/).pop() ?? null,
+				branch: args?.detached ? null : plan.branch,
+				head: String(args?.headOid ?? plan.headOid),
+				isMain: false,
+				locked: false,
+				prunable: false,
+				exists: true,
+			};
+			if (fx) {
+				fx.gitWorktrees = {
+					...fx.gitWorktrees,
+					[projectPath]: [...(fx.gitWorktrees?.[projectPath] ?? []), made],
+				};
+			}
+			return made as unknown as T;
 		}
 		case 'gh_pr_blob': {
 			// A missing entry is "no such file at that commit" (an added file's

@@ -136,6 +136,8 @@ untouched, and `git2` stays `default-features = false`. The agent creates a
 worktree in one line, in the terminal below the panel, and it does that better
 than a dialog would.
 
+*Amended by [ADR-0079](./0079-checking-out-a-pull-request-writes-a-new-worktree-and-nothing-else.md): the PRs tab's "Check out" adds one new worktree, through the `git` CLI and after a confirmation. Nothing else here writes to git.*
+
 ## Consequences
 
 **Positive.**

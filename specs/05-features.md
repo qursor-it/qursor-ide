@@ -4326,7 +4326,9 @@ than a session of the one you did.
 **Agent-driven first, and that is the design rather than an economy.** The agent
 creates the worktree — it is one command, in a terminal, and `05-features.md`
 F18 and ADR-0009 have already settled that factorai does not do git's writing
-for it. What factorai owes it is to *follow*. So the mechanism is the agent
+for it — with one exception, F31 P4: the PRs tab may add a worktree for a pull
+request ([ADR-0079](adr/0079-checking-out-a-pull-request-writes-a-new-worktree-and-nothing-else.md)).
+What factorai owes the agent is to *follow*. So the mechanism is the agent
 saying where it went and the app moving, not a picker the human is expected to
 keep in sync with a process they are supervising rather than driving.
 
@@ -7174,7 +7176,7 @@ four phases, each releasable alone:
 | P1 | Read: status, list, detail, files, blobs, PR diff | built: the backend, the PRs tab and the `pr:` diff mode |
 | P2 | "Review with an agent" — start a session whose first message is the review brief | built: see "Review with agent" |
 | P3 | Submit a human review (comments, approve, request changes) | built: see "Reviewing a pull request" |
-| P4 | Check a pull request out into a new worktree | **not built yet** |
+| P4 | Check a pull request out into a new worktree | built: see "Checking a pull request out" |
 
 Everything below describes P1 unless it says otherwise.
 
@@ -7423,14 +7425,35 @@ GitHub.
   including the reasons `gh` prints on stdout. A timeout says the review may have
   been published.
 
-### Not built yet
-- **P4**: checking a pull request out into a new worktree through the `git` CLI
-  (never the current checkout), which will need an ADR of its own.
+### Checking a pull request out
+
+**Phase 4; the write is allowed by [ADR-0079](adr/0079-checking-out-a-pull-request-writes-a-new-worktree-and-nothing-else.md).** The
+pull request's header has **Check out**. It opens a confirmation (`pr-checkout-dialog`)
+showing the folder (`<main folder>-pr-<n>` beside the main checkout, `-2`, `-3` while
+taken), the branch `pr/<n>` and the short head commit, and says the current
+checkout is not touched. Confirming fetches the head and adds a **new linked
+worktree**; a toast says "Checked out PR #n in <folder>" with **Start session
+there**. The worktree list is re-read, so the button becomes **Open checkout**
+(`pr-open-checkout`), which starts a fresh session whose cwd is the worktree,
+pinned to it (F21); "Review with agent" already prefers that worktree (P2).
+
+- **A fork** (`isCrossRepository`) adds a warning to the dialog: "This code comes
+  from a fork (<owner>). Running it can execute anything it contains."
+- **`pr/<n>` exists at another commit**: the dialog says so and the button becomes
+  **Check out detached**; the branch is left as it is.
+- **Failures** (no `git`, a fetch that needs credentials, a commit that left the
+  pull request) show inline in the dialog and add nothing. The call is never
+  retried.
+- **What is written.** The main checkout, its index and HEAD, and every other
+  worktree are never touched; the app runs no `checkout`, `switch`, `reset`,
+  `stash` or `push` and never forces. What changes is one worktree, at most one
+  branch `pr/<n>`, and the objects fetched. F21's "factorai does not do git's
+  writing for it" has this one exception.
 
 ### Backend
 
 New: `services/gh/` (`run`, `repo`, `args`, `parse`, `patch`, `blob`),
 `commands/gh.rs` — `gh_status`, `gh_pr_list`, `gh_pr_detail`, `gh_pr_files`,
-`gh_pr_blob` — and `AppError::{Unauthenticated, Remote}`. See
+`gh_pr_blob` — and `AppError::{Unauthenticated, Remote}`; P4 adds `services/gh/checkout.rs`, `gh_pr_checkout_plan` and `gh_pr_checkout`. See
 `03-backend-rust.md` § `gh`. No migration, no setting, no new plugin or
 capability: the commands are the app's own.
