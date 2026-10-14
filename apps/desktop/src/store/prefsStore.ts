@@ -87,6 +87,14 @@ interface PrefsState {
 	 *  deliberately unbound, which is a different state from absent. See
 	 *  `lib/keymap.ts` for the merge. */
 	keymapOverrides: KeymapOverrides;
+	/** The review instructions of "Review with agent" (F31, ADR-0078): what the
+	 *  agent looks for and how it reports, the last sentence of the prompt.
+	 *
+	 *  Only the renderer reads it, when the session starts, so it lives here
+	 *  (ADR-0013). **Empty means the shipped default**, stored as `''` rather than
+	 *  a copy of the default text, so a default we improve later still reaches
+	 *  somebody who never wrote their own, the same reasoning as `keymapOverrides`. */
+	prReviewInstructions: string;
 
 	/** The diff footer's own toggle (F13), which sets the same value the Editor
 	 *  section defaults: flipping it there is a choice about how you read diffs,
@@ -121,6 +129,8 @@ const DEFAULT_PREFS: Prefs = {
 	// object here is what makes "reset all" a deletion rather than a copy of a
 	// table that would go stale.
 	keymapOverrides: {},
+	// Empty: use `DEFAULT_PR_REVIEW_INSTRUCTIONS`, which lives with the prompt.
+	prReviewInstructions: '',
 };
 
 export const usePrefsStore = create<PrefsState>()(
@@ -152,6 +162,7 @@ export const usePrefsStore = create<PrefsState>()(
 				clock24: s.clock24,
 				theme: s.theme,
 				keymapOverrides: s.keymapOverrides,
+				prReviewInstructions: s.prReviewInstructions,
 			}),
 		},
 	),
@@ -170,5 +181,6 @@ export function currentPrefs(): Prefs {
 		clock24: s.clock24,
 		theme: s.theme,
 		keymapOverrides: s.keymapOverrides,
+		prReviewInstructions: s.prReviewInstructions,
 	};
 }
