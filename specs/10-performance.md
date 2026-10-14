@@ -826,6 +826,30 @@ ADR-0002's transport.
 *Measure.* Main-thread time per chunk on WebKitGTK with `cat` of a large
 file, and the keystroke-to-glyph budget under load, before and after.
 
+**PERF-31 — Coming back to a terminal could grow its grid geometrically, until a resize failed with `Array buffer allocation failed`.**
+Impact H (the app slowed to a near-freeze, then threw), cost L. Found
+2026-10-14 from a user report on native Windows, with the stack running from
+`fitToHost` into xterm's `Buffer.resize` and a `new Uint32Array` that could not
+be allocated. **Landed 2026-10-14.**
+`fitToHost` takes the cell size as the `.xterm-screen` box divided by the
+terminal's `cols` and `rows`. A terminal off screen is paused (PERF-04), and a
+paused xterm defers its renderer's resize to an idle task
+(`RenderService.handleResize`): the grid changes at once, and the screen keeps
+its old box until the task runs or the terminal is seen again. A mount fits
+up to four times before xterm's `IntersectionObserver` reports the host
+visible — on mount, on the next frame for an adopted terminal, on the next
+tick, and in the first `ResizeObserver` callback — so with the pane a
+different width from when the terminal was last drawn, each fit divided the
+stale box by the grid the previous fit had just set, and proposed more. Six
+fits took 80 columns to 5 120. At 10 000 lines of scrollback that is a
+reflow of hundreds of megabytes, and the PTY was resized to the same absurd
+width, so the agent redrew for it too.
+*Fix.* `readScreen` keeps the last reading per terminal: a box that has not
+moved since is still drawn at the grid that reading had, and only a box that
+moved is read against the current grid. A unit test in `Terminal.test.ts`
+replays six fits against a stale screen and holds the grid at what the pane
+fits; before the fix it reached 5120×88.
+
 **PERF-30 — Dragging a panel edge re-rendered the document, the tree and the sidebar every frame, and resized the PTY on each one.**
 Impact H while dragging the viewer column with a markdown file open, cost L.
 Found 2026-09-25 from a user report ("the panel resize, mainly for the document

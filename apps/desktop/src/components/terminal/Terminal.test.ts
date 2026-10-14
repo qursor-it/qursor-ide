@@ -3,6 +3,8 @@ import {
 	createOscLinkHandler,
 	onLinkActivated,
 	proposeGeometry,
+	readScreen,
+	type ScreenReading,
 } from '@components/terminal/Terminal';
 
 function click(mods: Partial<MouseEvent> = {}): MouseEvent {
@@ -113,5 +115,83 @@ describe('proposeGeometry', () => {
 	it('never proposes a grid too small to render into', () => {
 		// xterm's own floor. A pane dragged to nothing must not propose 0 columns.
 		expect(proposeGeometry(3, 4, 7.8, 17)).toEqual({ cols: 2, rows: 1 });
+	});
+});
+
+/**
+ * The cell size, read off a screen that may be behind the grid.
+ *
+ * An offscreen xterm defers its renderer's resize to an idle task
+ * (`RenderService.handleResize` while paused), so `cols` moves at once and
+ * `.xterm-screen` keeps the old box. Dividing that box by the new `cols` gave a
+ * smaller cell on every fit, so every fit proposed more columns than the last:
+ * the grid grew geometrically until a resize reflowed 10,000 lines of
+ * scrollback at an absurd width and failed with `Array buffer allocation
+ * failed`, freezing the app on the way.
+ */
+describe('readScreen', () => {
+	/** `fitToHost` without the DOM: read the screen, propose, resize. */
+	function fit(
+		host: { width: number; height: number },
+		screen: { width: number; height: number },
+		grid: { cols: number; rows: number },
+		last: ScreenReading | undefined,
+	) {
+		const reading = readScreen(screen, grid, last);
+		const next = proposeGeometry(
+			host.width,
+			host.height,
+			reading.width / reading.cols,
+			reading.height / reading.rows,
+		);
+		return { grid: next ?? grid, reading };
+	}
+
+	it('holds the grid while the screen has not caught up with a resize', () => {
+		// 80x24 at a 10x20 cell, coming back into a pane twice as wide. The mount
+		// fits, then fits again on the next frame, the next tick and the first
+		// ResizeObserver callback, all before xterm has redrawn the screen.
+		const host = { width: 1600, height: 600 };
+		const stale = { width: 800, height: 480 };
+		let grid = { cols: 80, rows: 24 };
+		let last: ScreenReading | undefined;
+		for (let i = 0; i < 6; i++) ({ grid, reading: last } = fit(host, stale, grid, last));
+		expect(grid).toEqual({ cols: 160, rows: 30 });
+	});
+
+	it('follows the screen once it is redrawn at the new grid', () => {
+		const host = { width: 1600, height: 600 };
+		let { grid, reading } = fit(
+			host,
+			{ width: 800, height: 480 },
+			{ cols: 80, rows: 24 },
+			undefined,
+		);
+		({ grid, reading } = fit(host, { width: 1600, height: 600 }, grid, reading));
+		expect(reading).toEqual({ width: 1600, height: 600, cols: 160, rows: 30 });
+		// And a later shrink is measured against the new screen.
+		({ grid } = fit({ width: 1200, height: 600 }, { width: 1600, height: 600 }, grid, reading));
+		expect(grid).toEqual({ cols: 120, rows: 30 });
+	});
+
+	it('takes the grid as what the screen shows when there is no earlier reading', () => {
+		expect(readScreen({ width: 800, height: 480 }, { cols: 80, rows: 24 }, undefined)).toEqual({
+			width: 800,
+			height: 480,
+			cols: 80,
+			rows: 24,
+		});
+	});
+
+	it('reads each axis on its own', () => {
+		// Only the rows changed, and the screen has redrawn its height: the width
+		// still belongs to the old columns, which are also the current ones.
+		const last = { width: 800, height: 480, cols: 80, rows: 24 };
+		expect(readScreen({ width: 800, height: 600 }, { cols: 80, rows: 30 }, last)).toEqual({
+			width: 800,
+			height: 600,
+			cols: 80,
+			rows: 30,
+		});
 	});
 });
