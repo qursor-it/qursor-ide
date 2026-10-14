@@ -884,9 +884,13 @@ keyboard-scheme item (roadmap item 5), not a shipped one.
 **Copying a selection** (2026-09-26), in the agent's terminal and the footer
 shell alike, since both are one pooled xterm:
 
-- **`Cmd+C` on macOS, `Ctrl+Shift+C` elsewhere**, only while something is
-  selected. With no selection the chord goes to the PTY, and a Linux `Ctrl+C`
-  is never taken: it is the interrupt.
+- **`Cmd+C` on macOS; `Ctrl+C` or `Ctrl+Shift+C` elsewhere**, only while
+  something is selected, and copying clears the selection. With no selection
+  the chord goes to the PTY, so `Ctrl+C` is still the interrupt: with text
+  selected, the first press copies and the second interrupts — the rule
+  Windows Terminal and VS Code's terminal follow. Until 2026-10-14 `Ctrl+C` was
+  never taken off macOS, and copying needed the `Shift`; on macOS it still is
+  never taken, because `Cmd+C` is copy there.
 - **Right-click with a selection copies it** and clears it, instead of opening
   a menu. With no selection the native menu opens as before, and on WebKitGTK
   that menu is how you paste. Its own `Copy` could never work: it is greyed
