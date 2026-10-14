@@ -194,7 +194,10 @@ describe('readScreen', () => {
 			cols: 80,
 			rows: 30,
 		});
+	});
+});
 
+/**
  * The copy chord (F5). Only ever consulted with a selection: without one every
  * chord here goes to the PTY, which is what keeps a bare `Ctrl+C` the interrupt.
  */
