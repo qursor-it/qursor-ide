@@ -130,10 +130,16 @@ each is tested against it.
     grow.
 - **Topic**: the notifier needs the topic text of the last Claude title. The
   Claude branch of the PTY reader (`terminal.rs` ~2125) uses
-  `titles.push(...)`; it switches to `push_payload` + a public `classify`, and
-  stores the topic (title minus the leading glyph, trimmed) on the
-  `TerminalHandle` (or passes it to the notifier). A pure
-  `fn title_topic(&str) -> Option<String>` is unit-tested.
+  `titles.push(...)`, which keeps only the status. `TitleScanner` gains a
+  sibling `push_title(bytes) -> Option<(TerminalStatus, Option<String>)>`
+  built on the same `scan` + `classify`, so status detection is unchanged
+  (last *classifiable* title in the chunk wins; empty titles are still
+  ignored — `push_payload` would not ignore them, which is why it is not
+  used). The Claude branch calls `push_title` and stores the topic on a new
+  `TerminalHandle.topic: Mutex<Option<String>>` before `set_status`; the
+  notifier reads it when sending. A pure
+  `fn title_topic(&[u8]) -> Option<String>` (title minus the leading glyph,
+  trimmed, `None` when empty) is unit-tested. Codex is untouched.
 - **Wiring**: the `on_status` closure at `terminal.rs:796`, which today only
   emits `terminal:status`, also calls `notifier.on_status(&e)`. The notifier
   lives in `AppState`.
