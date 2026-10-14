@@ -118,6 +118,49 @@ export function proposeGeometry(
 	};
 }
 
+/** The `.xterm-screen` box, and the grid it is drawn at. */
+export interface ScreenReading {
+	width: number;
+	height: number;
+	cols: number;
+	rows: number;
+}
+
+/**
+ * Which grid the screen's box is drawn at — **not always the terminal's**
+ * (PERF-31, `specs/10-performance.md`).
+ *
+ * A terminal off screen is paused, and a paused xterm defers its renderer's
+ * resize to an idle task (`RenderService.handleResize`): `cols` and `rows`
+ * change at once, the screen keeps its old box until the task runs or the
+ * terminal is seen again. Coming back to a session is exactly that window — the
+ * mount fits while the `IntersectionObserver` has not yet reported the host
+ * visible, then fits again on the next frame, the next tick and the first
+ * `ResizeObserver` callback. Dividing the stale box by the *new* grid gave a
+ * smaller cell each time, so each fit proposed more columns than the last: 80
+ * became 5120 in six fits, and the resize that reflowed 10,000 lines of
+ * scrollback at that width failed with `Array buffer allocation failed`.
+ *
+ * So a box that has not changed since the last reading still belongs to the
+ * grid that reading had, and only a box that moved is read against the current
+ * grid — the renderer only ever redraws at the latest one, because the deferred
+ * task keeps the last resize alone. Each axis on its own, since a resize can
+ * change one and not the other. With no earlier reading the screen is the
+ * terminal's: it was built at that grid and nothing has resized it yet.
+ */
+export function readScreen(
+	rect: { width: number; height: number },
+	grid: { cols: number; rows: number },
+	last: ScreenReading | undefined,
+): ScreenReading {
+	return {
+		width: rect.width,
+		height: rect.height,
+		cols: last && rect.width === last.width ? last.cols : grid.cols,
+		rows: last && rect.height === last.height ? last.rows : grid.rows,
+	};
+}
+
 /**
  * Resize the terminal to its host — the same contract `fit()` had, so callers
  * still never compute cols/rows or talk to the PTY themselves (`onResize`
@@ -125,10 +168,10 @@ export function proposeGeometry(
  *
  * **Cell metrics come from what the renderer actually drew**, not from
  * `_core._renderService`: `.xterm-screen` is exactly `cols x rows` cells, so
- * dividing its box by the terminal's current dimensions gives the cell size
- * through public API alone. It also self-corrects — when "JetBrains Mono"
- * finishes loading and every glyph changes width, the next fit sees the new
- * number with nothing to invalidate.
+ * dividing its box by the grid it is drawn at gives the cell size through
+ * public API alone — which grid that is, is `readScreen`'s question. It also
+ * self-corrects — when "JetBrains Mono" finishes loading and every glyph
+ * changes width, the next fit sees the new number with nothing to invalidate.
  *
  * No `_renderService.clear()` before the resize, which is the one thing the
  * addon did that this drops. That guards against stale glyphs left in a canvas;
@@ -140,12 +183,13 @@ export function fitToHost(entry: PooledTerm): void {
 	const screen = host.querySelector('.xterm-screen');
 	if (!(screen instanceof HTMLElement)) return;
 
-	const rect = screen.getBoundingClientRect();
+	const reading = readScreen(screen.getBoundingClientRect(), term, entry.screen);
+	entry.screen = reading;
 	const next = proposeGeometry(
 		host.clientWidth,
 		host.clientHeight,
-		rect.width / term.cols,
-		rect.height / term.rows,
+		reading.width / reading.cols,
+		reading.height / reading.rows,
 	);
 	if (!next) return;
 	if (next.cols !== term.cols || next.rows !== term.rows) term.resize(next.cols, next.rows);
@@ -191,6 +235,10 @@ export interface PooledTerm {
 	 *  gives a session a new PTY, and a dead shell chip respawns into one (F23) —
 	 *  and because the two kinds read it from different stores. */
 	terminalId: () => string | undefined;
+	/** The last `.xterm-screen` reading `fitToHost` took, which is what tells a
+	 *  screen that has not caught up with a resize from one that has (see
+	 *  `readScreen`). Absent until the first fit. */
+	screen?: ScreenReading;
 }
 
 /** Keyed by session id for an agent, and by a `shell:<uuid>` for a footer shell
