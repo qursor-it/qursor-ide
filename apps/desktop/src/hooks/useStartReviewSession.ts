@@ -6,6 +6,7 @@ import { useWorktrees } from '@hooks/useWorktrees';
 import { buildPrReviewPrompt } from '@lib/prReviewPrompt';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
+import { usePrefsStore } from '@store/prefsStore';
 import { useTerminalStore } from '@store/terminalStore';
 
 /**
@@ -48,7 +49,12 @@ export function useStartReviewSession(
 		async ({ pr, repo, agent }) => {
 			const worktree = findPrWorktree(worktrees, pr);
 			const cwd = worktree?.path;
-			const prompt = buildPrReviewPrompt({ pr, repo, checkedOut: Boolean(cwd) });
+			const prompt = buildPrReviewPrompt({
+				pr,
+				repo,
+				checkedOut: Boolean(cwd),
+				instructions: usePrefsStore.getState().prReviewInstructions,
+			});
 			const sessionId = await cmd.startSession(projectId, agent, true);
 			const store = useTerminalStore.getState();
 			if (agent) store.setLaunchAgent(sessionId, agent);

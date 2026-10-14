@@ -5,6 +5,7 @@ import {
 	DialogTitle,
 	IconButton,
 	Input,
+	Label,
 	Select,
 	SelectContent,
 	SelectItem,
@@ -12,6 +13,7 @@ import {
 	SelectValue,
 	SettingRow,
 	Switch,
+	Textarea,
 } from '@factorai/ui';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
@@ -44,6 +46,7 @@ import { currentPrefs, type Prefs, usePrefsStore } from '@store/prefsStore';
 import { useUpdater } from '@hooks/useUpdater';
 import type { AgentId, UpdateChannel } from '@factorai/types';
 import { AGENTS } from '@lib/agents';
+import { DEFAULT_PR_REVIEW_INSTRUCTIONS } from '@lib/prReviewPrompt';
 
 const SECTION_LABELS: Record<SettingsSection, string> = {
 	appearance: 'Appearance',
@@ -54,6 +57,7 @@ const SECTION_LABELS: Record<SettingsSection, string> = {
 	confirmations: 'Confirmations',
 	sessions: 'Sessions',
 	routines: 'Routines',
+	pulls: 'Pull requests',
 	advanced: 'Advanced',
 	about: 'About',
 };
@@ -488,6 +492,37 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 						</div>
 					)}
 
+					{section === 'pulls' && (
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="settings-pr-review-instructions">Review instructions</Label>
+							<Textarea
+								id="settings-pr-review-instructions"
+								data-testid="settings-pr-review-instructions"
+								rows={6}
+								value={draft.prReviewInstructions}
+								placeholder={DEFAULT_PR_REVIEW_INSTRUCTIONS}
+								onChange={(e) => set('prReviewInstructions', e.target.value)}
+							/>
+							<p className="text-muted-foreground text-xs">
+								What the agent looks for and how it reports. Leave empty for the default. The pull
+								request, how to read it, and the rules against writing to GitHub are always added
+								before it. Sent as one line: line breaks, double quotes and percent signs are
+								removed.
+							</p>
+							<div>
+								<Button
+									variant="outline"
+									size="sm"
+									data-testid="settings-pr-review-reset"
+									disabled={draft.prReviewInstructions === ''}
+									onClick={() => set('prReviewInstructions', '')}
+								>
+									Reset to default
+								</Button>
+							</div>
+						</div>
+					)}
+
 					{section === 'advanced' && (
 						<div className="divide-y divide-border">
 							<SettingRow
@@ -582,5 +617,6 @@ function prefsOf(values: SettingsValues): Prefs {
 		updateChannel: _channel,
 		...prefs
 	} = values;
-	return prefs;
+	// Empty means the shipped default (F31); stored trimmed so it stays empty.
+	return { ...prefs, prReviewInstructions: prefs.prReviewInstructions.trim() };
 }

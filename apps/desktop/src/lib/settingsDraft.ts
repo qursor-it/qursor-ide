@@ -29,6 +29,9 @@ export const SETTINGS_SECTIONS = [
 	'confirmations',
 	'sessions',
 	'routines',
+	// Pull requests (F31) are daily use like routines, so before the set-once
+	// Advanced.
+	'pulls',
 	// After everything about daily use and before About: the update channel is
 	// set once, if ever, and About is where its effect is read.
 	'advanced',
@@ -113,6 +116,7 @@ export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	clock24: 'appearance',
 	theme: 'appearance',
 	keymapOverrides: 'keyboard',
+	prReviewInstructions: 'pulls',
 };
 
 /**
@@ -191,6 +195,10 @@ function sameValue(
 	}
 	if (key === 'routinesMaxConcurrent') {
 		return CONCURRENT(saved.routinesMaxConcurrent) === CONCURRENT(draft.routinesMaxConcurrent);
+	}
+	// Trimmed like the binary paths: a trailing newline is not an edit.
+	if (key === 'prReviewInstructions') {
+		return saved.prReviewInstructions.trim() === draft.prReviewInstructions.trim();
 	}
 	// Compared as the map each side *produces*, not as two objects: a row set
 	// back to the chord it already had is not an edit, and neither is the same

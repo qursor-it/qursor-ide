@@ -2333,6 +2333,14 @@ late**, they are not skipped. Both are text fields normalised on save the way th
 binary override is: a value that is not a whole number in range is treated as
 unset rather than written, because a cap of `NaN` reaches the scheduler.
 
+**Pull requests.** Between Routines and Advanced, one field: the **review
+instructions** (`prReviewInstructions`, `settings-pr-review-instructions`), a
+`Textarea` that sets the last sentence of the first message of "Review with
+agent" (F31). A renderer preference (ADR-0013): only the renderer reads it, when
+the session starts. Empty means the shipped default, shown as the placeholder and
+stored as `''` so an improved default still reaches everyone who never wrote
+their own; *Reset to default* clears it. It is compared and saved trimmed.
+
 **Advanced.** Added 2026-09-23, directly above About, with one row: the **update
 channel**, a `Select` of Stable and Alpha (F14, ADR-0064). A SQLite setting,
 because the update check that reads it runs in Rust; stable is written as *no row*,
@@ -7423,6 +7431,13 @@ with Claude and Codex both installed it opens a menu, `Review with Claude` /
   shape: a summary, findings grouped Blocking / Should fix / Minor with
   `file:line`, then questions for the author. **One line, no `"` and no `%`**, and
   **never the title or body**.
+- **The review instructions are configurable.** The report sentence is the one
+  part of the brief the human sets, in Settings > Pull requests (empty or
+  whitespace means the default above). The pull request context, the `gh`
+  commands, the untrusted-data rule and the no-writes-to-GitHub rule are fixed
+  and always come before it. The text is the human's own, so it is trusted as
+  instructions, but it goes through the same one-line cleaning: line breaks,
+  `"` and `%` are removed.
 - **Where it runs.** A linked worktree whose branch is `pr/<n>` or whose HEAD is
   the head commit becomes the session's working directory and is pinned as its
   worktree (F21); the brief says the head is checked out there. Otherwise the

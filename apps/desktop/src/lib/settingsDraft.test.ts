@@ -28,6 +28,7 @@ const SAVED: SettingsValues = {
 	frontmatterOpen: true,
 	restoreTabs: true,
 	keymapOverrides: {},
+	prReviewInstructions: '',
 };
 
 describe('isSettingsSection', () => {
@@ -83,11 +84,20 @@ describe('dirtySections', () => {
 			else if (key === 'routinesCatchupHours') draft.routinesCatchupHours = '12';
 			else if (key === 'routinesMaxConcurrent') draft.routinesMaxConcurrent = '4';
 			else if (key === 'keymapOverrides') draft.keymapOverrides = { openSettings: null };
+			else if (key === 'prReviewInstructions') draft.prReviewInstructions = 'Focus on tests.';
 			else if (key === 'updateChannel') draft.updateChannel = 'alpha';
 			else if (key === 'theme') draft.theme = 'light';
 			else draft[key] = !SAVED[key];
 			expect(dirtySections(SAVED, draft)).toEqual([SECTION_FOR[key]]);
 		}
+	});
+
+	it('marks pulls dirty for review instructions, but not for trailing whitespace', () => {
+		const saved: SettingsValues = { ...SAVED, prReviewInstructions: 'Focus on tests.' };
+		expect(dirtySections(saved, { ...saved, prReviewInstructions: 'Focus on docs.' })).toEqual([
+			'pulls',
+		]);
+		expect(isDirty(saved, { ...saved, prReviewInstructions: 'Focus on tests.\n ' })).toBe(false);
 	});
 
 	it('reports both confirm switches under the one section', () => {

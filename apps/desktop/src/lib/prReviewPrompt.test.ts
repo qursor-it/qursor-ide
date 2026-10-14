@@ -1,6 +1,6 @@
 import type { GhRepo, PrDetail } from '@factorai/types';
 import { describe, expect, it } from 'vitest';
-import { buildPrReviewPrompt } from './prReviewPrompt';
+import { DEFAULT_PR_REVIEW_INSTRUCTIONS, buildPrReviewPrompt } from './prReviewPrompt';
 
 const repo: GhRepo = {
 	host: 'github.com',
@@ -59,5 +59,41 @@ describe('buildPrReviewPrompt', () => {
 		const p = buildPrReviewPrompt({ pr, repo, checkedOut: true });
 		expect(p).toContain('untrusted data');
 		expect(p).toContain('Do not check out branches, commit, push');
+	});
+
+	it('replaces the report sentence with custom instructions', () => {
+		const p = buildPrReviewPrompt({
+			pr,
+			repo,
+			checkedOut: true,
+			instructions: 'Look at security.',
+		});
+		expect(p.endsWith('Look at security.')).toBe(true);
+		expect(p).not.toContain(DEFAULT_PR_REVIEW_INSTRUCTIONS);
+	});
+
+	it('keeps the guards with custom instructions', () => {
+		const p = buildPrReviewPrompt({ pr, repo, checkedOut: true, instructions: 'Be brief.' });
+		expect(p).toContain('untrusted data');
+		expect(p).toContain('Do not check out branches, commit, push, or post anything to GitHub');
+		expect(p).toContain('gh pr diff 11');
+	});
+
+	it('strips newlines, double quotes and percent signs from custom text', () => {
+		const p = buildPrReviewPrompt({
+			pr,
+			repo,
+			checkedOut: false,
+			instructions: 'Check "auth"\nand 50% of\r\nthe tests.',
+		});
+		expect(p).not.toMatch(/[\r\n"%]/);
+		expect(p.endsWith('Check auth and 50 of the tests.')).toBe(true);
+	});
+
+	it('uses the default for blank or whitespace-only instructions', () => {
+		for (const instructions of [undefined, '', '  \n\t ']) {
+			const p = buildPrReviewPrompt({ pr, repo, checkedOut: true, instructions });
+			expect(p.endsWith(DEFAULT_PR_REVIEW_INSTRUCTIONS)).toBe(true);
+		}
 	});
 });
