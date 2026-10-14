@@ -826,6 +826,20 @@ ADR-0002's transport.
 *Measure.* Main-thread time per chunk on WebKitGTK with `cat` of a large
 file, and the keystroke-to-glyph budget under load, before and after.
 
+**PERF-32 — On Windows the first session waited on a PowerShell start to learn `PATH`.**
+Impact M (about 140 ms with no PowerShell profile, seconds with oh-my-posh,
+conda or nvm in one), cost L. Found 2026-10-14 in a Windows pass.
+**Landed 2026-10-14.**
+`shell_path` asked Windows PowerShell for `PATH`, profile included, the way
+Unix asks the login shell, and `child_path` blocks on that answer — so the
+first spawn after launch waited on it, up to the 5 s timeout. On Windows
+`PATH` is not built by a shell: a logon joins the machine and user `Path`
+values under `Environment` in the registry. `resolve` now reads those
+(`RegGetValueW`, expanding `REG_EXPAND_SZ`), machine first, and appends any
+inherited entry they do not name, compared case-insensitively. No process is
+started. The one thing lost is an entry added only inside a PowerShell
+profile, which is not where Windows keeps `PATH`.
+
 **PERF-31 — Coming back to a terminal could grow its grid geometrically, until a resize failed with `Array buffer allocation failed`.**
 Impact H (the app slowed to a near-freeze, then threw), cost L. Found
 2026-10-14 from a user report on native Windows, with the stack running from
@@ -964,6 +978,15 @@ Tauri terminal measured as 528 to 652 ms of echo lag that dropped to 14 to
 Linux behind a try with an `onContextLoss` fallback to the DOM renderer and
 the flag above. *Measure.* Keystroke-to-glyph and `seq 1 1000000` on both
 engines, DOM and WebGL.
+**Landed on Windows 2026-10-14**, where the webview is WebView2 — Chromium,
+the engine VS Code's terminal runs xterm's WebGL renderer on — so neither
+WebKit fact above applies. `setGpuRenderer` in `Terminal.tsx` loads
+`@xterm/addon-webgl` (its own chunk) on the terminal a pane shows and disposes
+it on hide, so only visible terminals hold a context; a lost context falls
+back to the DOM renderer until the next show, and an addon that cannot be
+built turns it off for the run. macOS and Linux are unchanged and the entry
+stays open for them. The Windows numbers are owed: the browser lane is
+Chromium too, so it can take them.
 
 **PERF-20 — The graph body re-renders every loaded page on the 3 s status tick and on every panel-width frame.**
 Impact M with several pages on a large repository, cost L to memoise, M to
@@ -993,6 +1016,13 @@ default filter is `info,factorai_lib=debug` in release (`rs/lib.rs:50`), a
 sets no `visible: false`, so the first frame is a blank window. Impact L,
 cost L each: a crate feature `devtools = ["tauri/devtools"]` enabled by
 `pnpm dev`, `info` by default, and a show-on-ready.
+**The show-on-ready landed on Windows 2026-10-14**, where it costs most:
+WebView2 is a process of its own and the blank window lasted a few hundred
+milliseconds. `tauri.windows.conf.json` starts the window hidden, the root's
+first commit shows it (`lib/windowReveal.ts`, also called by the boot-failure
+screen), and `setup()` shows it after five seconds regardless, for a boot
+that never runs a line of script. The other two points, and the other
+platforms, are still open.
 
 **PERF-23 — Bridge and tool-server handlers run inline on a tokio worker.**
 `rs/services/ide/server.rs:280`, `rs/services/agent_tools/server.rs:150` call

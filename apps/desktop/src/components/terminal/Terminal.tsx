@@ -15,7 +15,7 @@ import { formatError } from '@lib/errors';
 import { isPanelDragging, onPanelDragEnd } from '@lib/panelDrag';
 import { hotkeysOverTerminal, mergeKeymap } from '@lib/keymap';
 import { cmd, copyText, events, openExternally } from '@lib/tauri';
-import { isMacOS } from '@lib/platform';
+import { isMacOS, isWindows } from '@lib/platform';
 import { currentTheme, onThemeChange } from '@lib/theme';
 import { usePrefsStore } from '@store/prefsStore';
 import { useTerminalStore } from '@store/terminalStore';
@@ -239,6 +239,72 @@ export interface PooledTerm {
 	 *  screen that has not caught up with a resize from one that has (see
 	 *  `readScreen`). Absent until the first fit. */
 	screen?: ScreenReading;
+	/** The WebGL renderer, while this terminal is the one on screen (PERF-19).
+	 *  Absent on the DOM renderer, which is every hidden terminal and every
+	 *  terminal off Windows. */
+	gpu?: { dispose: () => void };
+	/** Whether this terminal should be on the GPU right now. Read when the
+	 *  addon's chunk lands, which can be after the terminal was hidden again. */
+	wantsGpu?: boolean;
+}
+
+// ── GPU rendering on Windows (PERF-19) ─────────────────────────────────────
+//
+// xterm's DOM renderer redraws a row by rebuilding its elements, and Claude
+// Code redraws its whole screen often — every streamed token, every spinner
+// frame — so busy output was mostly layout. WebGL draws the grid on the GPU.
+//
+// **Windows only.** WebGL was left out because it crashed WebKitGTK on one
+// Linux setup, and WKWebView is unmeasured (`specs/10-performance.md` P8).
+// WebView2 is Chromium, where xterm's WebGL renderer is what VS Code's own
+// terminal runs on.
+//
+// **Only the terminal on screen holds a context.** Chromium caps live WebGL
+// contexts at about sixteen and drops the oldest past that, and a hidden
+// terminal is paused anyway (PERF-04), so the addon is loaded on show and
+// disposed on hide, which hands the terminal back to the DOM renderer without
+// touching the xterm or its buffer. A lost context does the same, and the next
+// show tries again; an addon that cannot be built at all turns this off for
+// the rest of the run.
+//
+// The addon is its own chunk, so no other platform downloads or parses it.
+
+let webglModule: Promise<typeof import('@xterm/addon-webgl')> | undefined;
+let webglUnavailable = false;
+
+function setGpuRenderer(entry: PooledTerm, on: boolean): void {
+	entry.wantsGpu = on;
+	if (!on) {
+		entry.gpu?.dispose();
+		entry.gpu = undefined;
+		return;
+	}
+	if (entry.gpu || webglUnavailable || !isWindows()) return;
+	webglModule ??= import('@xterm/addon-webgl');
+	webglModule
+		.then(({ WebglAddon }) => {
+			if (!entry.wantsGpu || entry.gpu || entry.disposed || webglUnavailable) return;
+			const addon = new WebglAddon();
+			addon.onContextLoss(() => {
+				addon.dispose();
+				if (entry.gpu === addon) entry.gpu = undefined;
+			});
+			entry.term.loadAddon(addon);
+			entry.gpu = addon;
+			// The GPU grid rounds its cell to device pixels where the DOM one did
+			// not, so the same box can hold a column more or less.
+			fitToHost(entry);
+		})
+		.catch((e) => {
+			webglUnavailable = true;
+			console.warn('WebGL renderer unavailable; staying on the DOM renderer', e);
+		});
+}
+
+/** Take the GPU renderer back from a terminal that is leaving the screen —
+ *  what a pane's teardown calls beside hiding its host. */
+export function releaseGpuRenderer(entry: PooledTerm): void {
+	setGpuRenderer(entry, false);
 }
 
 /** Keyed by session id for an agent, and by a `shell:<uuid>` for a footer shell
@@ -370,6 +436,7 @@ export function showOnly(container: HTMLElement, active: PooledTerm): void {
 		// rendering.
 		entry.host.style.visibility = hidden ? 'hidden' : '';
 		entry.host.style.transform = hidden ? OFFSCREEN : '';
+		setGpuRenderer(entry, !hidden);
 	}
 }
 
@@ -478,9 +545,9 @@ export function getOrCreateTerm(
 	});
 	term.loadAddon(new WebLinksAddon(onLinkActivated));
 	term.loadAddon(new UnicodeGraphemesAddon());
-	// WebGL addon is deliberately not loaded: it crashes WebKitGTK on some
-	// Linux setups (the user's Zorin OS being one). DOM rendering is slower
-	// but reliable.
+	// No WebGL addon here: it crashes WebKitGTK on some Linux setups (the
+	// user's Zorin OS being one), so every terminal opens on the DOM renderer.
+	// On Windows the one on screen moves to the GPU — see `setGpuRenderer`.
 	term.open(host);
 
 	const entry: PooledTerm = {
@@ -895,6 +962,7 @@ export function Terminal({ sessionId, projectId, projectCwd, sessionCwd }: Termi
 				// is looking at should not be rendering.
 				entry.host.style.visibility = 'hidden';
 				entry.host.style.transform = OFFSCREEN;
+				releaseGpuRenderer(entry);
 			};
 		};
 		if (pool.has(sessionId)) {

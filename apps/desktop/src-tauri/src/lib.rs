@@ -277,6 +277,19 @@ pub fn run() {
 				services::webview_health::install(&window, webview_health.clone());
 			}
 
+			// On Windows the window starts hidden and the renderer shows it on its
+			// first commit (PERF-22, `specs/10-performance.md`). This is the floor
+			// for a boot that never runs a line of script — a chunk that fails to
+			// load — which would otherwise leave the app running with no window.
+			// A second `show` of a visible window changes nothing.
+			#[cfg(windows)]
+			if let Some(window) = app.get_webview_window("main") {
+				std::thread::spawn(move || {
+					std::thread::sleep(std::time::Duration::from_secs(5));
+					let _ = window.show();
+				});
+			}
+
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),

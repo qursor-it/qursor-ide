@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createHashHistory, createRouter, RouterProvider } from '@tanstack/react-router';
 import { installQueryFocusListener } from '@lib/queryFocus';
+import { revealWindow } from '@lib/windowReveal';
+import { useEffect } from 'react';
 import { ErrorBoundary } from './components/layout/ErrorBoundary';
 import { indexRoute } from './routes/index';
 import { projectRoute } from './routes/project';
@@ -48,6 +50,9 @@ const queryClient = new QueryClient({
  * catch, and a boundary nested under them would go down with them.
  */
 export function App() {
+	// The root's effect runs after every child's, so this is the first commit of
+	// the whole tree — fallback included if a child threw (PERF-22).
+	useEffect(() => revealWindow(), []);
 	return (
 		<ErrorBoundary>
 			<QueryClientProvider client={queryClient}>
