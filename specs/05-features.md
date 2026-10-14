@@ -2849,9 +2849,10 @@ off the file-tree toggle (Q15). It belongs to the keybinding pass.
 **Behavior.** The top bar carries a tab per **open session**, for switching
 between agents without going through the sidebar.
 
-**Pull request tabs** (F31) share the strip: after the session tabs, in the same
-`tablist` (`aria-label` "Open tabs"), with their own store and persistence. The strip
-shows when there is at least one tab of either kind.
+**Pull request tabs** (F31) share the strip, in the same `tablist` (`aria-label`
+"Open tabs"), with their own store and persistence. They join their project's
+group (see "Grouped by project") and mix with its sessions. The strip shows when
+there is at least one tab of either kind.
 
 **A tab is an open session. The dot says whether it is running. A tab goes when
 you close it, and only then.** Rewritten 2026-08-18, and this paragraph used to
@@ -2888,7 +2889,7 @@ ordinary tab and everything above applies to it unchanged. What this costs is
 that `bySession` no longer answers "does this have a tab", which several surfaces
 had been entitled to assume; see ADR-0026 § Consequences.
 
-**UI.** Project avatar, session title, and a close button that appears on hover
+**UI.** Status dot, session title, and a close button that appears on hover
 or on the active tab; a permanent row of `×` is a row of accidents waiting.
 
 **Sized to be read — changed 2026-08-18 on user feedback.** The label is
@@ -2897,7 +2898,7 @@ than the 12px the strip shipped with, and a tab may reach **240px** before the
 title truncates, up from 176px. At the old pair a tab showed ~18 characters of
 a title claude derived from a first message, which is routinely not enough to
 tell two sessions in one project apart; 240px and 14px gives ~25. The tab stays
-`h-7.5` — the avatar (16px) and the close `×` (14px) moved up with the label
+`h-7.5` — the label and the close `×` (14px) moved up with the label
 too, so a wide tab reads as one object instead of text with specks beside it. The
 cap is still a *cap*: width follows the title, so a short one still makes a short
 tab.
@@ -2911,19 +2912,47 @@ running app, not asserted — 42 / 18 / 30 — because Tailwind's fractional spa
 steps are derived rather than enumerated, and a class that does not exist fails
 silently by rendering the default.
 
-**The avatar, badged with the status dot.** The avatar answers the question you
-actually have with several tabs open — which project is this one? The project's
-name joins the title in the tooltip. A session too new to be indexed shows its
-short id, matching the session header.
+**Grouped by project (ADR-0080).** Sessions and pull requests from several
+projects interleaved were hard to scan, so the strip is a run of **groups**, one
+per project with at least one open tab, like Chrome's tab groups.
 
-The badge was added 2026-08-18, and this paragraph used to argue against it:
-"every tab is a live PTY by definition, so a dot on each would be a row of green
-saying nothing". That was true while a live PTY was one state. F10 made it three,
-so the row of dots now says which session wants you — which is the most useful
-thing the tab strip can tell you, since it is the surface you are already looking
-at. Same corner badge as `ProjectIcon`, not a second mechanism.
+- **The chip.** A group starts with a label chip (`h-6`, `text-xs font-medium`,
+  at most 10rem, the name truncating): the project's `ProjectIcon` at 16px and its
+  display name in the foreground colour, on a 25% tint of the project's swatch
+  `fill` (ADR-0072 and ADR-0073, so the colour agrees with the sidebar; a tint so
+  the solid avatar still reads as a tile on it). Under the chip and its tabs
+  runs a 2px line in the same colour. Groups are 8px apart; tabs within one 4px.
+- **The tab drops the avatar.** The chip says which project, so a session tab
+  shows a `StatusDot` instead, alone: the dot is what says whether it is running
+  and which session wants you (F10). A pull request tab keeps its
+  `GitPullRequest` icon. The tooltip stays `project · title`, joined with ` · `
+  because a `title` is one line.
+- **Collapse, like Chrome.** Clicking the chip, or `Enter` / `Space` on it,
+  folds the group down to the chip and a count of its tabs (`zulu · 3`). If the
+  active tab is in a folded group, that one tab stays drawn after the chip, so the
+  strip never hides where you are. Which groups are folded is **persisted**
+  (`factorai.tabLayout`). Next / previous tab step through what is drawn, so a
+  folded group's hidden tabs are skipped. The chip is `role="button"` with
+  `aria-expanded` and `aria-label` "<name> tabs"; it sits in the `tablist` but is
+  not a tab, and each group is a `role="group"` named for the project.
+- **Membership and order are separate.** What is open is still `terminalStore.tabs`
+  and `prTabStore.tabs`. `tabLayoutStore` only orders: `groupOrder` (project ids),
+  `itemOrder` (`s:<sessionId>` and `pr:<projectId>#<number>` keys) and
+  `collapsed`. A project or tab the layout does not name is appended in open
+  order, sessions before pull requests, so a strip restored from before groups
+  existed groups itself with no migration; keys for tabs that are gone are
+  ignored. Removing a project forgets its layout.
+- **Drag and keyboard.** Dragging a **tab** reorders it within its group only; a
+  drop on another group's tab does nothing. Dragging the **chip** moves the whole
+  group. `Alt`+`←` / `Alt`+`→` does the same from the keyboard: on a tab it moves
+  the tab one place within its group, on the chip it moves the group.
 
-- **Reorder** by dragging, with **dnd-kit** — pointer events, never the OS drag
+The status dot replaced the avatar's corner badge inside a group, which was
+added 2026-08-18 on the argument that the row of tabs is the surface you are
+already looking at, so it should say which session wants you. That argument
+stands; only the carrier changed.
+
+- **Reorder** by dragging a tab (within its group) or a chip (the group), with **dnd-kit** — pointer events, never the OS drag
   session. **Changed 2026-08-18 on a user report, and the report was macOS-only.**
   This shipped as ~40 lines of native HTML5 drag-and-drop, and this bullet used to
   justify that as the cheaper side of a trade against a ~30KB dependency. The
@@ -2968,7 +2997,8 @@ at. Same corner badge as `ProjectIcon`, not a second mechanism.
     navigate — and would otherwise mean clicking a tab no longer switches session.
   - **Dragging to the strip's edge scrolls it**, which the HTML5 implementation
     could not do at all.
-- **`Alt`+`←` / `Alt`+`→` moves the focused tab** one place, because a
+- **`Alt`+`←` / `Alt`+`→` moves the focused tab** one place within its group (or the
+  focused chip, the group), because a
   drag-only reorder is unreachable without a mouse. Not dnd-kit's
   `KeyboardSensor`: it lifts an item with the space bar, and space on a
   `role="tab"` already means *activate this tab*. A nudge needs no mode, and
@@ -2977,7 +3007,8 @@ at. Same corner badge as `ProjectIcon`, not a second mechanism.
   would eat a third of the strip) and a wheel handler mapping vertical scroll
   onto it — otherwise the wheel does nothing over the header and the tabs read
   as stuck. Switching session scrolls the new active tab into view.
-- **Order** appends at the end and is **persisted** — see "Restored on launch"
+- **Order** is per group (see "Grouped by project"); a new tab appends at the end
+  of its project's group, and the order is **persisted** — see "Restored on launch"
   below. This bullet used to end "persisting it would be meaningless: quitting
   kills every PTY (ADR-0005), so there are no tabs to restore", which was true
   only for as long as a tab *was* a PTY. ADR-0005 is untouched; what changed is

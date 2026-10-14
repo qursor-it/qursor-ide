@@ -42,15 +42,6 @@ describe('prTabStore', () => {
 		expect(keys()).toEqual(['a#12']);
 	});
 
-	it('reorders within the strip', () => {
-		const { open, reorder } = usePrTabStore.getState();
-		open('a', 1);
-		open('a', 2);
-		open('a', 3);
-		reorder('a', 3, 0);
-		expect(keys()).toEqual(['a#3', 'a#1', 'a#2']);
-	});
-
 	it('drops every tab of a removed project', () => {
 		const { open, closeProject } = usePrTabStore.getState();
 		open('a', 1);

@@ -62,18 +62,17 @@ test('@smoke a status event moves every dot for that session', async ({ page }) 
 	await expect(page.locator('main header [title="Working"]')).toHaveCount(1);
 });
 
-test('@smoke the tab avatar carries the status', async ({ page }) => {
+test('@smoke the tab carries the status as a dot', async ({ page }) => {
 	await openSession(page);
 	await emitStatus(page, 'waiting_input');
 
-	// Badged on the avatar, not a sibling in the tab — same corner badge the
-	// sidebar's project icon uses. F16 argued against a dot per tab when every
-	// live PTY looked the same; it does not any more.
-	const badged = page
-		.locator('header')
-		.getByTestId('project-icon')
-		.filter({ has: page.locator('[title="Waiting for input"]') });
-	await expect(badged).not.toHaveCount(0);
+	// A dot on the tab itself: inside a project's group the chip names the
+	// project, so the avatar badge the tab used to wear is gone (F16, ADR-0080).
+	const dot = page
+		.getByTestId('session-tabs')
+		.getByRole('tab')
+		.locator('[title="Waiting for input"]');
+	await expect(dot).toHaveCount(1);
 });
 
 test('@smoke closing a session that is working asks first', async ({ page }) => {

@@ -3,6 +3,7 @@ import { disposeTerminal } from '@components/terminal/Terminal';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { usePrTabStore } from '@store/prTabStore';
+import { useTabLayoutStore } from '@store/tabLayoutStore';
 import { type LiveTerminal, useTerminalStore } from '@store/terminalStore';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
@@ -84,6 +85,7 @@ export function useRemoveProject(): (projectId: string) => Promise<void> {
 			closeProject(projectId);
 			// Its pull request tabs go with it, for the same reason.
 			usePrTabStore.getState().closeProject(projectId);
+			useTabLayoutStore.getState().forgetProject(projectId);
 
 			await cmd.removeProject(projectId);
 			await queryClient.invalidateQueries({ queryKey: queryKeys.projects() });

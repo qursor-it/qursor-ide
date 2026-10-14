@@ -178,8 +178,6 @@ interface TerminalState {
 	 *  row goes with it, through `clearSessionWorktree`; this is only the
 	 *  in-flight half. */
 	clearWorktree: (sessionId: string) => void;
-	/** Move a tab, by session id, to the index of another. */
-	reorder: (sessionId: string, toIndex: number) => void;
 	/** Update status for the terminal with this id (`terminal:status`). */
 	setStatus: (terminalId: TerminalId, status: TerminalStatus) => void;
 	/** Drop the *terminal* with this id (`terminal:exit`) — and **keep the
@@ -390,15 +388,6 @@ export const useTerminalStore = create<TerminalState>()(
 					// and comes back on its own, which is what makes a restored strip
 					// mean anything.
 					return { bySession };
-				}),
-			reorder: (sessionId, toIndex) =>
-				set((s) => {
-					const from = s.tabs.findIndex((t) => t.sessionId === sessionId);
-					if (from < 0) return s;
-					const next = [...s.tabs];
-					const [moved] = next.splice(from, 1);
-					next.splice(Math.max(0, Math.min(next.length, toIndex)), 0, moved);
-					return { tabs: next };
 				}),
 			setStatus: (terminalId, status) =>
 				set((s) => {

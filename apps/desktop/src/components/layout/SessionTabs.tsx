@@ -3,11 +3,12 @@ import {
 	CloseSessionConfirm,
 	needsCloseConfirm,
 } from '@components/dialog/CloseSessionConfirm';
-import { ProjectIcon } from '@components/layout/ProjectIcon';
+import { StatusDot } from '@components/layout/StatusDot';
+import { TabGroup } from '@components/layout/TabGroup';
 import { RoutineOrigin } from '@components/routines/RoutineOrigin';
 import { disposeTerminal, restartSession } from '@components/terminal/Terminal';
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
+import type { CollisionDetection, DragEndEvent } from '@dnd-kit/core';
 import { restrictToHorizontalAxis } from '@dnd-kit/modifiers';
 import { SortableContext, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 // Aliased, and it has to be: this file also calls the *global* `CSS.escape`
@@ -19,9 +20,23 @@ import { useShortcuts } from '@hooks/useShortcuts';
 import { stepTab } from '@lib/keymap';
 import { queryKeys } from '@lib/queryKeys';
 import { tabsInKnownProjects } from '@lib/sessionGroups';
+import {
+	groupSortId,
+	groupTabs,
+	moveGroupByDelta,
+	moveGroupTo,
+	moveItemByDelta,
+	moveItemTo,
+	prTabDomId,
+	prTabKey,
+	projectIdOfGroupSortId,
+	sessionTabKey,
+	visibleKeys,
+} from '@lib/tabGroups';
 import { cmd } from '@lib/tauri';
 import { usePrefsStore } from '@store/prefsStore';
 import { usePrTabStore } from '@store/prTabStore';
+import { useTabLayoutStore } from '@store/tabLayoutStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
@@ -47,6 +62,12 @@ const DRAG_START_PX = 4;
  * a running PTY, not an open document" — with the strip driven straight off
  * `bySession`, so a tab went the moment its process exited. Now the strip is
  * driven off `tabs`, which is persisted, and `bySession` only colours it in.
+ *
+ * **The strip is grouped by project** (ADR-0080): each project with a tab open
+ * gets a coloured label chip, its tabs — sessions and pull requests mixed — and
+ * a line under the lot. Clicking the chip folds the group; the active tab stays
+ * drawn. What is open is `terminalStore` and `prTabStore`; how it is arranged
+ * is `tabLayoutStore`; `groupTabs` joins them.
  *
  * Renders nothing when nothing is open, so the header looks exactly as it did
  * before the first session — which is now "the first session ever" rather than
@@ -74,11 +95,15 @@ export function SessionTabs() {
 	);
 	const openTabs = useTerminalStore((s) => s.tabs);
 	const routineOrigins = useTerminalStore((s) => s.routineBySession);
-	const reorder = useTerminalStore((s) => s.reorder);
 	const detach = useTerminalStore((s) => s.detach);
 	const prTabsAll = usePrTabStore((s) => s.tabs);
 	const closePrTab = usePrTabStore((s) => s.close);
-	const reorderPr = usePrTabStore((s) => s.reorder);
+	const groupOrder = useTabLayoutStore((s) => s.groupOrder);
+	const itemOrder = useTabLayoutStore((s) => s.itemOrder);
+	const collapsedIds = useTabLayoutStore((s) => s.collapsed);
+	const setGroupOrder = useTabLayoutStore((s) => s.setGroupOrder);
+	const setItemOrder = useTabLayoutStore((s) => s.setItemOrder);
+	const toggleCollapsed = useTabLayoutStore((s) => s.toggleCollapsed);
 	const {
 		sessionId: activeId,
 		projectId: routeProjectId,
@@ -89,12 +114,9 @@ export function SessionTabs() {
 	const [closing, setClosing] = useState<string | null>(null);
 	const stripRef = useRef<HTMLDivElement>(null);
 
-	// The avatar answers "which project is this one?", and it carries the
-	// session's status as a corner badge (F10). It did not until 2026-08-18, on
-	// the reasoning that every tab is a live PTY by definition so a dot on each
-	// would be a row of green telling you nothing — true while a live PTY was one
-	// state. Now the row says which session wants you, and which are not running
-	// at all, on the surface you are already looking at.
+	// Inside a group the project is the chip, so a session tab carries only its
+	// status: the dot is the one thing that says whether it is running, and which
+	// of them wants you (F10, F16).
 	//
 	// This query is also the staleness gate: a persisted tab naming a project that
 	// no longer exists must not paint, so nothing renders until it resolves. There
@@ -108,31 +130,39 @@ export function SessionTabs() {
 	const tabs = useMemo(
 		() =>
 			tabsInKnownProjects(openTabs, projectsQ.data).map((t) => ({
-				id: t.sessionId,
+				sessionId: t.sessionId,
 				projectId: t.projectId,
 				status: bySession[t.sessionId]?.status ?? ('stopped' as const),
 			})),
 		[openTabs, projectsQ.data, bySession],
 	);
-	// `SortableContext` wants the ids, and it wants the same array identity across
-	// renders it doesn't change in.
-	const tabIds = useMemo(() => tabs.map((t) => t.id), [tabs]);
 
-	// Pull request tabs follow the session tabs in the same strip (F31). Same
+	// Pull request tabs share the strip, and their project's group (F31). Same
 	// staleness gate: a tab naming a project that no longer exists does not paint.
 	const prTabs = useMemo(
-		() =>
-			tabsInKnownProjects(prTabsAll, projectsQ.data).map((t) => ({
-				...t,
-				key: prTabKey(t.projectId, t.number),
-			})),
+		() => tabsInKnownProjects(prTabsAll, projectsQ.data),
 		[prTabsAll, projectsQ.data],
 	);
-	const prKeys = useMemo(() => prTabs.map((t) => t.key), [prTabs]);
-	const activePrKey =
-		!activeId && routeProjectId && routeNumber
+	const activeKey = activeId
+		? sessionTabKey(activeId)
+		: routeProjectId && routeNumber
 			? prTabKey(routeProjectId, Number(routeNumber))
 			: null;
+
+	const layout = useMemo(
+		() => ({ groupOrder, itemOrder, collapsed: collapsedIds }),
+		[groupOrder, itemOrder, collapsedIds],
+	);
+	const groups = useMemo(
+		() => groupTabs({ sessions: tabs, prs: prTabs, layout, activeKey }),
+		[tabs, prTabs, layout, activeKey],
+	);
+	const groupSortIds = useMemo(() => groups.map((g) => groupSortId(g.projectId)), [groups]);
+	const flatKeys = useMemo(() => visibleKeys(groups), [groups]);
+	const itemByKey = useMemo(
+		() => new Map(groups.flatMap((g) => g.items.map((i) => [i.key, i] as const))),
+		[groups],
+	);
 
 	const titles = useSessionTitles(tabs);
 	const projectById = useMemo(
@@ -149,14 +179,14 @@ export function SessionTabs() {
 	useEffect(() => {
 		const selector = activeId
 			? `[data-session-id="${CSS.escape(activeId)}"]`
-			: activePrKey
-				? `[data-pr-tab="${CSS.escape(activePrKey.slice(PR_KEY_PREFIX.length))}"]`
+			: activeKey
+				? `[data-pr-tab="${CSS.escape(prTabDomId(activeKey))}"]`
 				: null;
 		if (!selector) return;
 		stripRef.current
 			?.querySelector(selector)
 			?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-	}, [activeId, activePrKey]);
+	}, [activeId, activeKey]);
 
 	const openPr = useCallback(
 		(projectId: string, number: number) => {
@@ -174,11 +204,11 @@ export function SessionTabs() {
 	const closePr = useCallback(
 		(projectId: string, number: number) => {
 			closePrTab(projectId, number);
-			if (activePrKey === prTabKey(projectId, number)) {
+			if (!activeId && activeKey === prTabKey(projectId, number)) {
 				void navigate({ to: '/projects/$id', params: { id: projectId } });
 			}
 		},
-		[activePrKey, closePrTab, navigate],
+		[activeId, activeKey, closePrTab, navigate],
 	);
 
 	const openSession = useCallback(
@@ -259,15 +289,16 @@ export function SessionTabs() {
 	useShortcuts({
 		closeFocusedTab: () => {
 			if (!activeId) {
-				const pr = prTabs.find((t) => t.key === activePrKey);
+				const pr = prTabs.find((t) => prTabKey(t.projectId, t.number) === activeKey);
 				if (pr) closePr(pr.projectId, pr.number);
 				return;
 			}
-			const tab = tabs.find((t) => t.id === activeId);
+			const tab = tabs.find((t) => t.sessionId === activeId);
 			if (tab) requestClose(activeId, tab.projectId, 'button');
 		},
 		// **Strip order, not recency.** The tabs are draggable (F16), so their
-		// order is one the user arranged; stepping through it goes where the eye
+		// order is one the user arranged, and a folded group's hidden tabs are
+		// not stepped onto; stepping through it goes where the eye
 		// expects, and a most-recently-used cycle would make the same keystroke
 		// mean something different each time. `stepTab` wraps, so holding the key
 		// goes round rather than stopping at the end.
@@ -278,41 +309,54 @@ export function SessionTabs() {
 		previousTab: () => stepToTab(-1),
 	});
 
-	/** One tab along the strip, in the order the tabs are actually in. */
+	/** One tab along the strip, in the order the tabs are actually drawn. */
 	const stepToTab = useCallback(
 		(delta: 1 | -1) => {
-			// One order across both kinds: the sessions, then the pull requests.
-			const current = activeId ?? activePrKey;
-			if (!current) return;
-			const next = stepTab([...tabIds, ...prKeys], current, delta);
-			if (!next || next === current) return;
-			const pr = prTabs.find((t) => t.key === next);
-			if (pr) return openPr(pr.projectId, pr.number);
-			const tab = tabs.find((t) => t.id === next);
-			if (tab) openSession(tab.id, tab.projectId);
+			if (!activeKey) return;
+			const next = stepTab(flatKeys, activeKey, delta);
+			if (!next || next === activeKey) return;
+			const item = itemByKey.get(next);
+			if (item?.kind === 'pr') openPr(item.tab.projectId, item.tab.number);
+			else if (item) openSession(item.tab.sessionId, item.tab.projectId);
 		},
-		[activeId, activePrKey, openPr, openSession, prKeys, prTabs, tabIds, tabs],
+		[activeKey, flatKeys, itemByKey, openPr, openSession],
 	);
 
-	/** `arrayMove` semantics, which is what `terminalStore.reorder` already does:
-	 *  lift the tab out, then insert it at the index the drop landed on. */
+	/** A group is dragged among groups and a tab among the tabs of its own group,
+	 *  so the drop targets are narrowed to those and nothing else can be `over`. */
+	const collisionDetection = useCallback<CollisionDetection>(
+		(args) => {
+			const dragged = String(args.active.id);
+			const isGroup = projectIdOfGroupSortId(dragged) !== null;
+			const own = groups.find((g) => g.items.some((i) => i.key === dragged));
+			const allowed = new Set(own?.items.map((i) => i.key));
+			return closestCenter({
+				...args,
+				droppableContainers: args.droppableContainers.filter((c) =>
+					isGroup ? projectIdOfGroupSortId(String(c.id)) !== null : allowed.has(String(c.id)),
+				),
+			});
+		},
+		[groups],
+	);
+
+	/** A group dropped on a group reorders the groups; a tab dropped on a tab of
+	 *  its own group reorders that group. Both write the full visible order back. */
 	const onDragEnd = useCallback(
 		(event: DragEndEvent) => {
 			const { active, over } = event;
 			if (!over || active.id === over.id) return;
-			// A session tab is only ever dropped among sessions and a pull request
-			// tab among pull requests; a drop across the divide does nothing.
-			const prFrom = prTabs.find((t) => t.key === String(active.id));
-			if (prFrom) {
-				const prTo = prKeys.indexOf(String(over.id));
-				if (prTo >= 0) reorderPr(prFrom.projectId, prFrom.number, prTo);
+			const fromGroup = projectIdOfGroupSortId(String(active.id));
+			if (fromGroup) {
+				const toGroup = projectIdOfGroupSortId(String(over.id));
+				const next = toGroup ? moveGroupTo(groups, fromGroup, toGroup) : null;
+				if (next) setGroupOrder(next);
 				return;
 			}
-			const to = tabIds.indexOf(String(over.id));
-			if (to < 0) return;
-			reorder(String(active.id), to);
+			const next = moveItemTo(groups, String(active.id), String(over.id));
+			if (next) setItemOrder(next);
 		},
-		[prKeys, prTabs, reorder, reorderPr, tabIds],
+		[groups, setGroupOrder, setItemOrder],
 	);
 
 	/**
@@ -322,19 +366,25 @@ export function SessionTabs() {
 	 * `Alt`+arrows rather than dnd-kit's `KeyboardSensor`: that sensor takes the
 	 * space bar to lift an item, and space on a `role="tab"` means *activate this
 	 * tab*. Trading a gesture everybody knows for a lift-move-drop mode nobody
-	 * discovers is the wrong way round, and a nudge needs no mode at all.
+	 * discovers is the wrong way round, and a nudge needs no mode at all. On a tab
+	 * it moves the tab within its group; on the chip, the group.
 	 */
 	const nudge = useCallback(
-		(sessionId: string, delta: -1 | 1) => {
-			const from = tabIds.indexOf(sessionId);
-			const to = from + delta;
-			if (from < 0 || to < 0 || to >= tabIds.length) return;
-			reorder(sessionId, to);
+		(key: string, delta: -1 | 1) => {
+			const next = moveItemByDelta(groups, key, delta);
+			if (next) setItemOrder(next);
 		},
-		[reorder, tabIds],
+		[groups, setItemOrder],
+	);
+	const nudgeGroup = useCallback(
+		(projectId: string, delta: -1 | 1) => {
+			const next = moveGroupByDelta(groups, projectId, delta);
+			if (next) setGroupOrder(next);
+		},
+		[groups, setGroupOrder],
 	);
 
-	if (tabs.length === 0 && prTabs.length === 0) {
+	if (groups.length === 0) {
 		// Nothing open, but the row still needs something between the brand and the
 		// panel toggle: the strip is the only flexible element in that flex line,
 		// so returning null slides the toggle across to sit beside the app name.
@@ -343,15 +393,7 @@ export function SessionTabs() {
 		return <div className="flex-1" aria-hidden />;
 	}
 
-	const nudgePr = (key: string, delta: -1 | 1) => {
-		const from = prKeys.indexOf(key);
-		const to = from + delta;
-		const tab = prTabs[from];
-		if (!tab || to < 0 || to >= prKeys.length) return;
-		reorderPr(tab.projectId, tab.number, to);
-	};
-
-	const closingTab = closing ? tabs.find((t) => t.id === closing) : undefined;
+	const closingTab = closing ? tabs.find((t) => t.sessionId === closing) : undefined;
 
 	return (
 		<>
@@ -362,7 +404,7 @@ export function SessionTabs() {
 			    not do at all. */}
 			<DndContext
 				sensors={sensors}
-				collisionDetection={closestCenter}
+				collisionDetection={collisionDetection}
 				modifiers={[restrictToHorizontalAxis]}
 				onDragEnd={onDragEnd}
 			>
@@ -374,7 +416,7 @@ export function SessionTabs() {
 					// `overflow-x-auto` with the bar hidden: at 42px tall a scrollbar
 					// would eat a third of the strip. The wheel handler below is what
 					// makes it reachable without one.
-					className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1"
+					className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1"
 					onWheel={(e) => {
 						// A vertical wheel over a horizontal strip does nothing by default,
 						// which reads as "these tabs are stuck".
@@ -383,37 +425,54 @@ export function SessionTabs() {
 						}
 					}}
 				>
-					<SortableContext items={tabIds} strategy={horizontalListSortingStrategy}>
-						{tabs.map(({ id, projectId, status }) => (
-							<SessionTab
-								key={id}
-								id={id}
-								projectId={projectId}
-								status={status}
-								project={projectById.get(projectId)}
-								title={titles.get(id) ?? shortId(id)}
-								isActive={id === activeId}
-								onOpen={openSession}
-								onRequestClose={requestClose}
-								onNudge={nudge}
-								routine={routineOrigins[id]}
-							/>
-						))}
-					</SortableContext>
-					<SortableContext items={prKeys} strategy={horizontalListSortingStrategy}>
-						{prTabs.map((t) => (
-							<PrTabItem
-								key={t.key}
-								tabKey={t.key}
-								projectId={t.projectId}
-								number={t.number}
-								project={projectById.get(t.projectId)}
-								title={t.title}
-								isActive={t.key === activePrKey}
-								onOpen={openPr}
-								onClose={closePr}
-								onNudge={nudgePr}
-							/>
+					<SortableContext items={groupSortIds} strategy={horizontalListSortingStrategy}>
+						{groups.map((g) => (
+							<TabGroup
+								key={g.projectId}
+								projectId={g.projectId}
+								name={projectById.get(g.projectId)?.displayName ?? g.projectId}
+								collapsed={g.collapsed}
+								count={g.items.length}
+								onToggle={toggleCollapsed}
+								onNudge={nudgeGroup}
+							>
+								<SortableContext
+									items={g.visibleItems.map((i) => i.key)}
+									strategy={horizontalListSortingStrategy}
+								>
+									{g.visibleItems.map((item) =>
+										item.kind === 'session' ? (
+											<SessionTab
+												key={item.key}
+												tabKey={item.key}
+												id={item.tab.sessionId}
+												projectId={item.projectId}
+												status={item.tab.status}
+												project={projectById.get(item.projectId)}
+												title={titles.get(item.tab.sessionId) ?? shortId(item.tab.sessionId)}
+												isActive={item.key === activeKey}
+												onOpen={openSession}
+												onRequestClose={requestClose}
+												onNudge={nudge}
+												routine={routineOrigins[item.tab.sessionId]}
+											/>
+										) : (
+											<PrTabItem
+												key={item.key}
+												tabKey={item.key}
+												projectId={item.projectId}
+												number={item.tab.number}
+												project={projectById.get(item.projectId)}
+												title={item.tab.title}
+												isActive={item.key === activeKey}
+												onOpen={openPr}
+												onClose={closePr}
+												onNudge={nudge}
+											/>
+										),
+									)}
+								</SortableContext>
+							</TabGroup>
 						))}
 					</SortableContext>
 				</div>
@@ -423,13 +482,15 @@ export function SessionTabs() {
 				sessionName={closing ? (titles.get(closing) ?? shortId(closing)) : null}
 				canConfirm={Boolean(closing && bySession[closing])}
 				onCancel={() => setClosing(null)}
-				onConfirm={() => closingTab && closeSession(closingTab.id, closingTab.projectId)}
+				onConfirm={() => closingTab && closeSession(closingTab.sessionId, closingTab.projectId)}
 			/>
 		</>
 	);
 }
 
 interface SessionTabProps {
+	/** The sortable id and layout key (`sessionTabKey`). */
+	tabKey: string;
 	id: string;
 	projectId: string;
 	/** `stopped` when nothing is running — which is every restored tab, and every
@@ -440,7 +501,7 @@ interface SessionTabProps {
 	isActive: boolean;
 	onOpen: (sessionId: string, projectId: string) => void;
 	onRequestClose: (sessionId: string, projectId: string, gesture: CloseGesture) => void;
-	onNudge: (sessionId: string, delta: -1 | 1) => void;
+	onNudge: (tabKey: string, delta: -1 | 1) => void;
 	/** The routine that started this session, when one did (F22). A tabbed
 	 *  routine session is one you opened, and this is what still says where it
 	 *  came from. */
@@ -448,7 +509,7 @@ interface SessionTabProps {
 }
 
 /**
- * One tab: project avatar, title, close control — and the drag itself.
+ * One tab: status dot, title, close control — and the drag itself.
  *
  * Its own component because `useSortable` is a hook, so every sortable item is
  * one. That is the whole of the refactor the library asked for.
@@ -460,6 +521,7 @@ interface SessionTabProps {
  * `aria-keyshortcuts` says so in the one place a screen reader will read it.
  */
 function SessionTab({
+	tabKey,
 	id,
 	projectId,
 	status,
@@ -471,7 +533,7 @@ function SessionTab({
 	onNudge,
 	routine,
 }: SessionTabProps) {
-	const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({ id });
+	const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({ id: tabKey });
 
 	return (
 		<div
@@ -516,7 +578,7 @@ function SessionTab({
 			onKeyDown={(e) => {
 				if (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
 					e.preventDefault();
-					onNudge(id, e.key === 'ArrowLeft' ? -1 : 1);
+					onNudge(tabKey, e.key === 'ArrowLeft' ? -1 : 1);
 					return;
 				}
 				if (e.key === 'Enter' || e.key === ' ') {
@@ -525,13 +587,13 @@ function SessionTab({
 				}
 			}}
 			tabIndex={0}
-			title={`${project?.displayName ?? projectId} — ${title}`}
+			title={`${project?.displayName ?? projectId} · ${title}`}
 		>
-			{/* The badge is the only thing that says whether this session is running.
+			{/* The dot is the only thing that says whether this session is running.
 			    No dimming, no italics: at 14px a second treatment says the same thing
 			    twice and makes the strip harder to read, not easier (F16). */}
-			<ProjectIcon name={project?.displayName ?? projectId} size={16} status={status} />
-			{/* A routine started this one (F22). Beside the avatar rather than in
+			<StatusDot status={status} />
+			{/* A routine started this one (F22). Beside the dot rather than in
 			    the title, so it stays visible when a long title truncates. */}
 			{routine && <RoutineOrigin name={routine.routineName} />}
 			<span className="min-w-0 flex-1 truncate">{title}</span>
@@ -558,14 +620,6 @@ function SessionTab({
 	);
 }
 
-const PR_KEY_PREFIX = 'pr:';
-
-/** The id a pull request tab sorts and is found by: the project's id keeps the
- *  same number in two projects apart. */
-function prTabKey(projectId: string, number: number): string {
-	return `${PR_KEY_PREFIX}${projectId}#${number}`;
-}
-
 interface PrTabItemProps {
 	tabKey: string;
 	projectId: string;
@@ -580,7 +634,7 @@ interface PrTabItemProps {
 
 /**
  * A pull request tab (F31): the same shape as a session tab, without a status
- * badge — there is no process behind it — and a close that never asks.
+ * dot — there is no process behind it — and a close that never asks.
  */
 function PrTabItem({
 	tabKey,
@@ -602,7 +656,7 @@ function PrTabItem({
 			role="tab"
 			aria-selected={isActive}
 			aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
-			data-pr-tab={tabKey.slice(PR_KEY_PREFIX.length)}
+			data-pr-tab={prTabDomId(tabKey)}
 			{...listeners}
 			style={{ transform: DndCss.Translate.toString(transform), transition }}
 			className={`group flex h-7.5 max-w-60 shrink-0 cursor-pointer touch-none items-center gap-1.5 rounded px-2 text-sm ${
@@ -630,7 +684,7 @@ function PrTabItem({
 				}
 			}}
 			tabIndex={0}
-			title={`${project?.displayName ?? projectId} — ${label}`}
+			title={`${project?.displayName ?? projectId} · ${label}`}
 		>
 			<GitPullRequest className="size-4 shrink-0" aria-hidden />
 			<span className="min-w-0 flex-1 truncate">{label}</span>

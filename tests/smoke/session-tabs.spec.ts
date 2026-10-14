@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import {
+	ALPHA_ID,
 	FOO_ID,
 	ZULU_ID,
 	fixtureOneProjectOneSession,
@@ -154,8 +155,7 @@ test.describe('session tabs', () => {
 		await openSession(page, /Zulu task 10/);
 		await openSession(page, /Zulu task 9/);
 
-		// By session id, not by text: a tab renders the project avatar's initials
-		// as text too, so `allTextContents` gives "ZUZulu task 11".
+		// By session id rather than by text, which also carries the routine mark.
 		const order = () =>
 			page
 				.getByTestId('session-tabs')
@@ -291,6 +291,130 @@ test.describe('session tabs', () => {
 		const rightEdgeGap =
 			(bar?.x ?? 0) + (bar?.width ?? 0) - ((toggle?.x ?? 0) + (toggle?.width ?? 0));
 		expect(rightEdgeGap).toBeLessThan(24);
+	});
+});
+
+test.describe('tab groups', () => {
+	/** zulu's two sessions, then alpha's: two projects, three tabs. */
+	async function openThree(page: Page) {
+		await installMockBridge(page, fixtureTwoProjectsManySessions());
+		await page.goto('/');
+		await page.getByRole('button', { name: 'Expand zulu' }).click();
+		await page.getByRole('button', { name: 'Expand alpha' }).click();
+		await openSession(page, /Zulu task 11/);
+		await openSession(page, /Zulu task 10/);
+		await openSession(page, /Alpha only task/);
+	}
+
+	const groupOf = (page: Page, projectId: string) =>
+		page.locator(`[data-testid="tab-group"][data-project-id="${projectId}"]`);
+	const chipOf = (page: Page, projectId: string) =>
+		page.locator(`[data-testid="tab-group-chip"][data-project-id="${projectId}"]`);
+	const groupOrder = (page: Page) =>
+		page
+			.getByTestId('tab-group')
+			.evaluateAll((groups) => groups.map((g) => g.getAttribute('data-project-id')));
+
+	test('@smoke tabs are grouped under a chip for their project', async ({ page }) => {
+		await openThree(page);
+
+		await expect(page.getByTestId('tab-group')).toHaveCount(2);
+		expect(await groupOrder(page)).toEqual([ZULU_ID, ALPHA_ID]);
+		await expect(chipOf(page, ZULU_ID)).toHaveAttribute('aria-expanded', 'true');
+		await expect(chipOf(page, ZULU_ID)).toContainText('zulu');
+		await expect(groupOf(page, ZULU_ID).getByRole('tab')).toHaveCount(2);
+		await expect(groupOf(page, ALPHA_ID).getByRole('tab')).toHaveCount(1);
+		// The project is the chip, so a tab carries a status dot and no avatar.
+		await expect(
+			page.getByTestId('session-tabs').getByRole('tab').getByTestId('project-icon'),
+		).toHaveCount(0);
+		await expect(
+			groupOf(page, ZULU_ID)
+				.getByRole('tab')
+				.first()
+				.locator(
+					'[title="Stopped"], [title="Live, status unknown"], [title="Working"], [title="Waiting for input"]',
+				),
+		).toHaveCount(1);
+	});
+
+	test('@smoke the chip folds a group down and brings it back', async ({ page }) => {
+		await openThree(page);
+
+		await chipOf(page, ZULU_ID).click();
+
+		await expect(groupOf(page, ZULU_ID)).toHaveAttribute('data-collapsed', 'true');
+		await expect(chipOf(page, ZULU_ID)).toHaveAttribute('aria-expanded', 'false');
+		await expect(groupOf(page, ZULU_ID).getByRole('tab')).toHaveCount(0);
+		await expect(groupOf(page, ZULU_ID).getByTestId('tab-group-count')).toHaveText('· 2');
+		// The other group is untouched, and the click did not navigate.
+		await expect(groupOf(page, ALPHA_ID).getByRole('tab')).toHaveCount(1);
+		await expect(page).toHaveURL(/alpha-session-1$/);
+
+		// The keyboard does the same.
+		await chipOf(page, ZULU_ID).focus();
+		await page.keyboard.press('Enter');
+		await expect(groupOf(page, ZULU_ID)).toHaveAttribute('data-collapsed', 'false');
+		await expect(groupOf(page, ZULU_ID).getByRole('tab')).toHaveCount(2);
+	});
+
+	test('@smoke a folded group keeps the tab you are on', async ({ page }) => {
+		await openThree(page);
+
+		await chipOf(page, ALPHA_ID).click();
+
+		await expect(groupOf(page, ALPHA_ID)).toHaveAttribute('data-collapsed', 'true');
+		const tabs = groupOf(page, ALPHA_ID).getByRole('tab');
+		await expect(tabs).toHaveCount(1);
+		await expect(tabs).toHaveAttribute('aria-selected', 'true');
+	});
+
+	test('@smoke a folded group stays folded after a reload', async ({ page }) => {
+		await openThree(page);
+		await chipOf(page, ZULU_ID).click();
+		await expect(groupOf(page, ZULU_ID)).toHaveAttribute('data-collapsed', 'true');
+		// The write is deferred a beat; a hidden page flushes it.
+		await page.waitForTimeout(400);
+
+		await page.reload();
+
+		await expect(groupOf(page, ZULU_ID)).toHaveAttribute('data-collapsed', 'true');
+	});
+
+	test('@smoke Alt+arrows on a chip move the whole group', async ({ page }) => {
+		await openThree(page);
+
+		await chipOf(page, ALPHA_ID).focus();
+		await page.keyboard.press('Alt+ArrowLeft');
+
+		expect(await groupOrder(page)).toEqual([ALPHA_ID, ZULU_ID]);
+	});
+
+	test('@smoke dragging a chip moves the whole group', async ({ page }) => {
+		await openThree(page);
+		const from = await chipOf(page, ALPHA_ID).boundingBox();
+		const to = await chipOf(page, ZULU_ID).boundingBox();
+		if (!from || !to) throw new Error('chips not laid out');
+
+		await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 10 });
+		await page.mouse.up();
+
+		expect(await groupOrder(page)).toEqual([ALPHA_ID, ZULU_ID]);
+		// Releasing a drag on a chip is not a click.
+		await expect(groupOf(page, ALPHA_ID)).toHaveAttribute('data-collapsed', 'false');
+	});
+
+	test('@smoke Alt+arrows on a tab stop at the edge of its group', async ({ page }) => {
+		await openThree(page);
+
+		await page.getByRole('tab', { name: /Alpha only task/ }).focus();
+		await page.keyboard.press('Alt+ArrowLeft');
+
+		// It is alone in its group, so there is nowhere to go.
+		expect(await groupOrder(page)).toEqual([ZULU_ID, ALPHA_ID]);
+		await expect(groupOf(page, ALPHA_ID).getByRole('tab')).toHaveCount(1);
 	});
 });
 

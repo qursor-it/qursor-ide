@@ -681,6 +681,14 @@ agent session.
 
 - 30px tall, capped at 240px wide, 4px radius, 14px label, an 8px status dot on
   the left and a close affordance on the right that appears on hover or focus.
+- **Grouped by project (ADR-0080).** Each project with an open tab starts a group
+  with a **label chip**: 24px tall, 4px radius, `text-xs` medium, the project's
+  16px avatar and name in `foreground` on a 25% tint of the project's swatch
+  `fill` — a tint, so the solid avatar still reads as a tile on it — at most
+  10rem wide. A **2px line** in the same colour runs under the chip and its
+  tabs; groups sit 8px apart, tabs in a group 4px. Inside a group the tab's status
+  dot stands alone where the avatar was. Clicking the chip **collapses** the group
+  to the chip and a `· n` count, keeping only the active tab beside it.
 - Active tab: `secondary` ground and full-strength text. Inactive: transparent
   and muted.
 - Reordering is pointer-based (dnd-kit) with a 4px activation distance so a click

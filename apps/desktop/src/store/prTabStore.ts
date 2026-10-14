@@ -24,8 +24,6 @@ interface PrTabState {
 	setTitle: (projectId: string, number: number, title: string) => void;
 	setFile: (projectId: string, number: number, file: string) => void;
 	close: (projectId: string, number: number) => void;
-	/** Move a tab to `toIndex` within the pull request tabs. */
-	reorder: (projectId: string, number: number, toIndex: number) => void;
 	closeProject: (projectId: string) => void;
 }
 
@@ -81,15 +79,6 @@ export const usePrTabStore = create<PrTabState>()(
 				}),
 			close: (projectId, number) =>
 				set((s) => ({ tabs: s.tabs.filter((t) => !same(t, projectId, number)) })),
-			reorder: (projectId, number, toIndex) =>
-				set((s) => {
-					const from = s.tabs.findIndex((t) => same(t, projectId, number));
-					if (from < 0) return s;
-					const next = [...s.tabs];
-					const [moved] = next.splice(from, 1);
-					next.splice(Math.max(0, Math.min(next.length, toIndex)), 0, moved);
-					return { tabs: next };
-				}),
 			closeProject: (projectId) =>
 				set((s) => ({ tabs: s.tabs.filter((t) => t.projectId !== projectId) })),
 		}),
