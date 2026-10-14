@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { showErrorNotice } from '@lib/errorNotice';
 import { installGlobalErrorHandlers } from '@lib/globalErrors';
 import { installTheme } from '@lib/theme';
+import { revealWindow } from '@lib/windowReveal';
 import { usePrefsStore } from '@store/prefsStore';
 import { App } from './App';
 import './styles/globals.css';
@@ -24,6 +25,8 @@ const root: HTMLElement = found;
  * live terminal with it. `classify()` in `lib/globalErrors` decides; see F17.
  */
 function showBootFailure(text: string): void {
+	// A hidden window would hide the one thing worth saying (PERF-22).
+	revealWindow();
 	root.innerHTML = `<pre style="color:#fff;background:#900;padding:16px;font:12px monospace;white-space:pre-wrap;">${escapeHtml(text)}</pre>`;
 }
 
