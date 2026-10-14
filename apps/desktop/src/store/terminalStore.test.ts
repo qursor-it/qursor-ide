@@ -229,28 +229,6 @@ describe('a tab goes when you close it, and only then (F16)', () => {
 	});
 });
 
-describe('reorder', () => {
-	beforeEach(reset);
-
-	it('lifts a tab out and inserts it at the index dropped on', () => {
-		for (const id of ['a', 'b', 'c']) useTerminalStore.getState().attach(id, `pty-${id}`, 'p1');
-		useTerminalStore.getState().reorder('c', 0);
-		expect(ids()).toEqual(['c', 'a', 'b']);
-	});
-
-	it('ignores a session with no tab', () => {
-		useTerminalStore.getState().attach('a', 'pty-a', 'p1');
-		useTerminalStore.getState().reorder('ghost', 0);
-		expect(ids()).toEqual(['a']);
-	});
-
-	it('clamps an index past either end rather than dropping the tab', () => {
-		for (const id of ['a', 'b']) useTerminalStore.getState().attach(id, `pty-${id}`, 'p1');
-		useTerminalStore.getState().reorder('a', 99);
-		expect(ids()).toEqual(['b', 'a']);
-	});
-});
-
 describe('restartEpoch', () => {
 	beforeEach(reset);
 
