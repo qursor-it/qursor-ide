@@ -288,14 +288,19 @@ function agentTerminalId(sessionId: string): string | undefined {
 const OFFSCREEN = 'translateX(-200vw)';
 
 /**
- * The terminal's copy chord (F5): `Cmd+C` on macOS, `Ctrl+Shift+C` elsewhere,
- * because a Linux `Ctrl+C` is the interrupt the agent's prompt is waiting for.
+ * The terminal's copy chord (F5): `Cmd+C` on macOS; `Ctrl+C` or `Ctrl+Shift+C`
+ * elsewhere.
+ *
+ * **Only ever asked while something is selected**, and that is what keeps a
+ * bare `Ctrl+C` the interrupt the agent's prompt is waiting for: with no
+ * selection it goes to the PTY untouched, and copying clears the selection, so
+ * the next `Ctrl+C` interrupts. The rule Windows Terminal and VS Code's terminal
+ * follow. macOS keeps `Ctrl+C` for the PTY outright, because `Cmd+C` is copy
+ * there and nobody reaches for the other.
  */
-function isCopyChord(event: KeyboardEvent): boolean {
+export function isCopyChord(event: KeyboardEvent, mac: boolean = isMacOS()): boolean {
 	if (event.key.toLowerCase() !== 'c' || event.altKey) return false;
-	return isMacOS()
-		? event.metaKey && !event.ctrlKey && !event.shiftKey
-		: event.ctrlKey && event.shiftKey && !event.metaKey;
+	return mac ? event.metaKey && !event.ctrlKey && !event.shiftKey : event.ctrlKey && !event.metaKey;
 }
 
 /**
@@ -384,8 +389,8 @@ export function getOrCreateTerm(
 		// Nothing without a modifier can be one of ours, and this runs on every
 		// keystroke typed into the terminal.
 		if (!event.ctrlKey && !event.metaKey) return true;
-		// **Copy the selection** (F5). Only with one, so a bare `Cmd+C` or
-		// `Ctrl+Shift+C` still reaches the PTY when nothing is selected.
+		// **Copy the selection** (F5). Only with one, so `Ctrl+C` is still the
+		// interrupt — and `Cmd+C` still reaches the PTY — when nothing is selected.
 		if (isCopyChord(event) && term.hasSelection()) {
 			event.preventDefault();
 			copySelection(term);

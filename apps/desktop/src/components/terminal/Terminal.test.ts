@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	createOscLinkHandler,
+	isCopyChord,
 	onLinkActivated,
 	proposeGeometry,
 } from '@components/terminal/Terminal';
@@ -113,5 +114,38 @@ describe('proposeGeometry', () => {
 	it('never proposes a grid too small to render into', () => {
 		// xterm's own floor. A pane dragged to nothing must not propose 0 columns.
 		expect(proposeGeometry(3, 4, 7.8, 17)).toEqual({ cols: 2, rows: 1 });
+	});
+});
+
+/**
+ * The copy chord (F5). Only ever consulted with a selection: without one every
+ * chord here goes to the PTY, which is what keeps a bare `Ctrl+C` the interrupt.
+ */
+describe('isCopyChord', () => {
+	function key(mods: Partial<KeyboardEvent> = {}, k = 'c'): KeyboardEvent {
+		return {
+			key: k,
+			ctrlKey: false,
+			metaKey: false,
+			shiftKey: false,
+			altKey: false,
+			...mods,
+		} as KeyboardEvent;
+	}
+
+	it('takes Ctrl+C and Ctrl+Shift+C off macOS, like Windows Terminal', () => {
+		expect(isCopyChord(key({ ctrlKey: true }), false)).toBe(true);
+		expect(isCopyChord(key({ ctrlKey: true, shiftKey: true }, 'C'), false)).toBe(true);
+	});
+
+	it('takes Cmd+C on macOS and leaves Ctrl+C to the PTY there', () => {
+		expect(isCopyChord(key({ metaKey: true }), true)).toBe(true);
+		expect(isCopyChord(key({ ctrlKey: true }), true)).toBe(false);
+	});
+
+	it('ignores Alt chords and other keys', () => {
+		expect(isCopyChord(key({ ctrlKey: true, altKey: true }), false)).toBe(false);
+		expect(isCopyChord(key({ ctrlKey: true }, 'v'), false)).toBe(false);
+		expect(isCopyChord(key({ metaKey: true }), false)).toBe(false);
 	});
 });

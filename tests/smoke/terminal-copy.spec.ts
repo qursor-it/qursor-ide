@@ -40,6 +40,28 @@ test.describe('terminal copy', () => {
 			.toBe('alpha-copy-token');
 	});
 
+	test('@smoke Ctrl+C copies the selection, then interrupts once it is gone', async ({ page }) => {
+		await printAndSelect(page, 'gamma-copy-token');
+		const host = page.getByTestId('shell-pane-host');
+		const interrupts = () =>
+			page.evaluate(
+				(id) =>
+					(window.__FACTORAI_TEST_CALLS__ ?? []).filter(
+						(c) => c.name === 'terminal_write' && c.args?.id === id && c.args?.data === '\x03',
+					).length,
+				PTY,
+			);
+		await page.keyboard.press('Control+C');
+		await expect
+			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+			.toBe('gamma-copy-token');
+		await expect(host.locator('.xterm-selection div')).toHaveCount(0);
+		expect(await interrupts()).toBe(0);
+		// Nothing selected now, so the same chord is the interrupt again.
+		await page.keyboard.press('Control+C');
+		await expect.poll(interrupts).toBe(1);
+	});
+
 	test('@smoke right-click copies the selection and clears it', async ({ page }) => {
 		await printAndSelect(page, 'beta-copy-token');
 		const host = page.getByTestId('shell-pane-host');
