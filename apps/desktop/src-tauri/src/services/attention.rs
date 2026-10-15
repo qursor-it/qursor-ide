@@ -99,12 +99,15 @@ impl AttentionNotifier {
 	/// The settle check: send only if nothing moved for `id` since
 	/// `generation`, the window is still in the background and the setting is on.
 	pub fn fire(&self, id: &TerminalId, generation: u64) {
-		let current = self.last.get(id).map(|e| (e.generation, e.status));
-		let Some((g, status)) = current else { return };
+		// A stale generation must neither send nor remove (a later event owns the entry).
+		let status = match self.last.get(id) {
+			Some(e) if e.generation == generation => e.status,
+			_ => return,
+		};
 		if status == TerminalStatus::Stopped {
-			self.last.remove(id);
+			self.last.remove_if(id, |_, e| e.generation == generation);
 		}
-		if g != generation || self.focused.load(Ordering::Relaxed) || !self.sink.enabled() {
+		if self.focused.load(Ordering::Relaxed) || !self.sink.enabled() {
 			return;
 		}
 		self.sink.send(id, status);
@@ -275,5 +278,23 @@ mod tests {
 		let before = sink.cleared.load(Ordering::Relaxed);
 		n.set_focused(true);
 		assert_eq!(sink.cleared.load(Ordering::Relaxed), before + 1);
+	}
+
+	#[test]
+	fn stale_check_does_not_swallow_a_later_exit() {
+		let (sink, n) = setup();
+		let id = "t".to_string();
+		n.observe(&ev("t", Working));
+		let g1 = n.observe(&ev("t", WaitingInput)).expect("due");
+		n.observe(&ev("t", Working));
+		let g3 = n.observe(&ev("t", Stopped)).expect("due");
+		n.fire(&id, g1);
+		assert!(sink.sent.lock().is_empty());
+		assert!(n.last.get("t").is_some());
+		n.fire(&id, g3);
+		assert_eq!(*sink.sent.lock(), vec![("t".to_string(), Stopped)]);
+		assert!(n.last.get("t").is_none());
+		n.fire(&id, g3);
+		assert_eq!(sink.sent.lock().len(), 1);
 	}
 }
