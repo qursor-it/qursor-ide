@@ -906,6 +906,35 @@ the footer shell readline runs `\n` like `Enter`, so nothing changes there; the
 `ESC CR` other terminals use for this would have switched bash into vi mode.
 Never while an input method is composing: that key belongs to the IME.
 
+**Dropping files on a terminal types their paths** (2026-10-15, ADR-0083), in
+the agent's terminal and in the footer shells. The drop is Tauri's native
+drag-drop event, listened for once for the app's lifetime; HTML5 drag-and-drop
+is dead on macOS (ADR-0016), and the window keeps its native file-drop for this.
+The event position is in physical pixels, so it is divided by
+`devicePixelRatio` (which already carries the webview zoom) before
+`document.elementFromPoint` finds the terminal under it. The paths go through
+`term.paste`, so bracketed paste applies and they leave through `onData` like
+typing. Each is quoted the way a terminal does: backslash-escaped on macOS and
+Linux, double-quoted on Windows when it has a space or a shell character; they
+are joined by a space, with one trailing space. Claude Code turns a pasted image
+path into an `[Image #N]` attachment itself and reads any other file from its
+path. While the drag is over a terminal it wears a 1px `primary` outline
+(`DESIGN.md` § Terminal Well), toggled as an attribute only when the target
+changes and removed on leave or drop. A drop anywhere else, or on a terminal with
+no live PTY, does nothing.
+
+**Pasting an image reaches Claude** (2026-10-15, ADR-0083), in a session whose
+agent is Claude. Claude Code reads an image from the OS clipboard when it
+receives its own image-paste key: `Alt+V` (`ESC v`) on Windows, `Ctrl+V`
+(`0x16`) on macOS and Linux. xterm turns the `paste` event into text, and an
+image has none, so a capture-phase `paste` listener on the terminal's host sends
+that key through `term.input` when the clipboard has an `image/*` item and no
+text, and stops xterm pasting an empty string. A paste with text is xterm's, as
+are Codex and the shells. `Ctrl+V` on Linux is already `0x16` from xterm and
+`Alt+V` on Windows already `ESC v`, so neither is sent twice; on Windows `Ctrl+V`
+is let through to the browser in Claude's terminal, because xterm would
+otherwise write `0x16` and cancel the paste, and `Cmd+V` on macOS already was.
+
 **No scrollbar, and the grid fills the pane** (2026-08-18). Both came out of one
 report — a white bar down the right of every session on macOS — and they are
 three separate faults that happened to stack in the same 30px.

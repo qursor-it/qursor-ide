@@ -253,6 +253,11 @@ a small set of signal and categorical hues that never leave their jobs.
   (ADR-0082): in dark they share the status and git hues at 70–96% lightness,
   4.5:1 on the well, with the two blacks at 3:1 so dim reads as dim. The well
   pads its output 16px at the sides and 12px top and bottom.
+  A terminal a file drag is over wears a **1px `primary` outline**, 4px outside
+  its box and drawn only while the pointer is over it (ADR-0083). It is the
+  focus ring's blue because it says the same thing, *this is where the input
+  goes*, and an outline rather than a fill or a border because neither may move
+  or recolour the output.
 
 ### Content colours
 

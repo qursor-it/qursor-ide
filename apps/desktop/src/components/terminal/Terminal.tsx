@@ -11,10 +11,16 @@ import { useFileLinks } from '@hooks/useFileLinks';
 import type { RoutineFireEvent } from '@factorai/types';
 import { matchesKeyboardEvent } from '@tanstack/react-hotkeys';
 import { base64ToBytes } from '@lib/base64';
+import {
+	claudeImagePasteInput,
+	isImageOnlyPaste,
+	isWindowsPasteChord,
+} from '@lib/claudeImagePaste';
+import { formatDroppedPaths, toCssPoint } from '@lib/droppedPaths';
 import { formatError } from '@lib/errors';
 import { isPanelDragging, onPanelDragEnd } from '@lib/panelDrag';
 import { hotkeysOverTerminal, mergeKeymap } from '@lib/keymap';
-import { cmd, copyText, events, openExternally } from '@lib/tauri';
+import { cmd, copyText, type DragDropEvent, events, openExternally } from '@lib/tauri';
 import { isMacOS, isWindows } from '@lib/platform';
 import { currentTheme, onThemeChange } from '@lib/theme';
 import { terminalOptions } from '@lib/monoFont';
@@ -507,6 +513,87 @@ function copySelection(term: XTerm): void {
 	void copyText(text).catch((e) => console.error('terminal copy failed', e));
 }
 
+/**
+ * Whether this PTY is a session's agent and that agent is Claude. A shell's id is
+ * in no `bySession` record, so it answers no; an agent whose record has not
+ * learned its name yet is the default one, Claude.
+ */
+function isClaudeTerminal(terminalId: string | undefined): boolean {
+	if (!terminalId) return false;
+	const session = Object.values(useTerminalStore.getState().bySession).find(
+		(t) => t.terminalId === terminalId,
+	);
+	return session !== undefined && (session.agent ?? 'claude') === 'claude';
+}
+
+// ── Dropping files on a terminal (F5, ADR-0083) ────────────────────────────
+//
+// **Tauri's native drag-drop, not HTML5** (ADR-0016): the webview reports every
+// drag session on the window as handled, so `drop` never reaches the page on
+// macOS. The native event carries paths — which is what a terminal wants — and a
+// position in physical pixels, which is how a drop finds the terminal under it.
+//
+// One listener for the app's lifetime, registered by the first terminal built,
+// like the theme and preference subscriptions above. Nothing else listens: the
+// window keeps its native file-drop for exactly this.
+
+/** The terminal the drag is over, and so the one wearing the outline. */
+let dropTarget: PooledTerm | undefined;
+
+/** Move the outline, touching the DOM only when the target changes — `over`
+ *  fires on every pointer move, and this is not worth a render. */
+function setDropTarget(next: PooledTerm | undefined): void {
+	if (next === dropTarget) return;
+	dropTarget?.host.removeAttribute('data-drop-target');
+	next?.host.setAttribute('data-drop-target', '');
+	dropTarget = next;
+}
+
+/** The live terminal under a physical-pixel position, if any. A hidden host is
+ *  not hit-testable (see `showOnly`), so only the one on screen can answer. */
+function terminalAt(position: { x: number; y: number }): PooledTerm | undefined {
+	const { x, y } = toCssPoint(position, window.devicePixelRatio);
+	const el = document.elementFromPoint(x, y);
+	if (!el) return undefined;
+	for (const entry of pool.values()) {
+		if (!entry.disposed && entry.host.contains(el)) return entry;
+	}
+	return undefined;
+}
+
+function onDragDrop(ev: DragDropEvent): void {
+	if (ev.type === 'leave') {
+		setDropTarget(undefined);
+		return;
+	}
+	const target = terminalAt(ev.position);
+	if (ev.type !== 'drop') {
+		setDropTarget(target);
+		return;
+	}
+	setDropTarget(undefined);
+	// A terminal with no PTY has nowhere to send the text: a dead shell, or an
+	// agent between a restart and its next spawn.
+	if (!target?.terminalId()) return;
+	const text = formatDroppedPaths(ev.paths, isWindows());
+	if (!text) return;
+	// `paste`, not `input`: bracketed paste applies where the program asked for
+	// it, and the text leaves through `onData` like everything typed.
+	target.term.paste(text);
+	target.term.focus();
+}
+
+let listeningForDrops = false;
+
+function listenForDrops(): void {
+	if (listeningForDrops) return;
+	listeningForDrops = true;
+	events.onDragDrop(onDragDrop).catch((e) => {
+		listeningForDrops = false;
+		console.warn('file drop unavailable', e);
+	});
+}
+
 export function showOnly(container: HTMLElement, active: PooledTerm): void {
 	for (const entry of pool.values()) {
 		if (entry.host.parentElement !== container) continue;
@@ -533,7 +620,8 @@ export function getOrCreateTerm(
 	// whether or not it is the visible one. `inset-0` of the container rather
 	// than `h-full w-full` of a padded box: the padding is on the wrapper, so the
 	// geometry `fitToHost` measures is the box inside it.
-	host.className = 'absolute inset-0';
+	host.className =
+		'absolute inset-0 data-drop-target:outline-1 data-drop-target:outline-offset-4 data-drop-target:outline-primary';
 	// Appended *before* `term.open`, so xterm's first measurement — char size,
 	// scrollbar width, the initial render dimensions — is taken on an element
 	// that has a layout. It used to open on a detached div and correct itself
@@ -580,6 +668,13 @@ export function getOrCreateTerm(
 	// for the app's life (see below), and a snapshot taken at construction would
 	// pass the chord the user has since moved away from.
 	term.attachCustomKeyEventHandler((event) => {
+		// **`Ctrl+V` on Windows is a paste in Claude's terminal** (F5), so an image
+		// on the clipboard can reach it. Nothing is written or cancelled here: the
+		// browser pastes, and the listener below sends the right key when there is
+		// no text. Only the agent's terminal, and only Claude's.
+		if (isWindowsPasteChord(event) && isWindows() && isClaudeTerminal(entry.terminalId())) {
+			return false;
+		}
 		if (isShiftEnter(event)) {
 			if (event.type === 'keydown') {
 				event.preventDefault();
@@ -677,6 +772,29 @@ export function getOrCreateTerm(
 	};
 	host.addEventListener('contextmenu', onContextMenu);
 	entry.cleanup.push(() => host.removeEventListener('contextmenu', onContextMenu));
+
+	// **An image on the clipboard reaches Claude as its own paste key** (F5,
+	// ADR-0083). xterm turns the `paste` event into text, and an image has none, so
+	// without this the chord does nothing. Claude Code reads the image from the OS
+	// clipboard when it gets `Alt+V` (Windows) or `Ctrl+V` (elsewhere), so that is
+	// what is sent — through `input`, so it takes the same road as a keystroke.
+	//
+	// On `host`, in the capture phase: that sits above xterm's own listener on its
+	// textarea, so it runs first whatever order the two were registered in, and
+	// stopping the event there is what keeps xterm from also pasting an empty
+	// string. A paste with any text is left to xterm untouched, and so is every
+	// terminal that is not Claude's: Codex has no such key, a shell no use for one.
+	const onPaste = (e: ClipboardEvent) => {
+		if (!e.clipboardData || !isImageOnlyPaste(e.clipboardData)) return;
+		if (!isClaudeTerminal(entry.terminalId())) return;
+		e.preventDefault();
+		e.stopPropagation();
+		term.input(claudeImagePasteInput(isWindows()), true);
+	};
+	host.addEventListener('paste', onPaste, true);
+	entry.cleanup.push(() => host.removeEventListener('paste', onPaste, true));
+
+	listenForDrops();
 
 	return entry;
 }
