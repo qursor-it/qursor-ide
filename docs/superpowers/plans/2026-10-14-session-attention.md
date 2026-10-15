@@ -1132,7 +1132,7 @@ and `desktopNotifications: 'sessions',` to `SECTION_FOR`. Run the test — Expec
     <SettingRow
     	label="Desktop notifications"
     	htmlFor="settings-desktop-notifications"
-    	description="When a session wants you and the window is in the background. On macOS and Linux they also depend on system settings."
+    	description="When a session wants you and the window is in the background. They also depend on your system's notification settings."
     >
     	<Switch
     		id="settings-desktop-notifications"
@@ -1202,9 +1202,10 @@ Expected: all green. `pnpm install --frozen-lockfile` must pass unchanged (no JS
 - [ ] **Step 2: Real window on Windows** (`pnpm dev` from the worktree):
   1. Open a project, start a Claude session, send a prompt that takes ~10 s.
   2. Switch to another app before it finishes. Expected: a toast titled with the project name, body "Waiting for you — <topic>"; the taskbar button flashes.
-  3. Return. Expected: flashing stops; the session's tab dot, sidebar row dot and project avatar dot are red.
-  4. With two sessions, let the non-active one finish while the app is in front. Expected: red dot on it, no OS toast. Click its tab: dot returns to blue.
-  5. Settings → Sessions → turn "Desktop notifications" off, repeat step 2. Expected: no toast, no flash; red dot still appears.
-  6. Screenshot steps 3 and 4 for the PR.
+  3. Return. Expected: flashing stops and the active session's dot clears (you are looking at it). Red is checked with a second, non-active session (step 4).
+  4. With two sessions, let the non-active one finish while the app is in front. Expected: its tab dot, sidebar row dot and project avatar dot are red, no OS toast. Click its tab: dot returns to blue.
+  5. Start a PR review or routine-style prompted session, blur the window, and wait for it to finish. Expected: a toast.
+  6. Settings → Sessions → turn "Desktop notifications" off, repeat step 2. Expected: no toast, no flash; red dot still appears.
+  7. Screenshot steps 3 and 4 for the PR.
 - [ ] **Step 3: macOS / Linux checklist** for the PR body (not run here): steps 2-5 on the built `.app` / AppImage; on Linux note X11 vs Wayland for the urgency hint.
 - [ ] **Step 4: Commit** any fix-ups, then stop: opening the PR (into `develop`, without `Closes #`, citing upstream #29/#30) is a separate decision for the user.

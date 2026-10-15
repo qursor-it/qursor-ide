@@ -34,8 +34,7 @@ Must work on Windows, macOS and Linux.
 5. **~1 s settle** before a desktop notification, so a momentary title flip
    does not notify.
 6. **Not in v1**: numeric count on the taskbar/Dock icon, sounds, clicking a
-   notification to open that specific session (a click only brings the window
-   forward — Tauri's desktop notification click handling is not reliable
+   notification to open that specific session (clicks are not handled; on macOS the OS brings the app forward — Tauri's desktop notification click handling is not reliable
    across platforms).
 
 ## The transition rule
@@ -88,16 +87,22 @@ each is tested against it.
   on, start a ~1 s timer. When it fires, send only if the session's last
   status is still the one that triggered it, the window is still unfocused
   and the setting is still on. One notification per transition.
+- A Claude spawn that carries an initial prompt (routine, PR review) emits one
+  `Working` event at spawn, before the reader starts, so the first event the
+  notifier sees is not the turn's end. A plain spawn emits nothing, so the boot
+  `✳` stays silent.
 - **Content**: title = project name. Body = "Waiting for you" / "Exited",
   followed by the topic Claude puts in the terminal title when there is one
-  (`"✳ Fix login bug"` → `"Waiting for you — Fix login bug"`). Rust does not
+  (`"✳ Fix login bug"` → `"Waiting for you — Fix login bug"`; the default title
+  `Claude Code` is not a topic). Rust does not
   know the session label the sidebar shows (the renderer derives it), hence
   the project name.
 - Together with the notification: `request_user_attention(Informational)` on
   the main window. Cleared (`request_user_attention(None)`) when the window
   regains focus.
-- A failed send (no notification daemon, permission denied) is logged with
-  `warn!` and ignored. The dot and taskbar/Dock attention still work.
+- The plugin delivers asynchronously on desktop, so most delivery failures (no
+  notification daemon, permission denied) are silent. The dot and the
+  taskbar/Dock attention request still carry the signal.
 
 ### Per platform
 
@@ -114,7 +119,7 @@ each is tested against it.
   Unset = on.
 - A "Desktop notifications" switch in `SettingsModal`, wired through
   `settingsDraft` and `cmd.setSetting('desktopNotifications', …)`, with the
-  hint "On macOS and Linux, notifications also depend on system settings."
+  hint "They also depend on your system's notification settings."
 - The unseen dot has no setting.
 
 ## Architecture

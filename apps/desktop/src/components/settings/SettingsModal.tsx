@@ -586,7 +586,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 							<SettingRow
 								label="Desktop notifications"
 								htmlFor="settings-desktop-notifications"
-								description="When a session wants you and the window is in the background. On macOS and Linux they also depend on system settings."
+								description="When a session wants you and the window is in the background. They also depend on your system's notification settings."
 							>
 								<Switch
 									id="settings-desktop-notifications"

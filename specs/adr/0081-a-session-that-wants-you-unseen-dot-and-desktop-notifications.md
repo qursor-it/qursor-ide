@@ -21,7 +21,7 @@ Roadmap items 34 and 35 (upstream issues #29 and #30) ask for the same thing fro
 ## Consequences
 
 - The transition rule exists in two languages (`services/attention.rs::wants_you`, `lib/attention.ts::wantsYou`); each is tested against the same table, and F32 holds the one copy in prose.
-- A click on a notification only brings the window forward; opening that session is not attempted, as click handling is not reliable across the desktop platforms.
+- Clicks on a notification are not handled (on macOS the OS brings the app forward); opening that session is not attempted, as click handling is not reliable across the desktop platforms.
 - `working → waiting_input → stopped` inside one settle window sends nothing: the `stopped` is not a wants-you transition from `waiting_input`, and the pending check is stale.
 - The two sides seed differently: Rust ignores a terminal's first event, the renderer treats the previous status as `working`. A session that boots to `✳` while not active and focused is marked unseen in the app but never notified.
 - Delivery depends on the platform (F32 has the table): macOS notifications are tied to the bundle id and to System Settings, Linux needs a notification daemon, and Wayland may ignore the urgency hint.

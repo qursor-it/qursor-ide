@@ -56,7 +56,7 @@ same tooling versions.
 | --------------------- | --------------------------------------------------------------- |
 | Shell                 | `tauri = "2"` with `devtools` feature                           |
 | Async runtime         | `tokio` (full)                                                  |
-| Plugins               | `tauri-plugin-shell`, `tauri-plugin-dialog`, `tauri-plugin-fs`, `tauri-plugin-process`, `tauri-plugin-updater`, `tauri-plugin-clipboard-manager` |
+| Plugins               | `tauri-plugin-shell`, `tauri-plugin-dialog`, `tauri-plugin-fs`, `tauri-plugin-process`, `tauri-plugin-updater`, `tauri-plugin-clipboard-manager`, `tauri-plugin-notification` |
 | DB                    | `rusqlite` (bundled SQLite, FTS5 feature)                       |
 | PTY                   | `portable-pty` (cross-platform)                                 |
 | File watching         | `notify = "6"` (debounced)                                      |

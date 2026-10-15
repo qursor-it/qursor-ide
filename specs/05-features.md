@@ -7621,6 +7621,11 @@ over its sessions' marks, including in the collapsed rail. Not on the lists in
   terminal since (a generation counter; a stale check neither sends nor removes
   state), the window is still unfocused, and `notifications.desktop` is not
   `off`. One notification per transition.
+- **A prompted Claude spawn announces `Working` first** (a routine, a PR review):
+  `spawn_inner` emits one `Working` event through the tapped callback before the
+  reader starts, so the notifier has a state to compare the turn's end against.
+  A plain interactive spawn emits nothing. The renderer already seeds `working`,
+  so the extra event changes nothing there.
 - **A terminal's first status event never alerts**: Claude boots to the idle `✳`
   title, which would otherwise notify on every start.
 - **Edge.** `working → waiting_input → stopped` inside one settle window sends
@@ -7630,13 +7635,17 @@ over its sessions' marks, including in the collapsed rail. Not on the lists in
   synchronously when the status event arrives, because an exiting terminal is
   removed from the manager before the settle check runs. Title: the project's
   display name, else the app name. Body: "Waiting for you" or "Exited", plus
-  " — <topic>" when there is one.
+  " — <topic>" when there is one. The CLI's default title `Claude Code` names no
+  topic, so an unnamed session gets the plain body. The Settings hint says the
+  notifications also depend on the system's notification settings (Windows
+  Focus/Do Not Disturb included).
 - With it, `request_user_attention(Informational)` on the main window, cleared
   when the window regains focus.
-- A failed send (no notification daemon, permission denied) is logged with
-  `warn!` and ignored; the dot still works.
+- The plugin delivers asynchronously on desktop, so most delivery failures (no
+  notification daemon, permission denied) are silent. The dot and the attention
+  request still carry the signal.
 - Plugin: `tauri-plugin-notification`. No JS capability: the renderer never sends.
-- A click on the notification only brings the window forward; it does not open
+- Clicks are not handled: on macOS the OS brings the app forward; nothing opens
   the session. Not built: a count on the taskbar or Dock icon, sounds.
 
 ### Setting
