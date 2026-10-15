@@ -13,7 +13,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use tracing::warn;
 
-use crate::services::terminal::{TerminalId, TerminalStatus, TerminalStatusEvent};
+use crate::services::terminal::{AlertContext, TerminalId, TerminalStatus, TerminalStatusEvent};
 
 /// How long a wants-you status must hold before it notifies (F32): long
 /// enough to swallow a momentary title flip, short enough to feel immediate.
@@ -46,8 +46,12 @@ pub fn alert_body(status: TerminalStatus, topic: Option<&str>) -> String {
 pub trait NotifySink: Send + Sync {
 	/// The setting, read at send time.
 	fn enabled(&self) -> bool;
+	/// What a notification for `id` needs to name it. Read when the status
+	/// event arrives, because an exiting terminal is gone from the manager by
+	/// the time the settle check fires (F32).
+	fn context(&self, id: &TerminalId) -> Option<AlertContext>;
 	/// Raise the notification and the taskbar / Dock attention.
-	fn send(&self, id: &TerminalId, status: TerminalStatus);
+	fn send(&self, id: &TerminalId, status: TerminalStatus, ctx: Option<&AlertContext>);
 	/// The window came back: stop asking for attention.
 	fn clear_attention(&self);
 }
@@ -98,7 +102,7 @@ impl AttentionNotifier {
 
 	/// The settle check: send only if nothing moved for `id` since
 	/// `generation`, the window is still in the background and the setting is on.
-	pub fn fire(&self, id: &TerminalId, generation: u64) {
+	pub fn fire(&self, id: &TerminalId, generation: u64, ctx: Option<AlertContext>) {
 		// A stale generation must neither send nor remove (a later event owns the entry).
 		let status = match self.last.get(id) {
 			Some(e) if e.generation == generation => e.status,
@@ -110,7 +114,7 @@ impl AttentionNotifier {
 		if self.focused.load(Ordering::Relaxed) || !self.sink.enabled() {
 			return;
 		}
-		self.sink.send(id, status);
+		self.sink.send(id, status, ctx.as_ref());
 	}
 
 	/// `observe`, then `fire` on a short-lived thread after the settle.
@@ -118,10 +122,12 @@ impl AttentionNotifier {
 		let Some(generation) = self.observe(e) else { return };
 		let me = Arc::clone(self);
 		let id = e.id.clone();
+		// Still on the caller's thread, before the waiter removes the terminal.
+		let ctx = self.sink.context(&id);
 		let spawned =
 			std::thread::Builder::new().name("attention-settle".into()).spawn(move || {
 				std::thread::sleep(me.settle);
-				me.fire(&id, generation);
+				me.fire(&id, generation, ctx);
 			});
 		if let Err(err) = spawned {
 			warn!(%err, "could not schedule the attention check");
@@ -170,15 +176,19 @@ impl NotifySink for TauriSink {
 		desktop_notifications_on(value.as_deref())
 	}
 
-	fn send(&self, id: &TerminalId, status: TerminalStatus) {
+	fn context(&self, id: &TerminalId) -> Option<AlertContext> {
+		use tauri::Manager;
+		let state = self.app.try_state::<crate::state::AppState>()?;
+		state.terminals.alert_context(id)
+	}
+
+	fn send(&self, _id: &TerminalId, status: TerminalStatus, ctx: Option<&AlertContext>) {
 		use rusqlite::OptionalExtension;
 		use tauri::Manager;
 		use tauri_plugin_notification::NotificationExt;
 
 		let Some(state) = self.app.try_state::<crate::state::AppState>() else { return };
-		let ctx = state.terminals.alert_context(id);
 		let title = ctx
-			.as_ref()
 			.and_then(|c| {
 				state
 					.db
@@ -195,7 +205,7 @@ impl NotifySink for TauriSink {
 					.flatten()
 			})
 			.unwrap_or_else(|| self.app.package_info().name.clone());
-		let body = alert_body(status, ctx.as_ref().and_then(|c| c.topic.as_deref()));
+		let body = alert_body(status, ctx.and_then(|c| c.topic.as_deref()));
 
 		if let Err(err) = self.app.notification().builder().title(title).body(body).show() {
 			// No daemon on this Linux desktop, or notifications denied on macOS:
@@ -230,6 +240,8 @@ mod tests {
 	struct FakeSink {
 		disabled: AtomicBool,
 		sent: Mutex<Vec<(TerminalId, TerminalStatus)>>,
+		sent_ctx: Mutex<Vec<Option<AlertContext>>>,
+		ctx: Mutex<Option<AlertContext>>,
 		cleared: AtomicU64,
 	}
 
@@ -237,8 +249,12 @@ mod tests {
 		fn enabled(&self) -> bool {
 			!self.disabled.load(Ordering::Relaxed)
 		}
-		fn send(&self, id: &TerminalId, status: TerminalStatus) {
+		fn context(&self, _id: &TerminalId) -> Option<AlertContext> {
+			self.ctx.lock().clone()
+		}
+		fn send(&self, id: &TerminalId, status: TerminalStatus, ctx: Option<&AlertContext>) {
 			self.sent.lock().push((id.clone(), status));
+			self.sent_ctx.lock().push(ctx.cloned());
 		}
 		fn clear_attention(&self) {
 			self.cleared.fetch_add(1, Ordering::Relaxed);
@@ -294,7 +310,7 @@ mod tests {
 		let (sink, n) = setup();
 		n.observe(&ev("t", Working));
 		let g = n.observe(&ev("t", WaitingInput)).expect("due");
-		n.fire(&"t".to_string(), g);
+		n.fire(&"t".to_string(), g, None);
 		assert_eq!(*sink.sent.lock(), vec![("t".to_string(), WaitingInput)]);
 	}
 
@@ -313,7 +329,7 @@ mod tests {
 		n.observe(&ev("t", Working));
 		let g = n.observe(&ev("t", WaitingInput)).expect("due");
 		n.observe(&ev("t", Working));
-		n.fire(&"t".to_string(), g);
+		n.fire(&"t".to_string(), g, None);
 		assert!(sink.sent.lock().is_empty());
 	}
 
@@ -323,7 +339,7 @@ mod tests {
 		n.observe(&ev("t", Working));
 		let g = n.observe(&ev("t", WaitingInput)).expect("due");
 		n.set_focused(true);
-		n.fire(&"t".to_string(), g);
+		n.fire(&"t".to_string(), g, None);
 		assert!(sink.sent.lock().is_empty());
 	}
 
@@ -333,7 +349,7 @@ mod tests {
 		sink.disabled.store(true, Ordering::Relaxed);
 		n.observe(&ev("t", Working));
 		let g = n.observe(&ev("t", WaitingInput)).expect("due");
-		n.fire(&"t".to_string(), g);
+		n.fire(&"t".to_string(), g, None);
 		assert!(sink.sent.lock().is_empty());
 	}
 
@@ -342,7 +358,7 @@ mod tests {
 		let (sink, n) = setup();
 		n.observe(&ev("t", Working));
 		let g = n.observe(&ev("t", Stopped)).expect("due");
-		n.fire(&"t".to_string(), g);
+		n.fire(&"t".to_string(), g, None);
 		assert_eq!(*sink.sent.lock(), vec![("t".to_string(), Stopped)]);
 		assert!(n.last.get("t").is_none());
 	}
@@ -372,13 +388,32 @@ mod tests {
 		let g1 = n.observe(&ev("t", WaitingInput)).expect("due");
 		n.observe(&ev("t", Working));
 		let g3 = n.observe(&ev("t", Stopped)).expect("due");
-		n.fire(&id, g1);
+		n.fire(&id, g1, None);
 		assert!(sink.sent.lock().is_empty());
 		assert!(n.last.get("t").is_some());
-		n.fire(&id, g3);
+		n.fire(&id, g3, None);
 		assert_eq!(*sink.sent.lock(), vec![("t".to_string(), Stopped)]);
 		assert!(n.last.get("t").is_none());
-		n.fire(&id, g3);
+		n.fire(&id, g3, None);
 		assert_eq!(sink.sent.lock().len(), 1);
+	}
+
+	#[test]
+	fn the_context_read_at_observe_time_reaches_send_unchanged() {
+		let (sink, n) = setup();
+		let n = Arc::new(n);
+		let ctx = AlertContext { project_id: "p1".into(), topic: Some("Fix login".into()) };
+		*sink.ctx.lock() = Some(ctx.clone());
+		n.observe(&ev("t", Working));
+		n.on_status(&ev("t", Stopped));
+		// The settle is zero, but the check runs on its own thread.
+		for _ in 0..200 {
+			if !sink.sent.lock().is_empty() {
+				break;
+			}
+			std::thread::sleep(Duration::from_millis(10));
+		}
+		assert_eq!(*sink.sent.lock(), vec![("t".to_string(), Stopped)]);
+		assert_eq!(*sink.sent_ctx.lock(), vec![Some(ctx)]);
 	}
 }
