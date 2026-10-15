@@ -81,6 +81,8 @@
 	   darker blue (`DESIGN.md` § Primary) reaches the dot too: the brand
 	   `#7193c8` on a 98% ground is a dot you have to look for. */
 	--color-status-waiting: var(--primary);
+	/* A session that wanted you while you were not looking (F32, ADR-0081). */
+	--color-status-unseen: var(--destructive);
 	--color-status-stopped: oklch(55% 0.01 250);
 	/* A fourth colour and **not** a fourth state (F22): it is `working` for a
 	   session running with no tab — a routine's, until somebody opens it. Blue

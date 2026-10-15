@@ -38,6 +38,7 @@ import { formatError } from '@lib/errors';
 import { type SessionMark, pendingSessions } from '@lib/sessionGroups';
 import { cmd, copyText } from '@lib/tauri';
 import type { DropIndicator } from '@lib/sidebarTree';
+import { useAttentionStore } from '@store/attentionStore';
 import { useSidebarStore } from '@store/sidebarStore';
 import { usePrefsStore } from '@store/prefsStore';
 import { useTerminalStore } from '@store/terminalStore';
@@ -145,6 +146,8 @@ interface SidebarProjectProps {
 	 *  when it has none (F10). Was `isLive: boolean` while a live PTY was one
 	 *  state and the dot could only mean "connected". */
 	liveStatus?: TerminalStatus;
+	/** Any of the project's sessions wanted you unseen (F32). */
+	liveUnseen?: boolean;
 	/** False under the `name` and `recent` sorts, where the displayed order is
 	 *  derived and a drop has nowhere to land. It switches off the drag, the
 	 *  keyboard nudge and the structural menu rows together — a gesture that is
@@ -179,6 +182,7 @@ export function SidebarProject({
 	project,
 	isActive,
 	liveStatus,
+	liveUnseen,
 	canReorder,
 	onNudge,
 	dwellProgress = 0,
@@ -349,7 +353,12 @@ export function SidebarProject({
 							// is always "moved from where?" and the name alone can't answer it.
 							title={project.missing ? `Folder not found: ${project.realPath}` : undefined}
 						>
-							<ProjectIcon name={project.displayName} size={16} status={liveStatus} />
+							<ProjectIcon
+								name={project.displayName}
+								size={16}
+								status={liveStatus}
+								unseen={liveUnseen}
+							/>
 							<span className="min-w-0 flex-1 truncate">{project.displayName}</span>
 							{project.missing && (
 								<span className="shrink-0 text-muted-foreground/70 text-xs">missing</span>
@@ -550,6 +559,7 @@ export function SessionList({
 	// The marks rather than the open record, for F22's reason: a routine's
 	// session is live with no tab, and this is where you look for it.
 	const open = useSessionMarks();
+	const unseen = useAttentionStore((s) => s.unseen);
 	const bySession = useTerminalStore((s) => s.bySession);
 	// Which of these a routine started (F22) — from the store, because a routine's
 	// session is live long before the indexer has a row with `routineId` on it.
@@ -644,6 +654,7 @@ export function SessionList({
 						<StatusDot
 							status={p.status}
 							background={open[p.sessionId]?.background ?? true}
+							unseen={unseen[p.sessionId] === true}
 							className="size-1.5"
 						/>
 					</Link>
@@ -765,6 +776,7 @@ interface SessionRowProps {
  * of it.
  */
 function SessionRow({ session, projectId, mark, subagentCount, clock24, pad }: SessionRowProps) {
+	const unseen = useAttentionStore((s) => s.unseen);
 	const deleteSession = useDeleteSession();
 	const setPinned = useSetSessionPinned();
 	// A pin that failed says so on the row, the same way a failed copy does: the
@@ -891,7 +903,12 @@ function SessionRow({ session, projectId, mark, subagentCount, clock24, pad }: S
 							// full-size dot is the loudest thing on screen. It stayed at 6px when
 							// the rows went to 14px — it marks which session is open, and a mark
 							// that grows with its label starts competing with it.
-							<StatusDot status={mark.status} background={mark.background} className="size-1.5" />
+							<StatusDot
+								status={mark.status}
+								background={mark.background}
+								unseen={unseen[session.id] === true}
+								className="size-1.5"
+							/>
 						)}
 					</Link>
 				</ContextMenuTrigger>

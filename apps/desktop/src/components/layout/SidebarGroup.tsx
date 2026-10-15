@@ -24,6 +24,7 @@ interface SidebarGroupProps {
 	canReorder: boolean;
 	activeProjectId: string | undefined;
 	statusByProject: Map<string, TerminalStatus | undefined>;
+	unseenByProject: Map<string, boolean>;
 	onNudge: (rowId: string, delta: -1 | 1) => void;
 	/** 0 → 1 while a drag rests on this collapsed group and the spring-open is
 	 *  filling. The same ring the group offer uses, because there is one timed
@@ -77,6 +78,7 @@ export function SidebarGroup({
 	canReorder,
 	activeProjectId,
 	statusByProject,
+	unseenByProject,
 	onNudge,
 	dwellProgress = 0,
 	dwelling = false,
@@ -245,6 +247,7 @@ export function SidebarGroup({
 							project={child.project}
 							isActive={activeProjectId === child.project.id}
 							liveStatus={statusByProject.get(child.project.id)}
+							liveUnseen={unseenByProject.get(child.project.id)}
 							canReorder={canReorder}
 							onNudge={onNudge}
 							indicator={

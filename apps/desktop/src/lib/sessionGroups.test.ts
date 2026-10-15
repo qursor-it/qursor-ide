@@ -5,6 +5,7 @@ import {
 	openSessions,
 	pendingSessions,
 	projectStatus,
+	projectUnseen,
 	sessionMarks,
 	tabsInKnownProjects,
 } from './sessionGroups';
@@ -258,5 +259,21 @@ describe('sessionMarks (F22)', () => {
 	it('keeps a stopped tab, which has no live process at all', () => {
 		const marks = sessionMarks([{ sessionId: 'a', projectId: 'p1' }], {});
 		expect(marks.a).toEqual({ projectId: 'p1', status: 'stopped', background: false });
+	});
+});
+
+describe('projectUnseen', () => {
+	const marks = {
+		a: { projectId: 'p1' },
+		b: { projectId: 'p1' },
+		c: { projectId: 'p2' },
+	};
+
+	it('is true when any of the project’s marked sessions is unseen', () => {
+		expect(projectUnseen(marks, { b: true }, 'p1')).toBe(true);
+	});
+
+	it('ignores other projects and sessions with no mark', () => {
+		expect(projectUnseen(marks, { c: true, zz: true }, 'p1')).toBe(false);
 	});
 });

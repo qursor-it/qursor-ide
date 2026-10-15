@@ -15,9 +15,11 @@ interface ProjectIconProps {
 	/** Live PTY status for this project, badged on the icon's top-right corner
 	 *  rather than sitting as one more thing in the row (F1). */
 	status?: TerminalStatus;
+	/** Any of the project's sessions wanted you unseen (F32). */
+	unseen?: boolean;
 }
 
-export function ProjectIcon({ name, size = 24, status }: ProjectIconProps) {
+export function ProjectIcon({ name, size = 24, status, unseen }: ProjectIconProps) {
 	const swatch = useProjectSwatch(name);
 	const initials = pickInitials(name);
 	return (
@@ -54,6 +56,7 @@ export function ProjectIcon({ name, size = 24, status }: ProjectIconProps) {
 			{status && (
 				<StatusDot
 					status={status}
+					unseen={unseen}
 					// Sat on the avatar's top-right corner: half the badge overflows to
 					// the right, a little under half above. Expressed as translates of
 					// the badge's OWN size, so the proportion holds at any `size` — a

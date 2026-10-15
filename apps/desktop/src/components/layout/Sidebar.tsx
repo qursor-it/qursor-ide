@@ -48,7 +48,7 @@ import { useAddProject } from '@hooks/useAddProject';
 import { useDragDwell } from '@hooks/useDragDwell';
 import { useSessionMarks } from '@hooks/useSessionMarks';
 import { queryKeys } from '@lib/queryKeys';
-import { projectStatus } from '@lib/sessionGroups';
+import { projectStatus, projectUnseen } from '@lib/sessionGroups';
 import {
 	type DropIndicator,
 	type DropTarget,
@@ -67,6 +67,7 @@ import {
 	visibleRowIds,
 } from '@lib/sidebarTree';
 import { cmd } from '@lib/tauri';
+import { useAttentionStore } from '@store/attentionStore';
 import { useAddProjectStore } from '@store/addProjectStore';
 import { useIndexerStore } from '@store/indexerStore';
 import { type ProjectSort, useSidebarStore } from '@store/sidebarStore';
@@ -214,6 +215,11 @@ export const Sidebar = memo(function Sidebar() {
 		const ids = new Set(Object.values(open).map((t) => t.projectId));
 		return new Map([...ids].map((id) => [id, projectStatus(open, id)]));
 	}, [open]);
+	const unseen = useAttentionStore((s) => s.unseen);
+	const unseenByProject = useMemo(() => {
+		const ids = new Set(Object.values(open).map((t) => t.projectId));
+		return new Map([...ids].map((id) => [id, projectUnseen(open, unseen, id)]));
+	}, [open, unseen]);
 	const { projectId: activeProjectId } = useActiveProject();
 
 	const collapsed = useSidebarStore((s) => s.collapsed);
@@ -567,6 +573,7 @@ export const Sidebar = memo(function Sidebar() {
 				toggle={toggleButton}
 				rows={rows}
 				statusByProject={statusByProject}
+				unseenByProject={unseenByProject}
 				onAddProject={() => void addProject()}
 				adding={adding}
 			/>
@@ -739,6 +746,7 @@ export const Sidebar = memo(function Sidebar() {
 										canReorder={canReorder}
 										activeProjectId={activeProjectId}
 										statusByProject={statusByProject}
+										unseenByProject={unseenByProject}
 										onNudge={nudge}
 										dwellProgress={dwell.over === row.rowId ? dwell.progress : 0}
 										dwelling={dwell.dwellingOn === row.rowId}
@@ -768,6 +776,7 @@ export const Sidebar = memo(function Sidebar() {
 										project={row.project}
 										isActive={activeProjectId === row.project.id}
 										liveStatus={statusByProject.get(row.project.id)}
+										liveUnseen={unseenByProject.get(row.project.id)}
 										canReorder={canReorder}
 										onNudge={nudge}
 										dwellProgress={dwell.over === row.rowId ? dwell.progress : 0}
@@ -1007,12 +1016,14 @@ function Rail({
 	toggle,
 	rows,
 	statusByProject,
+	unseenByProject,
 	onAddProject,
 	adding,
 }: {
 	toggle: ReactNode;
 	rows: SidebarRow[];
 	statusByProject: Map<string, TerminalStatus | undefined>;
+	unseenByProject: Map<string, boolean>;
 	onAddProject: () => void;
 	adding: boolean;
 }) {
@@ -1085,6 +1096,7 @@ function Rail({
 								)
 							}
 							liveStatus={statusByProject.get(project.id)}
+							liveUnseen={unseenByProject.get(project.id)}
 						/>
 					))
 				)}
