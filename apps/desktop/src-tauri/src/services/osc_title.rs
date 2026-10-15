@@ -149,14 +149,18 @@ fn classify(payload: &[u8]) -> Option<TerminalStatus> {
 }
 
 /// A Claude title minus its leading glyph, trimmed: `"✳ Fix login bug"` is
-/// `"Fix login bug"` (F32). `None` when nothing is left.
+/// `"Fix login bug"` (F32). `None` when nothing is left, and for the CLI's
+/// default title `Claude Code`, which names no topic (an unnamed session).
 pub fn title_topic(payload: &[u8]) -> Option<String> {
 	let text = String::from_utf8_lossy(payload);
 	let mut chars = text.trim_start().chars();
 	chars.next()?;
 	let topic = chars.as_str().trim();
-	(!topic.is_empty()).then(|| topic.to_string())
+	(!topic.is_empty() && topic != DEFAULT_TITLE).then(|| topic.to_string())
 }
+
+/// What Claude Code titles a session that has no name yet.
+const DEFAULT_TITLE: &str = "Claude Code";
 
 enum OscScan<'a> {
 	Complete {
@@ -417,10 +421,7 @@ mod tests {
 			s.push_title(IDLE_NAMED),
 			Some((TerminalStatus::WaitingInput, Some("Date command".to_string())))
 		);
-		assert_eq!(
-			s.push_title(WORKING),
-			Some((TerminalStatus::Working, Some("Claude Code".to_string())))
-		);
+		assert_eq!(s.push_title(WORKING), Some((TerminalStatus::Working, None)));
 	}
 
 	#[test]
@@ -447,5 +448,7 @@ mod tests {
 		);
 		assert_eq!(title_topic("\u{2733}".as_bytes()), None);
 		assert_eq!(title_topic(b"   "), None);
+		// The CLI's default title is no topic at all.
+		assert_eq!(title_topic("\u{2733} Claude Code".as_bytes()), None);
 	}
 }
