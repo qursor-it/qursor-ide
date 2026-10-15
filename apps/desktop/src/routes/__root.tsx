@@ -20,7 +20,8 @@ import { useIndexerStore } from '@store/indexerStore';
 import { useShellStore } from '@store/shellStore';
 import { rebindTerminal } from '@components/terminal/Terminal';
 import { queryKeys } from '@lib/queryKeys';
-import { useTerminalStore } from '@store/terminalStore';
+import { useAttentionStore } from '@store/attentionStore';
+import { findSessionByTerminal, useTerminalStore } from '@store/terminalStore';
 
 function RootLayout() {
 	const setProgress = useIndexerStore((s) => s.setProgress);
@@ -212,7 +213,15 @@ function RootLayout() {
 		let unStatus: (() => void) | undefined;
 		let unExit: (() => void) | undefined;
 		events
-			.onTerminalStatus((e) => useTerminalStore.getState().setStatus(e.id, e.status))
+			.onTerminalStatus((e) => {
+				// The previous status is read before it is overwritten: the unseen dot
+				// is about the transition, not the state (F32).
+				const terminals = useTerminalStore.getState();
+				const owner = findSessionByTerminal(terminals.bySession, e.id);
+				const prev = owner ? terminals.bySession[owner]?.status : undefined;
+				terminals.setStatus(e.id, e.status);
+				if (owner) useAttentionStore.getState().observe(owner, prev, e.status);
+			})
 			.then((fn) => {
 				unStatus = fn;
 			});
@@ -236,6 +245,30 @@ function RootLayout() {
 		};
 	}, []);
 
+	// F32: the unseen dot needs to know whether you are looking at all.
+	useEffect(() => {
+		// `listen` resolves after a round trip, so a listener that lands after
+		// unmount (StrictMode's double mount) is released at once, as in
+		// `lib/queryFocus.ts`.
+		let cancelled = false;
+		const unlisten: Array<() => void> = [];
+		const track = (p: Promise<() => void>) => {
+			void p.then((off) => (cancelled ? off() : unlisten.push(off)));
+		};
+		const attention = useAttentionStore.getState();
+		track(events.onWindowFocus(() => attention.setWindowFocused(true)));
+		track(events.onWindowBlur(() => attention.setWindowFocused(false)));
+		return () => {
+			cancelled = true;
+			for (const off of unlisten) off();
+		};
+	}, []);
+
+	// ...and at what: the route's session (F32).
+	useEffect(() => {
+		useAttentionStore.getState().setActiveSession(sessionId ?? null);
+	}, [sessionId]);
+
 	// **A session took its agent's id** (F30, ADR-0062). One event, one rebind:
 	// the pooled xterm, every store record, and — when it is the session on
 	// screen — the URL, replaced rather than pushed so Back does not land on an
@@ -248,6 +281,7 @@ function RootLayout() {
 			.onSessionAdopted((e) => {
 				rebindTerminal(e.provisional, e.adopted);
 				useTerminalStore.getState().rebindSession(e.provisional, e.adopted);
+				useAttentionStore.getState().rebind(e.provisional, e.adopted);
 				const here = router.state.location.pathname;
 				if (here.endsWith(`/sessions/${e.provisional}`)) {
 					void router.navigate({

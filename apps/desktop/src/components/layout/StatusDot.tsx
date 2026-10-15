@@ -33,6 +33,7 @@ export function StatusDot({
 	className,
 	pulse = false,
 	background = false,
+	unseen = false,
 }: {
 	status: TerminalStatus;
 	className?: string;
@@ -44,18 +45,27 @@ export function StatusDot({
 	 *  orthogonal to what it is doing, and `waiting_input` keeps its blue
 	 *  wherever it runs, because "your move" is true either way. */
 	background?: boolean;
+	/** Wanted you while you were not looking (F32): painted red until seen. */
+	unseen?: boolean;
 }) {
 	const inBackground = background && status === 'working';
 	return (
 		<span
-			title={inBackground ? 'Working in the background — no tab open' : LABEL[status]}
+			title={
+				inBackground
+					? 'Working in the background — no tab open'
+					: unseen
+						? `${LABEL[status]} — unseen`
+						: LABEL[status]
+			}
+			data-unseen={unseen || undefined}
 			// `cn` (tailwind-merge), not string concatenation: a caller passing
 			// `size-1.5` has to actually beat the `size-2` below, and two classes of
 			// equal specificity are resolved by stylesheet order, not by which one
 			// the caller wrote last.
 			className={cn(
 				'inline-block size-2 shrink-0 rounded-full',
-				inBackground ? 'bg-status-background' : COLOR[status],
+				unseen ? 'bg-status-unseen' : inBackground ? 'bg-status-background' : COLOR[status],
 				pulse && status === 'working' && 'animate-running-pulse',
 				className,
 			)}

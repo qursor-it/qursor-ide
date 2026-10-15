@@ -37,6 +37,7 @@ import { cmd } from '@lib/tauri';
 import { usePrefsStore } from '@store/prefsStore';
 import { usePrTabStore } from '@store/prTabStore';
 import { useTabLayoutStore } from '@store/tabLayoutStore';
+import { useAttentionStore } from '@store/attentionStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
@@ -84,6 +85,7 @@ const DRAG_START_PX = 4;
  */
 export function SessionTabs() {
 	const bySession = useTerminalStore((s) => s.bySession);
+	const unseen = useAttentionStore((s) => s.unseen);
 	// Two scalar selectors and one memo, rather than a selector returning an
 	// object: a fresh reference on every store read re-renders forever, which is
 	// the same trap `useOpenSessions` documents.
@@ -133,8 +135,9 @@ export function SessionTabs() {
 				sessionId: t.sessionId,
 				projectId: t.projectId,
 				status: bySession[t.sessionId]?.status ?? ('stopped' as const),
+				unseen: unseen[t.sessionId] === true,
 			})),
-		[openTabs, projectsQ.data, bySession],
+		[openTabs, projectsQ.data, bySession, unseen],
 	);
 
 	// Pull request tabs share the strip, and their project's group (F31). Same
@@ -448,6 +451,7 @@ export function SessionTabs() {
 												id={item.tab.sessionId}
 												projectId={item.projectId}
 												status={item.tab.status}
+												unseen={item.tab.unseen}
 												project={projectById.get(item.projectId)}
 												title={titles.get(item.tab.sessionId) ?? shortId(item.tab.sessionId)}
 												isActive={item.key === activeKey}
@@ -496,6 +500,8 @@ interface SessionTabProps {
 	/** `stopped` when nothing is running — which is every restored tab, and every
 	 *  session whose process has exited since. */
 	status: TerminalStatus;
+	/** Wanted you while you were not looking (F32). */
+	unseen: boolean;
 	project: Project | undefined;
 	title: string;
 	isActive: boolean;
@@ -525,6 +531,7 @@ function SessionTab({
 	id,
 	projectId,
 	status,
+	unseen,
 	project,
 	title,
 	isActive,
@@ -592,7 +599,7 @@ function SessionTab({
 			{/* The dot is the only thing that says whether this session is running.
 			    No dimming, no italics: at 14px a second treatment says the same thing
 			    twice and makes the strip harder to read, not easier (F16). */}
-			<StatusDot status={status} />
+			<StatusDot status={status} unseen={unseen} />
 			{/* A routine started this one (F22). Beside the dot rather than in
 			    the title, so it stays visible when a long title truncates. */}
 			{routine && <RoutineOrigin name={routine.routineName} />}

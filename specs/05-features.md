@@ -2133,7 +2133,8 @@ Kept because each is a thing the next reader will otherwise investigate again.
 - **The unread / never-opened axis** (`viewed_at` per session, compared against
   `updated_at`) — the third thing the feedback asked for. Deferred: it is durable
   state and a migration, orthogonal to the live PTY states here, and it is what a
-  `finished` state would need to mean anything.
+  `finished` state would need to mean anything. F32 covers the live half, "wanted
+  you while unseen" (an in-memory mark); the never-opened axis remains deferred.
 
 ---
 
@@ -2378,7 +2379,7 @@ Advanced section.
 `get_setting` / `set_setting`, keyed by a **mirrored `SettingKey` union** — see
 [`03-backend-rust.md`](./03-backend-rust.md) § `settings`. The keys: the claude
 and codex binary paths, the default agent, F22's `routines.catchup_hours` and
-`routines.max_concurrent`, and F14's `updates.channel` (ADR-0064).
+`routines.max_concurrent`, F14's `updates.channel` (ADR-0064), and F32's `notifications.desktop`.
 
 The override is read by **`find_claude_binary(override)`** rather than
 `TerminalManager`'s existing `binary_override` field. That field is documented for
@@ -7550,3 +7551,121 @@ New: `services/gh/` (`run`, `repo`, `args`, `parse`, `patch`, `blob`),
 `gh_pr_blob` — and `AppError::{Unauthenticated, Remote}`; P4 adds `services/gh/checkout.rs`, `gh_pr_checkout_plan` and `gh_pr_checkout`. See
 `03-backend-rust.md` § `gh`. No migration, no setting, no new plugin or
 capability: the commands are the app's own.
+
+---
+
+## F32 — A session that wants you
+
+**Specified 2026-10-14; decision in
+[ADR-0081](adr/0081-a-session-that-wants-you-unseen-dot-and-desktop-notifications.md).**
+With several sessions running, and the user often in another app, the app says
+which session wants them: a red dot on every session that started wanting you
+while you were not looking, and, when the window is in the background, an OS
+notification plus the taskbar or Dock asking for attention. It reads the one
+status source of ADR-0015, the terminal title; "finished its turn" and "waiting
+on a permission prompt" both read `waiting_input` and are not told apart.
+Roadmap item 35 (#30) and the live half of item 34 (#29).
+
+### The transition rule
+
+A session **wants you** on exactly these transitions of `TerminalStatus`:
+
+| prev | next | wants you |
+|---|---|---|
+| `working` | `waiting_input` | yes |
+| `working` | `stopped` | yes |
+| anything else | anything | no |
+
+`unknown → *` (Codex before its first title) never counts. The rule is written
+twice, Rust `services/attention.rs::wants_you` and TS
+`apps/desktop/src/lib/attention.ts::wantsYou`, and each is tested against this
+table.
+
+### The unseen dot (renderer, always on)
+
+`useAttentionStore` holds `unseen` (a set of session ids), `windowFocused` and
+`activeSessionId`. It is not persisted.
+
+- **Marked** on a wants-you transition unless the session is the active route
+  session *and* the window is focused. A session in the background of a focused
+  window, or the active one in a window that lost focus, is marked.
+- **Cleared** in two cases only: the session becomes, or is, the active route
+  session while the window is focused; or its status goes back to `working`
+  (someone typed into it).
+- **Not cleared on exit.** A `stopped` transition is followed at once by
+  `terminal:exit`, and clearing there would erase the mark it just set. A stale
+  mark for a session with no tab is invisible and is cleared when the session is
+  opened.
+- **Boot title.** The renderer's previous status is the store's seed (`working`),
+  so a session that boots to Claude's idle `✳` while not active and focused is
+  marked. Rust never notifies a terminal's first event (below). The session you
+  just started is almost always active, so this is accepted.
+
+`StatusDot` takes `unseen` and paints `bg-status-unseen`
+(`--color-status-unseen: var(--destructive)`) in place of the state colour; its
+title is `"<label> — unseen"` and it carries `data-unseen`. It replaces the
+colour rather than badging it, since a badge on a 6px mark is invisible
+(DESIGN.md § Status Dot). Surfaces: session tabs, sidebar session rows, sidebar
+pending rows, and the project avatar, which shows the aggregate `projectUnseen`
+over its sessions' marks, including in the collapsed rail. Not on the lists in
+`routes/project.tsx` and not on the session header.
+
+### Desktop notification (Rust)
+
+`AttentionNotifier` (`services/attention.rs`) taps every `terminal:status` event
+(`TerminalManager::with_status_tap`) and tracks window focus from
+`WindowEvent::Focused`.
+
+- On a wants-you transition while the window is unfocused it schedules a check
+  after `SETTLE` = 1000 ms. The check sends only if nothing moved for that
+  terminal since (a generation counter; a stale check neither sends nor removes
+  state), the window is still unfocused, and `notifications.desktop` is not
+  `off`. One notification per transition.
+- **A prompted Claude spawn announces `Working` first** (a routine, a PR review):
+  `spawn_inner` emits one `Working` event through the tapped callback before the
+  reader starts, so the notifier has a state to compare the turn's end against.
+  A plain interactive spawn emits nothing. The renderer already seeds `working`,
+  so the extra event changes nothing there.
+- **A terminal's first status event never alerts**: Claude boots to the idle `✳`
+  title, which would otherwise notify on every start.
+- **Edge.** `working → waiting_input → stopped` inside one settle window sends
+  nothing: the `stopped` is not a wants-you transition from `waiting_input`, and
+  the pending check is stale.
+- **Context** (project id and the topic from Claude's terminal title) is captured
+  synchronously when the status event arrives, because an exiting terminal is
+  removed from the manager before the settle check runs. Title: the project's
+  display name, else the app name. Body: "Waiting for you" or "Exited", plus
+  " — <topic>" when there is one. The CLI's default title `Claude Code` names no
+  topic, so an unnamed session gets the plain body. The Settings hint says the
+  notifications also depend on the system's notification settings (Windows
+  Focus/Do Not Disturb included).
+- With it, `request_user_attention(Informational)` on the main window, cleared
+  when the window regains focus.
+- The plugin delivers asynchronously on desktop, so most delivery failures (no
+  notification daemon, permission denied) are silent. The dot and the attention
+  request still carry the signal.
+- Plugin: `tauri-plugin-notification`. No JS capability: the renderer never sends.
+- Clicks are not handled: on macOS the OS brings the app forward; nothing opens
+  the session. Not built: a count on the taskbar or Dock icon, sounds.
+
+### Setting
+
+**Desktop notifications**, a switch in Settings → Sessions. Rust
+`SettingKey::DesktopNotifications`, TS `'desktopNotifications'`, row
+`notifications.desktop` in the SQLite `settings` table (ADR-0013: Rust reads
+it). Unset is on; `off` is off; nothing else is written. It governs the
+notification and the taskbar request, not the dot.
+
+### Per platform
+
+| | Notification | Attention | Notes |
+|---|---|---|---|
+| Windows | Action Center toast | Taskbar flashes until focus | Under `pnpm dev` the toast may lack the app identity; the NSIS build has it |
+| macOS | Notification Center | Dock icon bounces once | Tied to the bundle id: check the built `.app`, not the unsigned dev binary. If the user denied notifications in System Settings they drop silently |
+| Linux | D-Bus via `notify-rust` (needs a daemon; GNOME and KDE have one) | Urgency hint: X11 yes, Wayland compositor-dependent | AppImage environment leakage does not affect D-Bus |
+
+### Not built
+
+Telling "finished" from "needs permission" (it would take hooks, superseding
+ADR-0015), opening the notified session on click, and the never-opened axis of
+roadmap item 34.

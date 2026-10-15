@@ -40,4 +40,6 @@ pub struct AppState {
 	/// by the crash handler installed in `setup()` and drained by the renderer on
 	/// boot, which is the only pair of things that ever touch it.
 	pub webview_health: Arc<Health>,
+	/// Desktop notifications for a session that wants you (F32, ADR-0081).
+	pub attention: Arc<crate::services::attention::AttentionNotifier>,
 }

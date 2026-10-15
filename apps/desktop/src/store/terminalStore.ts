@@ -197,7 +197,7 @@ interface TerminalState {
 	requestRestart: (sessionId: string) => void;
 }
 
-function findSessionByTerminal(
+export function findSessionByTerminal(
 	bySession: Record<string, LiveTerminal>,
 	terminalId: TerminalId,
 ): string | undefined {

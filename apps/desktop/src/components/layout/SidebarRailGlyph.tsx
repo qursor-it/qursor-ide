@@ -32,6 +32,8 @@ interface SidebarRailGlyphProps {
 	 *  rail can afford to drop the rows: knowing which project has a live
 	 *  terminal comes for free with the icon. */
 	liveStatus?: TerminalStatus;
+	/** Any of the project's sessions wanted you unseen (F32). */
+	liveUnseen?: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export function SidebarRailGlyph({
 	open,
 	onOpenChange,
 	liveStatus,
+	liveUnseen,
 }: SidebarRailGlyphProps) {
 	const startSession = useStartSession();
 
@@ -87,7 +90,12 @@ export function SidebarRailGlyph({
 							{/* 20px, the size the expanded row draws it at. Collapsing takes
 							    the label away, not the identity, so the glyph has no reason
 							    to grow (DESIGN.md, the rail). */}
-							<ProjectIcon name={project.displayName} size={20} status={liveStatus} />
+							<ProjectIcon
+								name={project.displayName}
+								size={20}
+								status={liveStatus}
+								unseen={liveUnseen}
+							/>
 						</Link>
 					</HoverCardTrigger>
 				</ContextMenuTrigger>

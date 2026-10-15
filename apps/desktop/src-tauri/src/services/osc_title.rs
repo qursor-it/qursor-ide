@@ -70,6 +70,14 @@ impl TitleScanner {
 		self.scan(bytes, classify)
 	}
 
+	/// The status and the topic of the last classifiable title in `bytes` (F32).
+	/// Same `scan` and `classify` as `push`, so status detection cannot drift
+	/// from it — an empty title is still skipped, which `push_payload` would not
+	/// do. The topic is what a desktop notification names the session by.
+	pub fn push_title(&mut self, bytes: &[u8]) -> Option<(TerminalStatus, Option<String>)> {
+		self.scan(bytes, |payload| classify(payload).map(|s| (s, title_topic(payload))))
+	}
+
 	/// Walk the chunk, hand every complete `OSC 0`/`OSC 2` payload to `pick`,
 	/// and answer with the last one it accepted.
 	///
@@ -139,6 +147,20 @@ fn classify(payload: &[u8]) -> Option<TerminalStatus> {
 		None => None,
 	}
 }
+
+/// A Claude title minus its leading glyph, trimmed: `"✳ Fix login bug"` is
+/// `"Fix login bug"` (F32). `None` when nothing is left, and for the CLI's
+/// default title `Claude Code`, which names no topic (an unnamed session).
+pub fn title_topic(payload: &[u8]) -> Option<String> {
+	let text = String::from_utf8_lossy(payload);
+	let mut chars = text.trim_start().chars();
+	chars.next()?;
+	let topic = chars.as_str().trim();
+	(!topic.is_empty() && topic != DEFAULT_TITLE).then(|| topic.to_string())
+}
+
+/// What Claude Code titles a session that has no name yet.
+const DEFAULT_TITLE: &str = "Claude Code";
 
 enum OscScan<'a> {
 	Complete {
@@ -390,5 +412,43 @@ mod tests {
 		let mut chunk = Vec::from(&b"\x1b]0;abc\x1b[0m"[..]);
 		chunk.extend_from_slice(WORKING);
 		assert_eq!(s.push(&chunk), Some(TerminalStatus::Working));
+	}
+
+	#[test]
+	fn push_title_reads_status_and_topic_together() {
+		let mut s = TitleScanner::default();
+		assert_eq!(
+			s.push_title(IDLE_NAMED),
+			Some((TerminalStatus::WaitingInput, Some("Date command".to_string())))
+		);
+		assert_eq!(s.push_title(WORKING), Some((TerminalStatus::Working, None)));
+	}
+
+	#[test]
+	fn push_title_ignores_an_empty_title_like_push_does() {
+		// A real title, then an empty one in the same chunk: `push` keeps the
+		// real one, and `push_title` must agree (F32).
+		let mut chunk = IDLE_NAMED.to_vec();
+		chunk.extend_from_slice(b"\x1b]0;\x07");
+		let mut a = TitleScanner::default();
+		let mut b = TitleScanner::default();
+		assert_eq!(a.push(&chunk), Some(TerminalStatus::WaitingInput));
+		assert_eq!(b.push_title(&chunk).map(|(s, _)| s), Some(TerminalStatus::WaitingInput));
+	}
+
+	#[test]
+	fn title_topic_drops_the_glyph_and_trims() {
+		assert_eq!(
+			title_topic("\u{2733} Fix login bug ".as_bytes()),
+			Some("Fix login bug".to_string())
+		);
+		assert_eq!(
+			title_topic("\u{2810} Working on it".as_bytes()),
+			Some("Working on it".to_string())
+		);
+		assert_eq!(title_topic("\u{2733}".as_bytes()), None);
+		assert_eq!(title_topic(b"   "), None);
+		// The CLI's default title is no topic at all.
+		assert_eq!(title_topic("\u{2733} Claude Code".as_bytes()), None);
 	}
 }

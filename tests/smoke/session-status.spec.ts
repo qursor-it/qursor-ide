@@ -114,3 +114,53 @@ test('@smoke the tab strip skips the confirm on the same rule', async ({ page })
 		.click();
 	await expect(page.getByText('Close this session?')).toHaveCount(0);
 });
+
+async function emitWindow(
+	page: import('@playwright/test').Page,
+	event: 'tauri://blur' | 'tauri://focus',
+) {
+	await page.evaluate((event) => window.__FACTORAI_EMIT__?.(event, null), event);
+}
+
+test('@smoke a session that wants you while the window is away turns red until seen', async ({
+	page,
+}) => {
+	await openSession(page);
+	await emitStatus(page, 'working');
+
+	// Looking at it: going idle is not news.
+	await emitStatus(page, 'waiting_input');
+	await expect(page.locator('[data-unseen]')).toHaveCount(0);
+
+	// Away: the same transition marks it, on the tab and in the sidebar (F32).
+	await emitStatus(page, 'working');
+	await emitWindow(page, 'tauri://blur');
+	await emitStatus(page, 'waiting_input');
+	await expect(page.getByTestId('session-tabs').locator('[data-unseen]')).toHaveCount(1);
+	await expect(page.locator('aside [data-unseen]')).not.toHaveCount(0);
+
+	// Back: it is the session in front, so coming back is seeing it.
+	await emitWindow(page, 'tauri://focus');
+	await expect(page.locator('[data-unseen]')).toHaveCount(0);
+});
+
+test('@smoke a session you are not looking at turns red everywhere until opened', async ({
+	page,
+}) => {
+	await openSession(page);
+	await emitStatus(page, 'working');
+
+	// Leave the session for the project's own page; its tab stays open.
+	await page.locator('aside').getByText('foo').click();
+	await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(1);
+
+	// Not the active session, so going idle is news even in a focused window.
+	await emitStatus(page, 'waiting_input');
+	await expect(page.getByTestId('session-tabs').locator('[data-unseen]')).toHaveCount(1);
+	await expect(page.locator('aside [data-unseen]')).not.toHaveCount(0);
+	await expect(page.getByTestId('project-icon').locator('[data-unseen]')).not.toHaveCount(0);
+
+	// Opening it is seeing it.
+	await page.getByTestId('session-tabs').getByRole('tab').click();
+	await expect(page.locator('[data-unseen]')).toHaveCount(0);
+});

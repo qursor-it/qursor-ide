@@ -215,6 +215,13 @@ pub struct TerminalStatusEvent {
 	pub last_activity: i64,
 }
 
+/// What a desktop notification needs to know about a terminal (F32).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlertContext {
+	pub project_id: String,
+	pub topic: Option<String>,
+}
+
 /// The agent asked us to show a file (F20). `frontmost` is already decided
 /// here, from whether this session is the one in front — the renderer obeys
 /// rather than re-deciding, so one rule lives in one place.
@@ -678,6 +685,9 @@ struct TerminalHandle {
 	#[cfg(windows)]
 	process_job: WinProcessJob,
 	status: Mutex<TerminalStatus>,
+	/// The topic of the agent's last title (F32), for the desktop notification.
+	/// `None` until a Claude title arrives; Codex never sets it.
+	topic: Mutex<Option<String>>,
 	/// Set by [`TerminalManager::kill`] before it signals, and read by the
 	/// waiter when it reports the exit. See `TerminalExitEvent::killed`.
 	killed: AtomicBool,
@@ -923,6 +933,20 @@ impl TerminalManager {
 		self
 	}
 
+	/// Also hand every status event to `tap`, before it is emitted (F32). A
+	/// builder like the others: call it before anything spawns.
+	pub fn with_status_tap(
+		mut self,
+		tap: impl Fn(&TerminalStatusEvent) + Send + Sync + 'static,
+	) -> Self {
+		let inner = self.on_status.clone();
+		self.on_status = Arc::new(move |e| {
+			tap(&e);
+			inner(e);
+		});
+		self
+	}
+
 	/// Resolve the descriptor a spawn runs under: the caller's override first,
 	/// then the wired resolver, then Claude. An id no release ever wrote is an
 	/// error rather than Claude — the caller believed something false.
@@ -967,6 +991,15 @@ impl TerminalManager {
 
 	pub fn live_count(&self) -> usize {
 		self.terminals.len()
+	}
+
+	/// The project and title topic of a live terminal, for F32's notification.
+	/// `None` once the terminal is gone.
+	pub fn alert_context(&self, id: &TerminalId) -> Option<AlertContext> {
+		self.terminals.get(id).map(|h| AlertContext {
+			project_id: h.project_id.clone(),
+			topic: h.topic.lock().clone(),
+		})
 	}
 
 	/// How many live PTYs have Claude *working* in them right now.
@@ -1864,6 +1897,7 @@ impl TerminalManager {
 				Some(a) if a.id != agents::CLAUDE => TerminalStatus::Unknown,
 				_ => TerminalStatus::Working,
 			}),
+			topic: Mutex::new(None),
 			killed: AtomicBool::new(false),
 			last_activity: AtomicI64::new(now_ms()),
 			cwd: cwd_path.clone(),
@@ -1872,6 +1906,19 @@ impl TerminalManager {
 		});
 
 		self.terminals.insert(id.clone(), handle.clone());
+
+		// **A prompted Claude session announces `Working` at spawn** (F32). The
+		// handle is seeded `Working` silently, and `set_status` only emits on
+		// change, so a session that never prints the idle `✳` at boot would make
+		// the turn's end its first event — which the notifier, by rule, never
+		// alerts on. Emitted before the reader starts, so nothing can precede it.
+		if seeds_working(kind, req.agent, req.initial_prompt.as_deref()) {
+			(self.on_status)(TerminalStatusEvent {
+				id: id.clone(),
+				status: TerminalStatus::Working,
+				last_activity: handle.last_activity.load(Ordering::Relaxed),
+			});
+		}
 
 		// A bridge that never bound is announced immediately: every `openFile`
 		// for this session will silently do nothing, and the header is the only
@@ -2134,7 +2181,10 @@ fn spawn_reader(
 								}
 							}
 							Some(_) if handle_r.kind == TerminalKind::Agent => {
-								if let Some(next) = titles.push(&tmp[..n]) {
+								if let Some((next, topic)) = titles.push_title(&tmp[..n]) {
+									// Before the status, so a notifier woken by this status reads
+									// this title's topic, not the previous one (F32).
+									*handle_r.topic.lock() = topic;
 									set_status(&id_r, &handle_r, next, &on_status);
 								}
 							}
@@ -2254,6 +2304,19 @@ fn try_adopt(id: &TerminalId, handle: &Arc<TerminalHandle>, payload: &str, on_ad
 		adopted,
 		project_id: handle.project_id.clone(),
 	});
+}
+
+/// Whether a spawn emits an initial `Working` event (F32): a Claude agent that
+/// starts with a prompt. A plain interactive spawn emits nothing, so its boot
+/// `✳` stays the notifier's silent first event.
+fn seeds_working(
+	kind: TerminalKind,
+	agent: Option<&'static AgentDescriptor>,
+	initial_prompt: Option<&str>,
+) -> bool {
+	kind == TerminalKind::Agent
+		&& agent.is_some_and(|a| a.id == agents::CLAUDE)
+		&& initial_prompt.is_some_and(|p| !p.is_empty())
 }
 
 fn set_status(
@@ -2390,6 +2453,39 @@ mod tests {
 	/// a probe against a *different* directory would answer `--session-id` for
 	/// the wrong reason and the assertion would still pass (F25).
 	const NO_STORE: &str = "/nonexistent-claude-dir";
+
+	#[test]
+	fn a_status_tap_sees_every_status_event_and_the_emit_still_happens() {
+		let emitted = Arc::new(StdMutex::new(Vec::new()));
+		let tapped = Arc::new(StdMutex::new(Vec::new()));
+		let (e2, t2) = (emitted.clone(), tapped.clone());
+		let mgr = TerminalManager::with_callbacks(
+			PathBuf::from(NO_STORE),
+			Arc::new(|_| {}),
+			Arc::new(move |e: TerminalStatusEvent| e2.lock().unwrap().push(e.status)),
+			Arc::new(|_| {}),
+		)
+		.with_status_tap(move |e| t2.lock().unwrap().push(e.status));
+		(mgr.on_status)(TerminalStatusEvent {
+			id: "x".into(),
+			status: TerminalStatus::WaitingInput,
+			last_activity: 0,
+		});
+		assert_eq!(*emitted.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
+		assert_eq!(*tapped.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
+	}
+
+	#[test]
+	fn only_a_prompted_claude_agent_seeds_working_at_spawn() {
+		let claude = Some(claude_desc());
+		assert!(seeds_working(TerminalKind::Agent, claude, Some("Review this PR")));
+		// Plain interactive spawn: the boot title must stay the silent first event.
+		assert!(!seeds_working(TerminalKind::Agent, claude, None));
+		assert!(!seeds_working(TerminalKind::Agent, claude, Some("")));
+		assert!(!seeds_working(TerminalKind::Shell, None, Some("ls")));
+		let codex = agents::descriptor(agents::CODEX);
+		assert!(!seeds_working(TerminalKind::Agent, codex, Some("hi")));
+	}
 
 	fn make_manager() -> (TerminalManager, DataLog, ExitLog) {
 		make_manager_in(PathBuf::from(NO_STORE))

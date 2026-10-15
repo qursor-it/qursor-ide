@@ -83,6 +83,22 @@ export function projectStatus(
 	return best;
 }
 
+/**
+ * Whether any of a project's marked sessions wanted you unseen (F32) — the
+ * project row's red dot. Over the marks, like `projectStatus`'s callers, so a
+ * session whose process already exited still counts while its tab is open.
+ */
+export function projectUnseen(
+	marks: Record<string, { projectId: string }>,
+	unseen: Record<string, true>,
+	projectId: string,
+): boolean {
+	for (const [sessionId, mark] of Object.entries(marks)) {
+		if (mark.projectId === projectId && unseen[sessionId]) return true;
+	}
+	return false;
+}
+
 /** A live session the index has never heard of. `sessionId` rather than a
  *  `SessionSummary`: there is no row to summarise, which is the whole point.
  *  Not exported — both call sites infer it, and a named export nothing imports

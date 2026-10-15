@@ -47,6 +47,8 @@ services/
   watcher.rs          # notify-rs wrapper, debounced channel
   terminal.rs         # TerminalManager — owns PTYs
   osc_title.rs        # session status out of the terminal title (ADR-0015)
+  attention.rs        # AttentionNotifier — desktop notification when a session
+                      #   wants you and the window is away (F32, ADR-0081)
   jsonl.rs            # streaming parser for session events
   search.rs           # FTS query builder + result hydration
   sessions.rs         # the small `sessions` reads something outside the
@@ -1566,6 +1568,7 @@ Keys, as of F11:
 | `routinesCatchupHours` | `routines.catchup_hours` | `RoutineRunner` | App-wide catch-up default (F22); a routine may override it in its own row |
 | `routinesMaxConcurrent` | `routines.max_concurrent` | `RoutineRunner` | How many routine sessions may start at once; the rest queue |
 | `updateChannel` | `updates.channel` | `check_update` | `alpha`, or unset for stable (F14, ADR-0064). Anything else reads as stable |
+| `desktopNotifications` | `notifications.desktop` | `AttentionNotifier` (`TauriSink`) | `off`, or unset for on (F32, ADR-0081) |
 
 **The serde name and the row key differ on purpose.** The dotted namespace is
 what this table was created with and what an operator sees in `sqlite3`; the
@@ -1618,6 +1621,7 @@ struct AppState {
   routines: Arc<RoutineRunner>,
   watch: Arc<watcher::Control>,
   file_watch: Arc<FileWatch>,
+  attention: Arc<AttentionNotifier>,  // F32: notifies when a session wants you
 }
 ```
 

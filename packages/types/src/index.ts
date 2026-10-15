@@ -394,7 +394,8 @@ export type SettingKey =
 	| 'agentDefault'
 	| 'routinesCatchupHours'
 	| 'routinesMaxConcurrent'
-	| 'updateChannel';
+	| 'updateChannel'
+	| 'desktopNotifications';
 
 /**
  * The update channel an install follows (F14, ADR-0064). Stored under
