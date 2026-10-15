@@ -400,20 +400,24 @@ mod tests {
 
 	#[test]
 	fn the_context_read_at_observe_time_reaches_send_unchanged() {
-		let (sink, n) = setup();
-		let n = Arc::new(n);
+		let sink = Arc::new(FakeSink::default());
+		let n = Arc::new(AttentionNotifier::new(sink.clone(), Duration::from_millis(200)));
+		n.set_focused(false);
 		let ctx = AlertContext { project_id: "p1".into(), topic: Some("Fix login".into()) };
 		*sink.ctx.lock() = Some(ctx.clone());
 		n.observe(&ev("t", Working));
 		n.on_status(&ev("t", Stopped));
-		// The settle is zero, but the check runs on its own thread.
-		for _ in 0..200 {
-			if !sink.sent.lock().is_empty() {
+		// The terminal is gone by the time the settle check runs: a re-read then
+		// would find something else.
+		*sink.ctx.lock() = None;
+		// `send` records `sent_ctx` last, so once it is there the send is whole.
+		for _ in 0..300 {
+			if !sink.sent_ctx.lock().is_empty() {
 				break;
 			}
 			std::thread::sleep(Duration::from_millis(10));
 		}
-		assert_eq!(*sink.sent.lock(), vec![("t".to_string(), Stopped)]);
 		assert_eq!(*sink.sent_ctx.lock(), vec![Some(ctx)]);
+		assert_eq!(*sink.sent.lock(), vec![("t".to_string(), Stopped)]);
 	}
 }
