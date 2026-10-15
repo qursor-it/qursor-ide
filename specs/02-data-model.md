@@ -489,7 +489,7 @@ nothing else — it exists so a migration runs once.
 
 | col   | type    | notes                                        |
 | ----- | ------- | -------------------------------------------- |
-| key   | TEXT PK | dotted namespace: `claude.binary`, `codex.binary`, `agent.default`, `routines.catchup_hours`, `routines.max_concurrent`. One `SettingKey` variant per key, never a parameterised one (F30 § "Storage") |
+| key   | TEXT PK | dotted namespace: `claude.binary`, `codex.binary`, `agent.default`, `routines.catchup_hours`, `routines.max_concurrent`, `notifications.desktop`. One `SettingKey` variant per key, never a parameterised one (F30 § "Storage") |
 | value | TEXT    | the value itself; **no row means unset**     |
 
 For things that need ACID and queries — and, since F11, **specifically for the

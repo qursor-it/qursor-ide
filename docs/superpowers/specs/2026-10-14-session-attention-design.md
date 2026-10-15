@@ -58,17 +58,26 @@ each is tested against it.
 
 - **Set** when a wants-you transition happens and the session is *not being
   looked at*: it is not the active session, **or** the window is not focused.
-- **Shown** as a red badge in the corner of the existing `StatusDot` (the
-  green/blue/grey dot stays) on:
+- **Shown** by painting the `StatusDot` red instead of its state colour (title
+  `"<label> — unseen"`; amendment 1: a corner badge on a 6 px mark is not
+  visible) on:
   - the session's tab (`SessionTabs`),
   - the session's row in the sidebar (`SidebarProject`),
   - the project's row and avatar (`SidebarProject`, `ProjectIcon`) when any of
     its sessions is unseen.
-- **Cleared** when:
-  - the session becomes active while the window is focused;
-  - the window regains focus while that session is the active one;
-  - the session's status goes back to `working` (someone typed into it);
-  - the terminal is removed.
+- **Cleared** in two cases (amendment 2):
+  - the session becomes, or is, the active route session while the window is
+    focused;
+  - the session's status goes back to `working` (someone typed into it).
+  Not cleared on terminal exit: a `stopped` transition is followed at once by
+  `terminal:exit`, and clearing there would erase the badge it set. A stale
+  entry for a session with no tab renders nowhere and is cleared when the
+  session is opened.
+- **Boot title** (amendment 3): Rust never alerts on a terminal's first status
+  event, so Claude's boot title `✳` does not notify. The renderer's previous
+  status is the store's seed (`working`), so a session that boots to `✳` while
+  not active and focused is marked unseen in the app. Accepted asymmetry; it is
+  the session you just started, so it is almost always active.
 - Not persisted: like the rest of the terminal store, it does not survive a
   restart.
 
@@ -175,7 +184,7 @@ each is tested against it.
   window, if focus returns, or if the setting is off; exactly one send per
   transition; `title_topic`.
 - **Vitest**: `wantsYou` against the same table; `attentionStore` marking,
-  the four clearing rules, "active but window unfocused"; `projectUnseen()`.
+  the two clearing rules, "active but window unfocused"; `projectUnseen()`.
 - **Playwright smoke**: extend `tests/smoke/session-status.spec.ts` — the mock
   bridge emits `working → waiting_input` for a non-active session; the red
   badge appears on the tab, the sidebar row and the project; opening the

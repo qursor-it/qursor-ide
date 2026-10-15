@@ -67,8 +67,8 @@ for it names the number.
 | 19 | [#25](https://github.com/Nightbr/factorai/issues/25) | IDE bridge: past the read-only half |
 | 29 | [#27](https://github.com/Nightbr/factorai/issues/27) | Error boundaries per surface, so one crash costs one pane |
 | 32 | [#28](https://github.com/Nightbr/factorai/issues/28) | Light theme: make the palette that already exists render |
-| 34 | [#29](https://github.com/Nightbr/factorai/issues/29) | Session status: the unread axis |
-| 35 | [#30](https://github.com/Nightbr/factorai/issues/30) | Desktop notifications when a session wants you |
+| 34 | [#29](https://github.com/Nightbr/factorai/issues/29) | Session status: the unread axis — partly (F32: unseen; never-opened deferred) |
+| 35 | [#30](https://github.com/Nightbr/factorai/issues/30) | Desktop notifications when a session wants you — done (F32) |
 | 38 | [#31](https://github.com/Nightbr/factorai/issues/31) | More agents: the rest of Codex, then Gemini CLI, OpenCode and Cursor |
 | 39 | [#10](https://github.com/Nightbr/factorai/issues/10) | Site: the guide's content, and the versioning decision |
 | 40 | [#32](https://github.com/Nightbr/factorai/issues/32) | Pull requests and merge requests from inside factorai |

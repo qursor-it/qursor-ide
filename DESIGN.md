@@ -21,6 +21,7 @@ colors:
   status-stopped: "oklch(55% 0 0)"
   status-background: "oklch(68% 0.12 200)"
   status-unknown: "oklch(55% 0 0)"
+  status-unseen: "oklch(58% 0.22 25)"
   lane-0: "oklch(70% 0.15 255)"
   lane-1: "oklch(72% 0.16 145)"
   lane-2: "oklch(68% 0.19 25)"
@@ -702,6 +703,12 @@ agent session.
 An 8px round mark in `working` green, `waiting` blue, or `stopped` grey, with
 the state's name as its title.
 
+**Unseen red.** A session that wanted you while you were not looking is painted
+red (`status-unseen`, the `destructive` red) until you look (F32, ADR-0081). It
+replaces the state colour rather than badging it, because a badge on a 6px mark
+is invisible. Its title is *<label> — unseen*; once seen, the dot returns to its
+state colour.
+
 **A fifth mark, `unknown`: hollow, `status-unknown` grey, 1px ring, no fill.**
 For a session whose PTY is live but whose agent has told us nothing — a Codex
 session before its first title, or any agent with no status capability (F30,
@@ -828,8 +835,8 @@ product is built on blue meaning exactly that.
 - **Reduced motion holds it still** at a resting glow rather than removing it —
   the emphasis is the point, the motion is not.
 - **Never copy it.** A second glowing thing makes both mean nothing; a surface
-  that wants attention gets blue, and one that wants more is asking for this
-  rule to be superseded.
+  that wants attention gets blue, and a session that wanted you *unseen* gets
+  red (ADR-0081). One that wants more is asking for this rule to be superseded.
 
 ### Graph Rail (signature)
 
