@@ -65,6 +65,7 @@ pub fn run() {
 
 	builder
 		.plugin(tauri_plugin_shell::init())
+		.plugin(tauri_plugin_notification::init())
 		// Copying needs a route the webview can't provide: WebKitGTK implements
 		// neither `ClipboardItem` nor, since 2.52, a `writeText` it will allow, so
 		// images hand RGBA to this and text goes through its `write_text` (F7).
@@ -138,7 +139,14 @@ pub fn run() {
 			// ran in, and spawning it anywhere else turns a resume into a new
 			// conversation. See `TerminalManager::resume_cwd`.
 			let session_db = db.clone();
+			// Desktop notifications for a session that wants you (F32, ADR-0081).
+			let attention = Arc::new(services::attention::AttentionNotifier::new(
+				Arc::new(services::attention::TauriSink::new(app.handle().clone())),
+				services::attention::SETTLE,
+			));
+			let attention_tap = attention.clone();
 			let terminals = TerminalManager::for_app(app.handle().clone(), cd.clone(), ui.clone())
+				.with_status_tap(move |e| attention_tap.on_status(e))
 				.with_user_binary(Arc::new(move |agent| {
 					services::settings::binary_override(&settings_db, agent)
 				}))
@@ -302,6 +310,7 @@ pub fn run() {
 				file_watch: Arc::new(services::file_watch::FileWatch::new()),
 				media: Arc::new(std::sync::OnceLock::new()),
 				webview_health,
+				attention,
 			});
 
 			spawn_initial_scan(indexer.clone());
@@ -332,6 +341,13 @@ pub fn run() {
 			Ok(())
 		})
 		.on_window_event(|window, event| {
+			if let WindowEvent::Focused(focused) = event {
+				// The notifier only notifies a window that is not in front, and stops
+				// asking for attention once it is (F32).
+				if let Some(state) = window.try_state::<AppState>() {
+					state.attention.set_focused(*focused);
+				}
+			}
 			if let WindowEvent::CloseRequested { api, .. } = event {
 				if let Some(state) = window.try_state::<AppState>() {
 					let live = state.terminals.live_count();

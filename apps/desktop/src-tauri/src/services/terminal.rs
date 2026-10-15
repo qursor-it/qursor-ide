@@ -933,6 +933,20 @@ impl TerminalManager {
 		self
 	}
 
+	/// Also hand every status event to `tap`, before it is emitted (F32). A
+	/// builder like the others: call it before anything spawns.
+	pub fn with_status_tap(
+		mut self,
+		tap: impl Fn(&TerminalStatusEvent) + Send + Sync + 'static,
+	) -> Self {
+		let inner = self.on_status.clone();
+		self.on_status = Arc::new(move |e| {
+			tap(&e);
+			inner(e);
+		});
+		self
+	}
+
 	/// Resolve the descriptor a spawn runs under: the caller's override first,
 	/// then the wired resolver, then Claude. An id no release ever wrote is an
 	/// error rather than Claude — the caller believed something false.
@@ -2413,6 +2427,27 @@ mod tests {
 	/// a probe against a *different* directory would answer `--session-id` for
 	/// the wrong reason and the assertion would still pass (F25).
 	const NO_STORE: &str = "/nonexistent-claude-dir";
+
+	#[test]
+	fn a_status_tap_sees_every_status_event_and_the_emit_still_happens() {
+		let emitted = Arc::new(StdMutex::new(Vec::new()));
+		let tapped = Arc::new(StdMutex::new(Vec::new()));
+		let (e2, t2) = (emitted.clone(), tapped.clone());
+		let mgr = TerminalManager::with_callbacks(
+			PathBuf::from(NO_STORE),
+			Arc::new(|_| {}),
+			Arc::new(move |e: TerminalStatusEvent| e2.lock().unwrap().push(e.status)),
+			Arc::new(|_| {}),
+		)
+		.with_status_tap(move |e| t2.lock().unwrap().push(e.status));
+		(mgr.on_status)(TerminalStatusEvent {
+			id: "x".into(),
+			status: TerminalStatus::WaitingInput,
+			last_activity: 0,
+		});
+		assert_eq!(*emitted.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
+		assert_eq!(*tapped.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
+	}
 
 	fn make_manager() -> (TerminalManager, DataLog, ExitLog) {
 		make_manager_in(PathBuf::from(NO_STORE))
