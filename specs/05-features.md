@@ -2379,7 +2379,7 @@ Advanced section.
 `get_setting` / `set_setting`, keyed by a **mirrored `SettingKey` union** — see
 [`03-backend-rust.md`](./03-backend-rust.md) § `settings`. The keys: the claude
 and codex binary paths, the default agent, F22's `routines.catchup_hours` and
-`routines.max_concurrent`, and F14's `updates.channel` (ADR-0064).
+`routines.max_concurrent`, F14's `updates.channel` (ADR-0064), and F32's `notifications.desktop`.
 
 The override is read by **`find_claude_binary(override)`** rather than
 `TerminalManager`'s existing `binary_override` field. That field is documented for

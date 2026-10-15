@@ -1,4 +1,4 @@
-# Session attention: an unseen badge and desktop notifications — design
+# Session attention: an unseen dot and desktop notifications — design
 
 Date: 2026-10-14
 Branch: `feat/session-attention` (worktree `../factorai-session-attention`, based on `develop`)
@@ -10,7 +10,7 @@ The user runs several sessions in parallel and also leaves the app to do other
 things. Both matter equally:
 
 - **In the app**: see at a glance which session wants them — a clearly visible
-  red badge.
+  red dot.
 - **Outside the app**: be called back when a session wants them — an OS
   notification plus the taskbar / Dock asking for attention.
 
@@ -24,11 +24,11 @@ Must work on Windows, macOS and Linux.
    hooks, the only reliable way to tell them apart. A later ADR can add hooks
    without reworking this design.
 2. **Desktop notification only when the window is not focused.** Inside the
-   app the red badge is enough; no in-app toast.
+   app the red dot is enough; no in-app toast.
 3. **Hybrid architecture.** Rust sends the desktop notification (it only needs
    window focus, which it can observe itself). The renderer owns the unseen
-   badge (it knows which session is active).
-4. **Red is reserved for the unseen badge** (besides errors). `DESIGN.md` is
+   dot (it knows which session is active).
+4. **Red is reserved for the unseen dot** (besides errors). `DESIGN.md` is
    amended in the same PR; today it says "a surface that wants attention gets
    blue" (`DESIGN.md:831`).
 5. **~1 s settle** before a desktop notification, so a momentary title flip
@@ -54,23 +54,24 @@ each is tested against it.
 
 ## Behaviour
 
-### Unseen badge (renderer, always on)
+### Unseen dot (renderer, always on)
 
 - **Set** when a wants-you transition happens and the session is *not being
   looked at*: it is not the active session, **or** the window is not focused.
 - **Shown** by painting the `StatusDot` red instead of its state colour (title
-  `"<label> — unseen"`; amendment 1: a corner badge on a 6 px mark is not
+  `"<label> — unseen"`; amendment 1: a badge on a 6 px mark is not
   visible) on:
   - the session's tab (`SessionTabs`),
-  - the session's row in the sidebar (`SidebarProject`),
-  - the project's row and avatar (`SidebarProject`, `ProjectIcon`) when any of
-    its sessions is unseen.
+  - the session's row and pending rows in the sidebar (`SidebarProject`),
+  - the project's avatar (`ProjectIcon`, including the collapsed rail) when any
+    of its sessions is unseen. No dot on the project row, the project page
+    lists or the session header.
 - **Cleared** in two cases (amendment 2):
   - the session becomes, or is, the active route session while the window is
     focused;
   - the session's status goes back to `working` (someone typed into it).
   Not cleared on terminal exit: a `stopped` transition is followed at once by
-  `terminal:exit`, and clearing there would erase the badge it set. A stale
+  `terminal:exit`, and clearing there would erase the dot it set. A stale
   entry for a session with no tab renders nowhere and is cleared when the
   session is opened.
 - **Boot title** (amendment 3): Rust never alerts on a terminal's first status
@@ -96,7 +97,7 @@ each is tested against it.
   the main window. Cleared (`request_user_attention(None)`) when the window
   regains focus.
 - A failed send (no notification daemon, permission denied) is logged with
-  `warn!` and ignored. Badge and taskbar/Dock attention still work.
+  `warn!` and ignored. The dot and taskbar/Dock attention still work.
 
 ### Per platform
 
@@ -114,7 +115,7 @@ each is tested against it.
 - A "Desktop notifications" switch in `SettingsModal`, wired through
   `settingsDraft` and `cmd.setSetting('desktopNotifications', …)`, with the
   hint "On macOS and Linux, notifications also depend on system settings."
-- The unseen badge has no setting.
+- The unseen dot has no setting.
 
 ## Architecture
 
@@ -125,18 +126,22 @@ each is tested against it.
   capability: the renderer never sends notifications.
 - **`services/attention.rs`** — `AttentionNotifier`:
   - `focused: AtomicBool`;
-  - `last: DashMap<TerminalId, TerminalStatus>` — its own view of each
-    terminal's status, so `TerminalStatusEvent` and `set_status` stay as they
-    are;
+  - `last: DashMap<TerminalId, ...>` — its own view of each terminal: the
+    last status plus a generation counter, so `TerminalStatusEvent` and
+    `set_status` stay as they are;
   - `fn wants_you(prev, next) -> bool` (pure);
-  - `fn on_status(&self, e: &TerminalStatusEvent)` — updates `last`, and on a
-    wants-you transition while unfocused schedules the settle check;
+  - `fn on_status(&self, e: &TerminalStatusEvent)` — updates `last` (a terminal's first event never
+    alerts), and on a wants-you transition while unfocused schedules the
+    settle check. The notification context (project id and the title's topic)
+    is captured synchronously here, because an exiting terminal is gone from
+    the manager before the check runs. The check sends only if the generation
+    is unchanged; a stale check neither sends nor removes state;
   - `fn set_focused(&self, focused: bool)`;
   - sending goes through a small trait (`NotifySink`) so tests inject a fake;
     the real sink calls the plugin and `request_user_attention`, and reads the
     setting and project name.
-  - Forget a terminal's entry on `terminal:exit` / removal so the map does not
-    grow.
+  - An entry is dropped when its terminal reaches `Stopped`, so the map does
+    not grow.
 - **Topic**: the notifier needs the topic text of the last Claude title. The
   Claude branch of the PTY reader (`terminal.rs` ~2125) uses
   `titles.push(...)`, which keeps only the status. `TitleScanner` gains a
@@ -168,10 +173,13 @@ each is tested against it.
   `wantsYou(prev, next)` and the session is not (active and window focused),
   `mark(id)`. If `next === 'working'`, `clear(id)`.
 - **Clearing on view**: when the active session changes, or the window gains
-  focus, clear the active session if focused. Clear on terminal removal.
-- **UI**: `StatusDot` gains `unseen?: boolean`, drawing a red corner badge
-  with a new `--status-unseen` token. Passed by `SessionTabs`,
-  `SidebarProject` (session row and project row) and `ProjectIcon`. A
+  focus, clear the active session if focused. Not cleared on exit (amendment 2).
+- **UI**: `StatusDot` gains `unseen?: boolean`, painting the dot itself red
+  (`bg-status-unseen`, token `--color-status-unseen: var(--destructive)`),
+  title `"<label> — unseen"`, `data-unseen`. Passed by `SessionTabs`,
+  `SidebarProject` (session rows and pending rows) and `ProjectIcon` (the
+  avatar, including the collapsed rail). No dot on the project row, on the
+  `routes/project.tsx` lists or on the session header. A
   `projectUnseen()` next to `projectStatus()` in `lib/sessionGroups.ts` gives
   the project aggregate.
 - **Types**: `SettingKey` TS mirror in `packages/types` gains
@@ -187,16 +195,16 @@ each is tested against it.
   the two clearing rules, "active but window unfocused"; `projectUnseen()`.
 - **Playwright smoke**: extend `tests/smoke/session-status.spec.ts` — the mock
   bridge emits `working → waiting_input` for a non-active session; the red
-  badge appears on the tab, the sidebar row and the project; opening the
+  dot appears on the tab, the sidebar row and the project avatar; opening the
   session removes it.
 - **Real window**: Windows run by the implementer (session works, switch
-  away, notification + taskbar flash; come back, red badge; open it, badge
+  away, notification + taskbar flash; come back, red dot; open it, dot
   gone). macOS and Linux: a manual checklist in the PR.
 - Full quality gate from `AGENTS.md` before calling it done.
 
 ## Documentation (same PR)
 
-- **ADR-0081** "A session that wants you: an unseen badge and desktop
+- **ADR-0081** "A session that wants you: an unseen dot and desktop
   notifications" — hybrid split and why, one signal within ADR-0015, red for
   unseen, platform differences.
 - **`specs/05-features.md`**: new **F32** with the transition table, clearing
@@ -213,5 +221,5 @@ each is tested against it.
 - Two copies of the transition rule can drift — mitigated by one table in F32
   and a test per side.
 - macOS notification delivery cannot be verified from this Windows machine.
-- Wayland may ignore the urgency hint; the notification and the badge still
+- Wayland may ignore the urgency hint; the notification and the dot still
   carry the signal.

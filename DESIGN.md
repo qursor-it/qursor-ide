@@ -700,7 +700,7 @@ agent session.
 
 ### Status Dot (signature)
 
-An 8px round mark in `working` green, `waiting` blue, or `stopped` grey, with
+A round mark (8px; the session marks in tabs and sidebar lists are 6px) in `working` green, `waiting` blue, or `stopped` grey, with
 the state's name as its title.
 
 **Unseen red.** A session that wanted you while you were not looking is painted
