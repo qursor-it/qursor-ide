@@ -215,6 +215,13 @@ pub struct TerminalStatusEvent {
 	pub last_activity: i64,
 }
 
+/// What a desktop notification needs to know about a terminal (F32).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlertContext {
+	pub project_id: String,
+	pub topic: Option<String>,
+}
+
 /// The agent asked us to show a file (F20). `frontmost` is already decided
 /// here, from whether this session is the one in front — the renderer obeys
 /// rather than re-deciding, so one rule lives in one place.
@@ -678,6 +685,9 @@ struct TerminalHandle {
 	#[cfg(windows)]
 	process_job: WinProcessJob,
 	status: Mutex<TerminalStatus>,
+	/// The topic of the agent's last title (F32), for the desktop notification.
+	/// `None` until a Claude title arrives; Codex never sets it.
+	topic: Mutex<Option<String>>,
 	/// Set by [`TerminalManager::kill`] before it signals, and read by the
 	/// waiter when it reports the exit. See `TerminalExitEvent::killed`.
 	killed: AtomicBool,
@@ -967,6 +977,15 @@ impl TerminalManager {
 
 	pub fn live_count(&self) -> usize {
 		self.terminals.len()
+	}
+
+	/// The project and title topic of a live terminal, for F32's notification.
+	/// `None` once the terminal is gone.
+	pub fn alert_context(&self, id: &TerminalId) -> Option<AlertContext> {
+		self.terminals.get(id).map(|h| AlertContext {
+			project_id: h.project_id.clone(),
+			topic: h.topic.lock().clone(),
+		})
 	}
 
 	/// How many live PTYs have Claude *working* in them right now.
@@ -1864,6 +1883,7 @@ impl TerminalManager {
 				Some(a) if a.id != agents::CLAUDE => TerminalStatus::Unknown,
 				_ => TerminalStatus::Working,
 			}),
+			topic: Mutex::new(None),
 			killed: AtomicBool::new(false),
 			last_activity: AtomicI64::new(now_ms()),
 			cwd: cwd_path.clone(),
@@ -2134,7 +2154,10 @@ fn spawn_reader(
 								}
 							}
 							Some(_) if handle_r.kind == TerminalKind::Agent => {
-								if let Some(next) = titles.push(&tmp[..n]) {
+								if let Some((next, topic)) = titles.push_title(&tmp[..n]) {
+									// Before the status, so a notifier woken by this status reads
+									// this title's topic, not the previous one (F32).
+									*handle_r.topic.lock() = topic;
 									set_status(&id_r, &handle_r, next, &on_status);
 								}
 							}
