@@ -700,13 +700,14 @@ agent session.
 
 ### Status Dot (signature)
 
-A round mark (8px; the session marks in tabs and sidebar lists are 6px) in `working` green, `waiting` blue, or `stopped` grey, with
-the state's name as its title.
+An 8px round mark (6px on the sidebar's session and pending rows) in
+`working` green, `waiting` blue, or `stopped` grey, with the state's name as
+its title.
 
 **Unseen red.** A session that wanted you while you were not looking is painted
 red (`status-unseen`, the `destructive` red) until you look (F32, ADR-0081). It
-replaces the state colour rather than badging it, because a badge on a 6px mark
-is invisible. Its title is *<label> — unseen*; once seen, the dot returns to its
+replaces the state colour rather than badging it, because a badge on the
+sidebar's 6px mark is invisible. Its title is *<label> — unseen*; once seen, the dot returns to its
 state colour.
 
 **A fifth mark, `unknown`: hollow, `status-unknown` grey, 1px ring, no fill.**
