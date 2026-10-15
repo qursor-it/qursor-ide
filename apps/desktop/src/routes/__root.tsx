@@ -20,7 +20,8 @@ import { useIndexerStore } from '@store/indexerStore';
 import { useShellStore } from '@store/shellStore';
 import { rebindTerminal } from '@components/terminal/Terminal';
 import { queryKeys } from '@lib/queryKeys';
-import { useTerminalStore } from '@store/terminalStore';
+import { useAttentionStore } from '@store/attentionStore';
+import { findSessionByTerminal, useTerminalStore } from '@store/terminalStore';
 
 function RootLayout() {
 	const setProgress = useIndexerStore((s) => s.setProgress);
@@ -212,7 +213,15 @@ function RootLayout() {
 		let unStatus: (() => void) | undefined;
 		let unExit: (() => void) | undefined;
 		events
-			.onTerminalStatus((e) => useTerminalStore.getState().setStatus(e.id, e.status))
+			.onTerminalStatus((e) => {
+				// The previous status is read before it is overwritten: the unseen dot
+				// is about the transition, not the state (F32).
+				const terminals = useTerminalStore.getState();
+				const sessionId = findSessionByTerminal(terminals.bySession, e.id);
+				const prev = sessionId ? terminals.bySession[sessionId]?.status : undefined;
+				terminals.setStatus(e.id, e.status);
+				if (sessionId) useAttentionStore.getState().observe(sessionId, prev, e.status);
+			})
 			.then((fn) => {
 				unStatus = fn;
 			});
@@ -235,6 +244,32 @@ function RootLayout() {
 			unExit?.();
 		};
 	}, []);
+
+	// F32: the unseen dot needs to know whether you are looking at all.
+	useEffect(() => {
+		let unFocus: (() => void) | undefined;
+		let unBlur: (() => void) | undefined;
+		const attention = useAttentionStore.getState();
+		events
+			.onWindowFocus(() => attention.setWindowFocused(true))
+			.then((fn) => {
+				unFocus = fn;
+			});
+		events
+			.onWindowBlur(() => attention.setWindowFocused(false))
+			.then((fn) => {
+				unBlur = fn;
+			});
+		return () => {
+			unFocus?.();
+			unBlur?.();
+		};
+	}, []);
+
+	// ...and at what: the route's session (F32).
+	useEffect(() => {
+		useAttentionStore.getState().setActiveSession(sessionId ?? null);
+	}, [sessionId]);
 
 	// **A session took its agent's id** (F30, ADR-0062). One event, one rebind:
 	// the pooled xterm, every store record, and — when it is the session on
