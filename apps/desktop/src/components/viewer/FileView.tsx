@@ -31,6 +31,7 @@ import type { ViewerPosition } from '@hooks/useFileViewer';
 import { eolOf, readOnlyReason } from '@lib/editable';
 import { iconKeyFor } from '@lib/fileIcon';
 import { formatBytes } from '@lib/format';
+import { MONO_STACK } from '@lib/monoFont';
 import { type LineSelection, mentionFor, mentionLabel, mentionRange } from '@lib/mentions';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
@@ -829,7 +830,7 @@ function Editor({
 			wrappingIndent: 'indent',
 			scrollBeyondLastLine: false,
 			renderLineHighlight: 'line',
-			fontFamily: '"JetBrains Mono", "Fira Code", ui-monospace, monospace',
+			fontFamily: MONO_STACK,
 			fontSize: 13,
 			// Monaco measures its container on create. Inside a dialog that is
 			// mid-open-animation it would measure zero and render nothing, so let

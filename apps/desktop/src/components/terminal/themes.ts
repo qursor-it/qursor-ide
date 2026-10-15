@@ -12,6 +12,24 @@ import type { Theme } from '@lib/theme';
  * goes stale; `--terminal` and `--terminal-foreground` exist for this.
  */
 
+type AnsiName =
+	| 'black'
+	| 'red'
+	| 'green'
+	| 'yellow'
+	| 'blue'
+	| 'magenta'
+	| 'cyan'
+	| 'white'
+	| 'brightBlack'
+	| 'brightRed'
+	| 'brightGreen'
+	| 'brightYellow'
+	| 'brightBlue'
+	| 'brightMagenta'
+	| 'brightCyan'
+	| 'brightWhite';
+
 type TokenReader = (name: string) => string;
 
 /**
@@ -38,11 +56,11 @@ const FALLBACK: Record<Theme, Record<string, string>> = {
  * **xterm's defaults are a dark-ground palette**: its `white` is near-white and
  * its `yellow` is a light yellow, so on paper a `git status`, a test runner's
  * warnings and half of a prompt simply disappear. These are GitHub's light
- * terminal colours (Primer), which are tuned for exactly this — every hue holds
- * at least 4.5:1 on white except the deliberately faint `brightWhite`.
+ * terminal colours (Primer), which are tuned for exactly this — the normal hues
+ * hold at least 4.5:1 on white, and the lighter bright blue, magenta, cyan and
+ * white sit at 3:1, the faint end of the palette.
  *
- * The dark theme sets none, on purpose: xterm's defaults are what every
- * terminal in the app has always drawn there.
+ * The dark theme has its own table, `DARK_ANSI`, below.
  */
 const LIGHT_ANSI: ITheme = {
 	black: '#24292f',
@@ -63,6 +81,46 @@ const LIGHT_ANSI: ITheme = {
 	brightWhite: '#8c959f',
 };
 
+/**
+ * ANSI colours for the dark Terminal Well (ADR-0082, amending Q8's "xterm's
+ * defaults in dark").
+ *
+ * xterm's defaults are saturated and clash with the well and the status hues,
+ * so these are written in oklch like the tokens and share their hues: green near
+ * `status-working` and `git-added`, amber near `git-modified`, red near
+ * `destructive` and `git-deleted`, blue near the `primary` family and
+ * `git-renamed`, cyan near `status-background`. Lightness sits at 70-96%, which
+ * holds at least 4.5:1 on `--terminal` for every colour; `black` and
+ * `brightBlack` are the deliberate exception at 3:1, so they still read as dim.
+ * `themes.test.ts` pins both bounds.
+ */
+const DARK_ANSI_OKLCH: Record<AnsiName, readonly [lightness: number, chroma: number, hue: number]> =
+	{
+		black: [0.5, 0.01, 264],
+		red: [0.7, 0.15, 22],
+		green: [0.74, 0.15, 150],
+		yellow: [0.8, 0.13, 80],
+		blue: [0.72, 0.11, 255],
+		magenta: [0.74, 0.13, 320],
+		cyan: [0.76, 0.1, 200],
+		white: [0.82, 0.005, 286],
+		brightBlack: [0.6, 0.01, 264],
+		brightRed: [0.76, 0.16, 20],
+		brightGreen: [0.8, 0.17, 155],
+		brightYellow: [0.86, 0.14, 85],
+		brightBlue: [0.78, 0.12, 250],
+		brightMagenta: [0.8, 0.14, 325],
+		brightCyan: [0.82, 0.11, 200],
+		brightWhite: [0.96, 0.003, 286],
+	};
+
+const DARK_ANSI: ITheme = Object.fromEntries(
+	Object.entries(DARK_ANSI_OKLCH).map(([name, [l, c, h]]) => [
+		name,
+		oklchToHex(`oklch(${l * 100}% ${c} ${h})`) ?? '#000000',
+	]),
+);
+
 export function xtermTheme(readToken: TokenReader, theme: Theme): ITheme {
 	const token = (name: string): string =>
 		oklchToHex(readToken(name)) ?? oklchToHex(FALLBACK[theme][name] ?? '') ?? '#000000';
@@ -77,7 +135,7 @@ export function xtermTheme(readToken: TokenReader, theme: Theme): ITheme {
 		// The text colour at 30%: a selection that reads on both grounds, where
 		// xterm's own default is a white wash that vanishes on paper.
 		selectionBackground: `${foreground}4d`,
-		...(theme === 'light' ? LIGHT_ANSI : {}),
+		...(theme === 'light' ? LIGHT_ANSI : DARK_ANSI),
 	};
 }
 

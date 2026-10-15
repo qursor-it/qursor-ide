@@ -11,13 +11,20 @@ import { useFileLinks } from '@hooks/useFileLinks';
 import type { RoutineFireEvent } from '@factorai/types';
 import { matchesKeyboardEvent } from '@tanstack/react-hotkeys';
 import { base64ToBytes } from '@lib/base64';
+import {
+	claudeImagePasteInput,
+	isImageOnlyPaste,
+	isWindowsPasteChord,
+} from '@lib/claudeImagePaste';
+import { formatDroppedPaths, toCssPoint } from '@lib/droppedPaths';
 import { formatError } from '@lib/errors';
 import { isPanelDragging, onPanelDragEnd } from '@lib/panelDrag';
 import { hotkeysOverTerminal, mergeKeymap } from '@lib/keymap';
-import { cmd, copyText, events, openExternally } from '@lib/tauri';
+import { cmd, copyText, type DragDropEvent, events, openExternally } from '@lib/tauri';
 import { isMacOS, isWindows } from '@lib/platform';
 import { currentTheme, onThemeChange } from '@lib/theme';
-import { usePrefsStore } from '@store/prefsStore';
+import { terminalOptions } from '@lib/monoFont';
+import { currentPrefs, usePrefsStore } from '@store/prefsStore';
 import { useTerminalStore } from '@store/terminalStore';
 
 /**
@@ -321,6 +328,60 @@ onThemeChange((theme) => {
 	for (const entry of pool.values()) entry.term.options.theme = next;
 });
 
+// The terminal preferences apply live to every pooled terminal, hidden ones
+// included, for the reason a theme switch does: a terminal skipped now would
+// show the old font the next time its tab is picked. Agent and footer shells
+// share the pool, so one loop covers both. A new size or font changes the cell,
+// so each is refitted — which sends the PTY its new grid through `onResize`.
+//
+// A font change refits a second time once `document.fonts.ready` resolves: a
+// family the page has not used yet loads lazily, xterm measured the fallback it
+// drew meanwhile, and re-assigning `fontFamily` is what makes xterm measure the
+// real glyphs. Module-lifetime, like the pool.
+function terminalPrefsKey(s: ReturnType<typeof currentPrefs>): string {
+	return [s.terminalFont, s.terminalFontSize, s.terminalLineHeight, s.terminalCursor].join('|');
+}
+
+function applyTerminalOptions(refit: boolean): void {
+	const options = terminalOptions(currentPrefs());
+	for (const entry of pool.values()) {
+		const o = entry.term.options;
+		if (o.fontFamily !== options.fontFamily || refit) o.fontFamily = options.fontFamily;
+		o.fontSize = options.fontSize;
+		o.lineHeight = options.lineHeight;
+		o.cursorStyle = options.cursorStyle;
+		o.cursorInactiveStyle = options.cursorInactiveStyle;
+		fitToHost(entry);
+	}
+}
+
+let lastTerminalPrefs = terminalPrefsKey(currentPrefs());
+let lastTerminalFont = currentPrefs().terminalFont;
+usePrefsStore.subscribe(() => {
+	const prefs = currentPrefs();
+	const key = terminalPrefsKey(prefs);
+	if (key === lastTerminalPrefs) return;
+	lastTerminalPrefs = key;
+	const fontChanged = prefs.terminalFont !== lastTerminalFont;
+	lastTerminalFont = prefs.terminalFont;
+	applyTerminalOptions(false);
+	if (fontChanged) void document.fonts.ready.then(() => applyTerminalOptions(true));
+});
+
+// The bundled face is a web font, so it loads lazily and the first session of a
+// launch can open before it has: xterm then measured, and the WebGL renderer
+// rasterised, the fallback. Loading it up front and re-assigning `fontFamily`
+// when it lands makes every terminal open so far re-measure the real glyphs.
+// A failed load leaves the fallback in place, which is what the stack is for.
+// The unit tests import this module under node, with no document, hence the
+// guard.
+if (typeof document !== 'undefined' && 'fonts' in document) {
+	void document.fonts
+		.load(`13px "JetBrains Mono Variable"`)
+		.then(() => applyTerminalOptions(true))
+		.catch(() => undefined);
+}
+
 // Memoises the spawn so StrictMode's double-invoke (and any concurrent caller)
 // shares ONE `terminal_spawn` rather than racing two.
 const spawnInFlight = new Map<string, Promise<string>>();
@@ -418,6 +479,31 @@ export function isCopyChord(event: KeyboardEvent, mac: boolean = isMacOS()): boo
 }
 
 /**
+ * **`Shift+Enter` is a line break, not a submit** (specs/05-features.md F5).
+ *
+ * xterm encodes `Enter` and `Shift+Enter` identically, as `\r`, so Claude Code
+ * cannot tell them apart and sends the prompt. A line feed is what its own
+ * `Ctrl+J` sends, and Claude Code inserts it as a newline. It is also the safe
+ * choice in a plain shell, where readline treats `\n` exactly like `Enter` — the
+ * `ESC CR` some terminals send instead is bound to `vi-editing-mode` there.
+ *
+ * Matches every event type, so the `keypress` that can follow the `keydown` is
+ * swallowed too rather than writing the `\r` after all.
+ *
+ * **Never while an IME is composing.** This handler runs before xterm's
+ * `CompositionHelper`, and WebKit reports the real key with `keyCode` 229 then,
+ * so taking the event would drop the pending text and write a line feed instead.
+ */
+export function isShiftEnter(event: KeyboardEvent): boolean {
+	if (event.isComposing || event.keyCode === 229) return false;
+	return (
+		event.key === 'Enter' && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
+	);
+}
+
+export const SHIFT_ENTER_INPUT = '\n';
+
+/**
  * Put the selection on the clipboard and clear it, so the grid shows the copy
  * happened. Through `copyText`, never the web API, which WebKitGTK refuses.
  */
@@ -425,6 +511,87 @@ function copySelection(term: XTerm): void {
 	const text = term.getSelection();
 	term.clearSelection();
 	void copyText(text).catch((e) => console.error('terminal copy failed', e));
+}
+
+/**
+ * Whether this PTY is a session's agent and that agent is Claude. A shell's id is
+ * in no `bySession` record, so it answers no; an agent whose record has not
+ * learned its name yet is the default one, Claude.
+ */
+function isClaudeTerminal(terminalId: string | undefined): boolean {
+	if (!terminalId) return false;
+	const session = Object.values(useTerminalStore.getState().bySession).find(
+		(t) => t.terminalId === terminalId,
+	);
+	return session !== undefined && (session.agent ?? 'claude') === 'claude';
+}
+
+// ── Dropping files on a terminal (F5, ADR-0083) ────────────────────────────
+//
+// **Tauri's native drag-drop, not HTML5** (ADR-0016): the webview reports every
+// drag session on the window as handled, so `drop` never reaches the page on
+// macOS. The native event carries paths — which is what a terminal wants — and a
+// position in physical pixels, which is how a drop finds the terminal under it.
+//
+// One listener for the app's lifetime, registered by the first terminal built,
+// like the theme and preference subscriptions above. Nothing else listens: the
+// window keeps its native file-drop for exactly this.
+
+/** The terminal the drag is over, and so the one wearing the outline. */
+let dropTarget: PooledTerm | undefined;
+
+/** Move the outline, touching the DOM only when the target changes — `over`
+ *  fires on every pointer move, and this is not worth a render. */
+function setDropTarget(next: PooledTerm | undefined): void {
+	if (next === dropTarget) return;
+	dropTarget?.host.removeAttribute('data-drop-target');
+	next?.host.setAttribute('data-drop-target', '');
+	dropTarget = next;
+}
+
+/** The live terminal under a physical-pixel position, if any. A hidden host is
+ *  not hit-testable (see `showOnly`), so only the one on screen can answer. */
+function terminalAt(position: { x: number; y: number }): PooledTerm | undefined {
+	const { x, y } = toCssPoint(position, window.devicePixelRatio);
+	const el = document.elementFromPoint(x, y);
+	if (!el) return undefined;
+	for (const entry of pool.values()) {
+		if (!entry.disposed && entry.host.contains(el)) return entry;
+	}
+	return undefined;
+}
+
+function onDragDrop(ev: DragDropEvent): void {
+	if (ev.type === 'leave') {
+		setDropTarget(undefined);
+		return;
+	}
+	const target = terminalAt(ev.position);
+	if (ev.type !== 'drop') {
+		setDropTarget(target);
+		return;
+	}
+	setDropTarget(undefined);
+	// A terminal with no PTY has nowhere to send the text: a dead shell, or an
+	// agent between a restart and its next spawn.
+	if (!target?.terminalId()) return;
+	const text = formatDroppedPaths(ev.paths, isWindows());
+	if (!text) return;
+	// `paste`, not `input`: bracketed paste applies where the program asked for
+	// it, and the text leaves through `onData` like everything typed.
+	target.term.paste(text);
+	target.term.focus();
+}
+
+let listeningForDrops = false;
+
+function listenForDrops(): void {
+	if (listeningForDrops) return;
+	listeningForDrops = true;
+	events.onDragDrop(onDragDrop).catch((e) => {
+		listeningForDrops = false;
+		console.warn('file drop unavailable', e);
+	});
 }
 
 export function showOnly(container: HTMLElement, active: PooledTerm): void {
@@ -451,9 +618,10 @@ export function getOrCreateTerm(
 	const host = document.createElement('div');
 	// Stacked, so every pooled terminal in this pane is exactly the pane's size
 	// whether or not it is the visible one. `inset-0` of the container rather
-	// than `h-full w-full` of a padded box: the 8px is on the wrapper, so the
-	// geometry `fitToHost` measures is unchanged.
-	host.className = 'absolute inset-0';
+	// than `h-full w-full` of a padded box: the padding is on the wrapper, so the
+	// geometry `fitToHost` measures is the box inside it.
+	host.className =
+		'absolute inset-0 data-drop-target:outline-1 data-drop-target:outline-offset-4 data-drop-target:outline-primary';
 	// Appended *before* `term.open`, so xterm's first measurement — char size,
 	// scrollbar width, the initial render dimensions — is taken on an element
 	// that has a layout. It used to open on a detached div and correct itself
@@ -461,8 +629,8 @@ export function getOrCreateTerm(
 	container.appendChild(host);
 
 	const term = new XTerm({
-		fontFamily: '"JetBrains Mono", "Fira Code", ui-monospace, monospace',
-		fontSize: 13,
+		// Font, size, line height and cursor are the user's (ADR-0082).
+		...terminalOptions(currentPrefs()),
 		cursorBlink: true,
 		allowProposedApi: true,
 		scrollback: 10_000,
@@ -500,6 +668,21 @@ export function getOrCreateTerm(
 	// for the app's life (see below), and a snapshot taken at construction would
 	// pass the chord the user has since moved away from.
 	term.attachCustomKeyEventHandler((event) => {
+		// **`Ctrl+V` on Windows is a paste in Claude's terminal** (F5), so an image
+		// on the clipboard can reach it. Nothing is written or cancelled here: the
+		// browser pastes, and the listener below sends the right key when there is
+		// no text. Only the agent's terminal, and only Claude's.
+		if (isWindowsPasteChord(event) && isWindows() && isClaudeTerminal(entry.terminalId())) {
+			return false;
+		}
+		if (isShiftEnter(event)) {
+			if (event.type === 'keydown') {
+				event.preventDefault();
+				// Through `onData`, so it reaches whichever PTY is current.
+				term.input(SHIFT_ENTER_INPUT, true);
+			}
+			return false;
+		}
 		if (event.type !== 'keydown') return true;
 		// Nothing without a modifier can be one of ours, and this runs on every
 		// keystroke typed into the terminal.
@@ -589,6 +772,29 @@ export function getOrCreateTerm(
 	};
 	host.addEventListener('contextmenu', onContextMenu);
 	entry.cleanup.push(() => host.removeEventListener('contextmenu', onContextMenu));
+
+	// **An image on the clipboard reaches Claude as its own paste key** (F5,
+	// ADR-0083). xterm turns the `paste` event into text, and an image has none, so
+	// without this the chord does nothing. Claude Code reads the image from the OS
+	// clipboard when it gets `Alt+V` (Windows) or `Ctrl+V` (elsewhere), so that is
+	// what is sent — through `input`, so it takes the same road as a keystroke.
+	//
+	// On `host`, in the capture phase: that sits above xterm's own listener on its
+	// textarea, so it runs first whatever order the two were registered in, and
+	// stopping the event there is what keeps xterm from also pasting an empty
+	// string. A paste with any text is left to xterm untouched, and so is every
+	// terminal that is not Claude's: Codex has no such key, a shell no use for one.
+	const onPaste = (e: ClipboardEvent) => {
+		if (!e.clipboardData || !isImageOnlyPaste(e.clipboardData)) return;
+		if (!isClaudeTerminal(entry.terminalId())) return;
+		e.preventDefault();
+		e.stopPropagation();
+		term.input(claudeImagePasteInput(isWindows()), true);
+	};
+	host.addEventListener('paste', onPaste, true);
+	entry.cleanup.push(() => host.removeEventListener('paste', onPaste, true));
+
+	listenForDrops();
 
 	return entry;
 }
@@ -980,13 +1186,14 @@ export function Terminal({ sessionId, projectId, projectCwd, sessionCwd }: Termi
 		};
 	}, [sessionId, projectId, projectCwd]);
 
-	// `p-2` is also the slack the rows paint into at a fractional zoom — see the
-	// last-column rule in the desktop app's stylesheet, which is written against
-	// this 8px — and `overflow-hidden` is what keeps that spill inside the pane.
+	// The padding is breathing room for the output (ADR-0082), and its 16px at
+	// the sides is also the slack the rows paint into at a fractional zoom — see
+	// the last-column rule in the desktop app's stylesheet, which needs at least
+	// 8px of it — and `overflow-hidden` is what keeps that spill inside the pane.
 	// The inner element is the hosts' positioning parent, so the padding stays in
-	// one place and `fitToHost` measures exactly the box it used to.
+	// one place and `fitToHost` measures the box inside it.
 	return (
-		<div className="h-full w-full overflow-hidden bg-terminal p-2">
+		<div className="h-full w-full overflow-hidden bg-terminal px-4 py-3">
 			<div ref={containerRef} className="relative h-full w-full" />
 		</div>
 	);

@@ -65,7 +65,7 @@
 /* ── Design tokens ────────────────────────────────────────────────────────── */
 @theme {
 	--font-family-sans: Inter, system-ui, sans-serif;
-	--font-family-mono: "JetBrains Mono", "Fira Code", monospace;
+	--font-family-mono: "JetBrains Mono Variable", "JetBrains Mono", "Fira Code", monospace;
 
 	/* Session status palette (F10). Three states, and the ramp is deliberate:
 	   green is fine, blue is your move, and grey is inert. `stopped` held the

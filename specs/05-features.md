@@ -899,6 +899,42 @@ shell alike, since both are one pooled xterm:
 - Both go through `copyText`, the Tauri clipboard plugin, because WebKitGTK
   refuses `navigator.clipboard.writeText`.
 
+**`Shift+Enter` writes a line break** (2026-10-12), in both terminals. xterm
+encodes it exactly like `Enter`, as `\r`, so Claude Code sent the prompt. It now
+writes `\n`, the byte `Ctrl+J` sends, which Claude Code inserts as a newline. In
+the footer shell readline runs `\n` like `Enter`, so nothing changes there; the
+`ESC CR` other terminals use for this would have switched bash into vi mode.
+Never while an input method is composing: that key belongs to the IME.
+
+**Dropping files on a terminal types their paths** (2026-10-15, ADR-0083), in
+the agent's terminal and in the footer shells. The drop is Tauri's native
+drag-drop event, listened for once for the app's lifetime; HTML5 drag-and-drop
+is dead on macOS (ADR-0016), and the window keeps its native file-drop for this.
+The event position is in physical pixels, so it is divided by
+`devicePixelRatio` (which already carries the webview zoom) before
+`document.elementFromPoint` finds the terminal under it. The paths go through
+`term.paste`, so bracketed paste applies and they leave through `onData` like
+typing. Each is quoted the way a terminal does: backslash-escaped on macOS and
+Linux, double-quoted on Windows when it has a space or a shell character; they
+are joined by a space, with one trailing space. Claude Code turns a pasted image
+path into an `[Image #N]` attachment itself and reads any other file from its
+path. While the drag is over a terminal it wears a 1px `primary` outline
+(`DESIGN.md` § Terminal Well), toggled as an attribute only when the target
+changes and removed on leave or drop. A drop anywhere else, or on a terminal with
+no live PTY, does nothing.
+
+**Pasting an image reaches Claude** (2026-10-15, ADR-0083), in a session whose
+agent is Claude. Claude Code reads an image from the OS clipboard when it
+receives its own image-paste key: `Alt+V` (`ESC v`) on Windows, `Ctrl+V`
+(`0x16`) on macOS and Linux. xterm turns the `paste` event into text, and an
+image has none, so a capture-phase `paste` listener on the terminal's host sends
+that key through `term.input` when the clipboard has an `image/*` item and no
+text, and stops xterm pasting an empty string. A paste with text is xterm's, as
+are Codex and the shells. `Ctrl+V` on Linux is already `0x16` from xterm and
+`Alt+V` on Windows already `ESC v`, so neither is sent twice; on Windows `Ctrl+V`
+is let through to the browser in Claude's terminal, because xterm would
+otherwise write `0x16` and cancel the paste, and `Cmd+V` on macOS already was.
+
 **No scrollbar, and the grid fills the pane** (2026-08-18). Both came out of one
 report — a white bar down the right of every session on macOS — and they are
 three separate faults that happened to stack in the same 30px.
@@ -2317,8 +2353,21 @@ without a reload; a choice holds against the OS. Like every row it applies on
 Save. `prefsStore`, because only the renderer reads it; see
 [`04-frontend.md`](./04-frontend.md) § Theming for how it is applied.
 
+**Terminal.** Added 2026-10-15 by ADR-0082, directly after Appearance: four
+`Select`s over the terminal's look, all in `prefsStore` because only the
+renderer reads them — **Font** (`terminalFont`, a preset id: JetBrains Mono
+(bundled, the default), Cascadia Code, Fira Code, SF Mono / Menlo, Consolas,
+system monospace), **Size** (`terminalFontSize`, 10–20px, default 13), **Line
+height** (`terminalLineHeight`, 1.00–1.60, default 1.00 — above it the DOM
+renderer breaks the vertical strokes of Claude's input box, and the hint says
+so) and **Cursor** (`terminalCursor`, bar, block or underline, default bar;
+outlined when the terminal is unfocused). Above them a preview on the Terminal
+Well in the draft's face, size and line height, with a box-drawn frame where a
+gap would show first. On Save every open terminal, agent and footer shell
+alike, takes the new options and refits.
+
 **Keyboard.** One row per bindable action, added by F28 and sitting directly
-after Appearance because both are app-wide chrome you set once, before the
+after Appearance and Terminal because both are app-wide chrome you set once, before the
 sections that are about the agent. It is the only section whose rows are
 *recorded* rather than typed or switched, and the one where Save is doing the
 most work: a reassignment steals the chord from whichever action held it, and

@@ -61,6 +61,9 @@ import type {
 } from '@factorai/types';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { type UnlistenFn, listen as tauriListen } from '@tauri-apps/api/event';
+import { type DragDropEvent, getCurrentWebview } from '@tauri-apps/api/webview';
+
+export type { DragDropEvent };
 
 /// True when running inside a Tauri webview (window.__TAURI_INTERNALS__ is
 /// injected). False under plain `vite dev` — the mocks below kick in.
@@ -678,6 +681,13 @@ export const events = {
 	 *  this. The renderer's own mutations invalidate optimistically already. */
 	onProfilesChanged: (cb: (p: ProfilesChangedEvent) => void) =>
 		listen<ProfilesChangedEvent>('profiles:changed', cb),
+	/** Files dragged over, or dropped on, the window: Tauri's native drag-drop,
+	 *  the only kind that works here (ADR-0016). Positions are physical pixels.
+	 *  In the browser lane `__FACTORAI_EMIT__('drag-drop', …)` stands in for it. */
+	onDragDrop: (cb: (p: DragDropEvent) => void): Promise<UnlistenFn> =>
+		isTauri()
+			? getCurrentWebview().onDragDropEvent((e) => cb(e.payload))
+			: mockListen<DragDropEvent>('drag-drop', cb),
 	/** A session took its agent's id (F30, ADR-0062). */
 	onSessionAdopted: (cb: (p: SessionAdoptedEvent) => void) =>
 		listen<SessionAdoptedEvent>('session:adopted', cb),

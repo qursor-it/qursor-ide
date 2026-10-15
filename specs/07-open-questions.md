@@ -161,6 +161,10 @@ collapsed JSON cards.
 small `palette → xterm theme` mapper. No theme picker, no custom
 themes. Keep it simple.
 
+**Amended 2026-10-15 by ADR-0082.** Still two palettes following the app's
+theme, but dark has its own ANSI table rather than xterm's defaults. The
+terminal's face, size, line height and cursor became settings (F11 § Terminal).
+
 ---
 
 ## Q9 — Single-window vs. multi-window → **single for MVP**

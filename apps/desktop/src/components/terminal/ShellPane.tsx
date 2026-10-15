@@ -307,9 +307,10 @@ function PaneHost({
 			onFocus={() => setFocus(chipKey, key)}
 			data-testid="shell-pane-host"
 		>
-			{/* `p-2` and `overflow-hidden` for the reason the agent's pane has them:
-			    the 8px is the slack a row's text spills into at a fractional zoom. */}
-			<div className="h-full w-full overflow-hidden p-2">
+			{/* `px-4 py-3` and `overflow-hidden` for the reason the agent's pane has
+			    them: the side padding is the slack a row's text spills into at a
+			    fractional zoom, and the agent's terminal sets the figure. */}
+			<div className="h-full w-full overflow-hidden px-4 py-3">
 				<div ref={containerRef} className="relative h-full w-full" />
 			</div>
 			{/* **Focus is a 1px blue line on the pane's top edge**, only while a
