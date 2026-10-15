@@ -27,6 +27,7 @@ const SAVED: SettingsValues = {
 	confirmCloseMiddleClick: true,
 	frontmatterOpen: true,
 	restoreTabs: true,
+	desktopNotifications: true,
 	keymapOverrides: {},
 	prReviewInstructions: '',
 };
@@ -70,6 +71,11 @@ describe('binaryOverride', () => {
 });
 
 describe('dirtySections', () => {
+	it('puts the desktop notifications switch in Sessions', () => {
+		const draft: SettingsValues = { ...SAVED, desktopNotifications: false };
+		expect(dirtySections(SAVED, draft)).toEqual(['sessions']);
+	});
+
 	it('reports nothing for an untouched draft', () => {
 		expect(dirtySections(SAVED, { ...SAVED })).toEqual([]);
 		expect(isDirty(SAVED, { ...SAVED })).toBe(false);

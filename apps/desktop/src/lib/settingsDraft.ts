@@ -79,6 +79,9 @@ export interface SettingsValues extends Prefs {
 	/** The update channel (F14, ADR-0064). SQLite for the same reason: the
 	 *  update check runs in Rust and reads it there. */
 	updateChannel: UpdateChannel;
+	/** Desktop notifications for a session that wants you (F32). SQLite for the
+	 *  same reason as the channel: Rust sends them and reads it there. */
+	desktopNotifications: boolean;
 }
 
 /** A stored channel as a channel: anything but `alpha` is stable, the rule
@@ -110,6 +113,7 @@ export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	confirmCloseSession: 'confirmations',
 	confirmCloseMiddleClick: 'confirmations',
 	restoreTabs: 'sessions',
+	desktopNotifications: 'sessions',
 	routinesCatchupHours: 'routines',
 	routinesMaxConcurrent: 'routines',
 	updateChannel: 'advanced',

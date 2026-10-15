@@ -27,6 +27,7 @@ import {
 } from '@components/settings/AgentsSection';
 import { KeyboardSection } from '@components/settings/KeyboardSection';
 import { ProfilesSection } from '@components/settings/ProfilesSection';
+import { desktopNotificationsOf, desktopNotificationsSetting } from '@lib/attention';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
 import {
@@ -104,6 +105,7 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 			routinesCatchupHours: (await cmd.getSetting('routinesCatchupHours')) ?? '',
 			routinesMaxConcurrent: (await cmd.getSetting('routinesMaxConcurrent')) ?? '',
 			updateChannel: channelOf(await cmd.getSetting('updateChannel')),
+			desktopNotifications: desktopNotificationsOf(await cmd.getSetting('desktopNotifications')),
 		}),
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -159,6 +161,7 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 								routinesCatchupHours: '',
 								routinesMaxConcurrent: '',
 								updateChannel: 'stable',
+								desktopNotifications: true,
 							}
 						}
 						dirtyRef={dirtyRef}
@@ -180,6 +183,7 @@ interface SettingsFormProps {
 		| 'routinesCatchupHours'
 		| 'routinesMaxConcurrent'
 		| 'updateChannel'
+		| 'desktopNotifications'
 	>;
 	/** Where the shell reads "is there an edit" from, for its click-outside
 	 *  guard. The form is the only thing that knows. */
@@ -274,12 +278,20 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 				// About reads the channel under its own key.
 				queryClient.setQueryData(queryKeys.setting('updateChannel'), draft.updateChannel);
 			}
+			// F32: Rust reads it at send time, so nothing else needs telling.
+			if (draft.desktopNotifications !== saved.desktopNotifications) {
+				await cmd.setSetting(
+					'desktopNotifications',
+					desktopNotificationsSetting(draft.desktopNotifications),
+				);
+			}
 			queryClient.setQueryData(queryKeys.setting('claudeBinaryPath'), {
 				claudeBinary: paths.claude ?? '',
 				codexBinary: paths.codex ?? '',
 				routinesCatchupHours: catchup ?? '',
 				routinesMaxConcurrent: concurrent ?? '',
 				updateChannel: draft.updateChannel,
+				desktopNotifications: draft.desktopNotifications,
 			});
 			applyPrefs(prefsOf(draft));
 			if (channelChanged && !import.meta.env.DEV) checkNow();
@@ -571,6 +583,18 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 									onCheckedChange={(v) => set('restoreTabs', v)}
 								/>
 							</SettingRow>
+							<SettingRow
+								label="Desktop notifications"
+								htmlFor="settings-desktop-notifications"
+								description="When a session wants you and the window is in the background. On macOS and Linux they also depend on system settings."
+							>
+								<Switch
+									id="settings-desktop-notifications"
+									data-testid="settings-desktop-notifications"
+									checked={draft.desktopNotifications}
+									onCheckedChange={(v) => set('desktopNotifications', v)}
+								/>
+							</SettingRow>
 						</div>
 					)}
 				</div>
@@ -615,6 +639,7 @@ function prefsOf(values: SettingsValues): Prefs {
 		routinesCatchupHours: _catchup,
 		routinesMaxConcurrent: _concurrent,
 		updateChannel: _channel,
+		desktopNotifications: _notifications,
 		...prefs
 	} = values;
 	// Empty means the shipped default (F31); stored trimmed so it stays empty.
