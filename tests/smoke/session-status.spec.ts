@@ -143,3 +143,24 @@ test('@smoke a session that wants you while the window is away turns red until s
 	await emitWindow(page, 'tauri://focus');
 	await expect(page.locator('[data-unseen]')).toHaveCount(0);
 });
+
+test('@smoke a session you are not looking at turns red everywhere until opened', async ({
+	page,
+}) => {
+	await openSession(page);
+	await emitStatus(page, 'working');
+
+	// Leave the session for the project's own page; its tab stays open.
+	await page.locator('aside').getByText('foo').click();
+	await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(1);
+
+	// Not the active session, so going idle is news even in a focused window.
+	await emitStatus(page, 'waiting_input');
+	await expect(page.getByTestId('session-tabs').locator('[data-unseen]')).toHaveCount(1);
+	await expect(page.locator('aside [data-unseen]')).not.toHaveCount(0);
+	await expect(page.getByTestId('project-icon').locator('[data-unseen]')).not.toHaveCount(0);
+
+	// Opening it is seeing it.
+	await page.getByTestId('session-tabs').getByRole('tab').click();
+	await expect(page.locator('[data-unseen]')).toHaveCount(0);
+});
