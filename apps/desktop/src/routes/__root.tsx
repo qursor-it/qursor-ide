@@ -217,10 +217,10 @@ function RootLayout() {
 				// The previous status is read before it is overwritten: the unseen dot
 				// is about the transition, not the state (F32).
 				const terminals = useTerminalStore.getState();
-				const sessionId = findSessionByTerminal(terminals.bySession, e.id);
-				const prev = sessionId ? terminals.bySession[sessionId]?.status : undefined;
+				const owner = findSessionByTerminal(terminals.bySession, e.id);
+				const prev = owner ? terminals.bySession[owner]?.status : undefined;
 				terminals.setStatus(e.id, e.status);
-				if (sessionId) useAttentionStore.getState().observe(sessionId, prev, e.status);
+				if (owner) useAttentionStore.getState().observe(owner, prev, e.status);
 			})
 			.then((fn) => {
 				unStatus = fn;
@@ -247,22 +247,20 @@ function RootLayout() {
 
 	// F32: the unseen dot needs to know whether you are looking at all.
 	useEffect(() => {
-		let unFocus: (() => void) | undefined;
-		let unBlur: (() => void) | undefined;
+		// `listen` resolves after a round trip, so a listener that lands after
+		// unmount (StrictMode's double mount) is released at once, as in
+		// `lib/queryFocus.ts`.
+		let cancelled = false;
+		const unlisten: Array<() => void> = [];
+		const track = (p: Promise<() => void>) => {
+			void p.then((off) => (cancelled ? off() : unlisten.push(off)));
+		};
 		const attention = useAttentionStore.getState();
-		events
-			.onWindowFocus(() => attention.setWindowFocused(true))
-			.then((fn) => {
-				unFocus = fn;
-			});
-		events
-			.onWindowBlur(() => attention.setWindowFocused(false))
-			.then((fn) => {
-				unBlur = fn;
-			});
+		track(events.onWindowFocus(() => attention.setWindowFocused(true)));
+		track(events.onWindowBlur(() => attention.setWindowFocused(false)));
 		return () => {
-			unFocus?.();
-			unBlur?.();
+			cancelled = true;
+			for (const off of unlisten) off();
 		};
 	}, []);
 
@@ -283,6 +281,7 @@ function RootLayout() {
 			.onSessionAdopted((e) => {
 				rebindTerminal(e.provisional, e.adopted);
 				useTerminalStore.getState().rebindSession(e.provisional, e.adopted);
+				useAttentionStore.getState().rebind(e.provisional, e.adopted);
 				const here = router.state.location.pathname;
 				if (here.endsWith(`/sessions/${e.provisional}`)) {
 					void router.navigate({

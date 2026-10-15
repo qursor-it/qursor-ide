@@ -60,6 +60,19 @@ describe('attentionStore', () => {
 		expect(s().unseen).toEqual({ b: true });
 	});
 
+	it('moves an unseen mark to the adopted id', () => {
+		s().observe('prov', 'working', 'waiting_input');
+		s().rebind('prov', 'adopted');
+		expect(s().unseen).toEqual({ adopted: true });
+	});
+
+	it('rebind leaves the store alone when the session was not unseen', () => {
+		s().observe('other', 'working', 'waiting_input');
+		const before = s().unseen;
+		s().rebind('prov', 'adopted');
+		expect(s().unseen).toBe(before);
+	});
+
 	it('ignores transitions that are not in the table', () => {
 		s().observe('b', 'unknown', 'waiting_input');
 		s().observe('c', 'waiting_input', 'stopped');

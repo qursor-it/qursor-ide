@@ -19,6 +19,8 @@ interface AttentionState {
 	observe: (sessionId: string, prev: TerminalStatus | undefined, next: TerminalStatus) => void;
 	setWindowFocused: (focused: boolean) => void;
 	setActiveSession: (sessionId: string | null) => void;
+	/** A session took its agent's id (F30): its unseen mark goes with it. */
+	rebind: (from: string, to: string) => void;
 }
 
 function without(unseen: Record<string, true>, sessionId: string): Record<string, true> {
@@ -48,4 +50,6 @@ export const useAttentionStore = create<AttentionState>()((set) => ({
 			activeSessionId: sessionId,
 			unseen: sessionId && s.windowFocused ? without(s.unseen, sessionId) : s.unseen,
 		})),
+	rebind: (from, to) =>
+		set((s) => (s.unseen[from] ? { unseen: { ...without(s.unseen, from), [to]: true } } : s)),
 }));
