@@ -2317,8 +2317,21 @@ without a reload; a choice holds against the OS. Like every row it applies on
 Save. `prefsStore`, because only the renderer reads it; see
 [`04-frontend.md`](./04-frontend.md) § Theming for how it is applied.
 
+**Terminal.** Added 2026-10-15 by ADR-0082, directly after Appearance: four
+`Select`s over the terminal's look, all in `prefsStore` because only the
+renderer reads them — **Font** (`terminalFont`, a preset id: JetBrains Mono
+(bundled, the default), Cascadia Code, Fira Code, SF Mono / Menlo, Consolas,
+system monospace), **Size** (`terminalFontSize`, 10–20px, default 13), **Line
+height** (`terminalLineHeight`, 1.00–1.60, default 1.00 — above it the DOM
+renderer breaks the vertical strokes of Claude's input box, and the hint says
+so) and **Cursor** (`terminalCursor`, bar, block or underline, default bar;
+outlined when the terminal is unfocused). Above them a preview on the Terminal
+Well in the draft's face, size and line height, with a box-drawn frame where a
+gap would show first. On Save every open terminal, agent and footer shell
+alike, takes the new options and refits.
+
 **Keyboard.** One row per bindable action, added by F28 and sitting directly
-after Appearance because both are app-wide chrome you set once, before the
+after Appearance and Terminal because both are app-wide chrome you set once, before the
 sections that are about the agent. It is the only section whose rows are
 *recorded* rather than typed or switched, and the one where Save is doing the
 most work: a reassignment steals the chord from whichever action held it, and

@@ -249,7 +249,10 @@ a small set of signal and categorical hues that never leave their jobs.
   the agent's PTY, a shell and the sub-agent transcript. A hair deeper and cooler
   than the ground, so a pane full of output reads as a well rather than as
   chrome. xterm cannot read a variable, so `components/terminal/themes.ts` reads
-  these and hands xterm hex.
+  these and hands xterm hex. Its ANSI colours are the app's own in both themes
+  (ADR-0082): in dark they share the status and git hues at 70–96% lightness,
+  4.5:1 on the well, with the two blacks at 3:1 so dim reads as dim. The well
+  pads its output 16px at the sides and 12px top and bottom.
 
 ### Content colours
 
@@ -272,9 +275,9 @@ on `[data-theme="light"]`.
   and `background` to 55%, the git hues to about the Tailwind 700 steps, the
   lanes to 50–58%. A dot that reads on near-black at 68% is a pale smudge as text
   on white. The lanes were judged at a 6px pitch on 2026-10-07 and held.
-- **The terminal** keeps xterm's ANSI defaults in dark and uses a palette made
-  for white paper in light (GitHub's Primer light colours): xterm's default
-  `white` and `yellow` vanish on a light ground.
+- **The terminal** uses a palette made for white paper in light (GitHub's
+  Primer light colours): xterm's default `white` and `yellow` vanish on a light
+  ground. Dark has its own table too (§ Terminal Well), no longer xterm's.
 - **The editor** is `factorai-light`, restating `factorai-dark`'s roles against
   the light ladder, with the diff at a ground's weight rather than `vs`'s lime.
 
@@ -299,8 +302,9 @@ colour.
 ## Typography
 
 **Body Font:** Inter (with `system-ui`, `sans-serif`)
-**Mono Font:** JetBrains Mono (with `Fira Code`, `monospace`) — terminal, SHAs,
-paths, chips
+**Mono Font:** JetBrains Mono, bundled as `"JetBrains Mono Variable"` (with the
+installed `JetBrains Mono`, `Fira Code`, `monospace`) — terminal, SHAs, paths,
+chips. The terminal's face is a setting (ADR-0082); this is its default.
 **Display Font:** none. There is no hero on any surface in this product.
 
 **Character:** Grid-fit Inter at 14px, with `rlig` and `calt` on. At this size
@@ -318,7 +322,10 @@ brand lockup has to condense 6% to imitate it at large sizes.
 - **Label** (500, 12px/16px, +0.05em, often uppercase): metadata, status,
   section headers. `PROJECTS`, a turn count, `missing`, the indexer line, chip
   text.
-- **Mono** (400, 12px/16px): terminal output, SHAs, file paths, branch chips.
+- **Mono** (400, 12px/16px): SHAs, file paths, branch chips.
+- **Terminal** (400, 13px, line height 1.0 by default): the agent's PTY and the
+  footer shells. Size, face, line height and cursor are the user's, in Settings →
+  Terminal (ADR-0082).
 
 ### Named Rules
 
@@ -326,7 +333,8 @@ brand lockup has to condense 6% to imitate it at large sizes.
 for anything you read to navigate. There is no 13px step and there must not be
 one, so the only question a new string raises is which of the two it is.
 Hand-written sizes (`text-[11px]`) are how the scale erodes; the single standing
-exception is a 16px avatar's initials.
+exception is a 16px avatar's initials. The terminal is outside the rule: its
+size is a user setting, not chrome.
 
 **The Shrink-The-Padding Rule.** Making a component denser means reducing its
 padding, never its labels. A menu row is tightened from 32px to 28px by its

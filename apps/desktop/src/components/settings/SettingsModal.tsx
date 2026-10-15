@@ -41,6 +41,15 @@ import {
 	type SettingsSection,
 	type SettingsValues,
 } from '@lib/settingsDraft';
+import {
+	FONT_SIZE_RANGE,
+	LINE_HEIGHT_RANGE,
+	TERMINAL_CURSORS,
+	TERMINAL_FONTS,
+	type TerminalCursor,
+	type TerminalFontId,
+	terminalOptions,
+} from '@lib/monoFont';
 import { cmd } from '@lib/tauri';
 import { THEME_PREFS, themePrefOf } from '@lib/theme';
 import { currentPrefs, type Prefs, usePrefsStore } from '@store/prefsStore';
@@ -51,6 +60,7 @@ import { DEFAULT_PR_REVIEW_INSTRUCTIONS } from '@lib/prReviewPrompt';
 
 const SECTION_LABELS: Record<SettingsSection, string> = {
 	appearance: 'Appearance',
+	terminal: 'Terminal',
 	keyboard: 'Keyboard',
 	agents: 'Agents',
 	profiles: 'Profiles',
@@ -455,6 +465,129 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 						</div>
 					)}
 
+					{section === 'terminal' && (
+						<div className="divide-y divide-border">
+							<TerminalPreview
+								font={draft.terminalFont}
+								size={draft.terminalFontSize}
+								lineHeight={draft.terminalLineHeight}
+							/>
+							<SettingRow
+								label="Font"
+								htmlFor="settings-terminal-font"
+								description="Applies to every terminal, the agent's and the footer shells. A font that is not installed falls back to the bundled one."
+							>
+								<Select
+									value={draft.terminalFont}
+									onValueChange={(v) => set('terminalFont', v as TerminalFontId)}
+								>
+									<SelectTrigger
+										id="settings-terminal-font"
+										data-testid="settings-terminal-font"
+										className="w-52"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{TERMINAL_FONTS.map(({ id, label }) => (
+											<SelectItem key={id} value={id} data-testid={`settings-terminal-font-${id}`}>
+												{label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</SettingRow>
+							<SettingRow
+								label="Size"
+								htmlFor="settings-terminal-size"
+								description="In pixels. Open terminals refit to the new size when you save."
+							>
+								<Select
+									value={String(draft.terminalFontSize)}
+									onValueChange={(v) => set('terminalFontSize', Number(v))}
+								>
+									<SelectTrigger
+										id="settings-terminal-size"
+										data-testid="settings-terminal-size"
+										className="w-24"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{FONT_SIZES.map((size) => (
+											<SelectItem
+												key={size}
+												value={String(size)}
+												data-testid={`settings-terminal-size-${size}`}
+											>
+												{size}px
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</SettingRow>
+							<SettingRow
+								label="Line height"
+								htmlFor="settings-terminal-line-height"
+								description="Above 1.00 the lines of the agent's input box show gaps between rows, which is why 1.00 is the default. The preview above shows it."
+							>
+								<Select
+									value={draft.terminalLineHeight.toFixed(2)}
+									onValueChange={(v) => set('terminalLineHeight', Number(v))}
+								>
+									<SelectTrigger
+										id="settings-terminal-line-height"
+										data-testid="settings-terminal-line-height"
+										className="w-24"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{LINE_HEIGHTS.map((lh) => (
+											<SelectItem
+												key={lh}
+												value={lh.toFixed(2)}
+												data-testid={`settings-terminal-line-height-${lh.toFixed(2)}`}
+											>
+												{lh.toFixed(2)}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</SettingRow>
+							<SettingRow
+								label="Cursor"
+								htmlFor="settings-terminal-cursor"
+								description="An unfocused terminal shows the same shape as an outline."
+							>
+								<Select
+									value={draft.terminalCursor}
+									onValueChange={(v) => set('terminalCursor', v as TerminalCursor)}
+								>
+									<SelectTrigger
+										id="settings-terminal-cursor"
+										data-testid="settings-terminal-cursor"
+										className="w-32"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{TERMINAL_CURSORS.map((id) => (
+											<SelectItem
+												key={id}
+												value={id}
+												data-testid={`settings-terminal-cursor-${id}`}
+											>
+												{id[0]?.toUpperCase()}
+												{id.slice(1)}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</SettingRow>
+						</div>
+					)}
+
 					{section === 'keyboard' && (
 						<KeyboardSection
 							value={draft.keymapOverrides}
@@ -628,6 +761,70 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 const CHANNELS: readonly { id: UpdateChannel; label: string }[] = [
 	{ id: 'stable', label: 'Stable' },
 	{ id: 'alpha', label: 'Alpha' },
+];
+
+/** The sizes and line heights the two selects offer, from the ranges
+ *  `terminalOptions` clamps to. */
+const FONT_SIZES = Array.from(
+	{ length: (FONT_SIZE_RANGE.max - FONT_SIZE_RANGE.min) / FONT_SIZE_RANGE.step + 1 },
+	(_, i) => FONT_SIZE_RANGE.min + i * FONT_SIZE_RANGE.step,
+);
+const LINE_HEIGHTS = Array.from(
+	{
+		length:
+			Math.round((LINE_HEIGHT_RANGE.max - LINE_HEIGHT_RANGE.min) / LINE_HEIGHT_RANGE.step) + 1,
+	},
+	(_, i) => Number((LINE_HEIGHT_RANGE.min + i * LINE_HEIGHT_RANGE.step).toFixed(2)),
+);
+
+/**
+ * The terminal settings' preview: the draft's font, size and line height on the
+ * Terminal Well, so a choice is seen before Save rather than after.
+ *
+ * Plain CSS, not an xterm: the preview exists to show the three things CSS
+ * controls, and an xterm per settings open would be a terminal that is never
+ * written to. The box is there because that is where a line height above 1.0
+ * shows first — a gap in the vertical strokes (ADR-0082).
+ */
+function TerminalPreview({
+	font,
+	size,
+	lineHeight,
+}: {
+	font: TerminalFontId;
+	size: number;
+	lineHeight: number;
+}) {
+	const {
+		fontFamily,
+		fontSize,
+		lineHeight: lh,
+	} = terminalOptions({
+		terminalFont: font,
+		terminalFontSize: size,
+		terminalLineHeight: lineHeight,
+		terminalCursor: 'bar',
+	});
+	return (
+		<div className="py-3">
+			<div
+				data-testid="settings-terminal-preview"
+				aria-hidden="true"
+				className="overflow-hidden rounded bg-terminal px-4 py-3 text-terminal-foreground whitespace-pre"
+				style={{ fontFamily, fontSize, lineHeight: lh }}
+			>
+				{PREVIEW_LINES.join('\n')}
+			</div>
+		</div>
+	);
+}
+
+const PREVIEW_LINES = [
+	'$ git status --short',
+	' M src/App.tsx',
+	'╭───────────────╮',
+	'│ > hello       │',
+	'╰───────────────╯',
 ];
 
 /** The draft minus the values that aren't renderer preferences — the ones

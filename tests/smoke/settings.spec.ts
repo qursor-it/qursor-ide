@@ -160,3 +160,53 @@ test.describe('settings', () => {
 		await expect(html).toHaveAttribute('data-theme', 'light');
 	});
 });
+
+/**
+ * Terminal appearance (ADR-0082): a saved size reaches a live terminal, and
+ * survives a reload.
+ *
+ * A Linux user agent, because `.xterm-rows` is the DOM renderer's and on a
+ * Windows user agent the focused terminal draws on WebGL, which has no rows to
+ * read a font size from.
+ */
+test.describe('terminal settings', () => {
+	test.use({
+		userAgent:
+			'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML) Chrome/130.0 Safari/537.36',
+	});
+
+	test('@smoke a saved size and cursor reach the open terminal and survive a reload', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await page.locator('aside').getByText('foo').click();
+		await page.getByText('Refactor the auth middleware').click();
+		const rows = page.locator('.xterm-rows:visible');
+		await expect(rows).toBeVisible();
+		// The 13px everyone had before this was a setting is still the default.
+		await expect(rows).toHaveCSS('font-size', '13px');
+
+		await page.getByTestId('open-settings').click();
+		await page.getByTestId('settings-nav-terminal').click();
+		await page.getByTestId('settings-terminal-size').click();
+		await page.getByTestId('settings-terminal-size-16').click();
+		await page.getByTestId('settings-terminal-cursor').click();
+		await page.getByTestId('settings-terminal-cursor-block').click();
+		await expect(page.getByTestId('settings-dirty-terminal')).toBeVisible();
+		await page.getByTestId('settings-save').click();
+		await expect(page.getByTestId('settings-modal')).toHaveCount(0);
+
+		// Live: the terminal that was already open took the new size.
+		await expect(rows).toHaveCSS('font-size', '16px');
+
+		// The session tab is restored by the reload (F16), so the terminal is there.
+		await page.reload();
+		await expect(page.locator('.xterm-rows:visible')).toHaveCSS('font-size', '16px');
+		// The cursor is not visible in a DOM row until focus, so the saved value
+		// is read back where it is set.
+		await page.getByTestId('open-settings').click();
+		await page.getByTestId('settings-nav-terminal').click();
+		await expect(page.getByTestId('settings-terminal-cursor')).toHaveText(/Block/);
+	});
+});

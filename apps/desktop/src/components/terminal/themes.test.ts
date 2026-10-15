@@ -13,6 +13,39 @@ const LIGHT: Record<string, string> = {
 	'--primary': 'oklch(48.9% 0.102 262)',
 };
 
+const ANSI_KEYS = [
+	'black',
+	'red',
+	'green',
+	'yellow',
+	'blue',
+	'magenta',
+	'cyan',
+	'white',
+	'brightBlack',
+	'brightRed',
+	'brightGreen',
+	'brightYellow',
+	'brightBlue',
+	'brightMagenta',
+	'brightCyan',
+	'brightWhite',
+] as const;
+
+/** WCAG 2.x relative luminance of a `#rrggbb`. */
+function luminance(hex: string): number {
+	const [r, g, b] = [1, 3, 5].map((i) => {
+		const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+		return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+	});
+	return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+}
+
+function contrast(a: string, b: string): number {
+	const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+	return ((hi ?? 0) + 0.05) / ((lo ?? 0) + 0.05);
+}
+
 const reader = (tokens: Record<string, string>) => (name: string) => tokens[name] ?? '';
 
 describe('xtermTheme', () => {
@@ -26,10 +59,27 @@ describe('xtermTheme', () => {
 		expect(theme.cursorAccent).toBe(theme.background);
 	});
 
-	it('leaves the ANSI colours to xterm in the dark theme', () => {
-		// xterm's defaults are a dark-ground palette, and they are what every
-		// terminal in the app has always drawn.
-		expect(xtermTheme(reader(DARK), 'dark').yellow).toBeUndefined();
+	it('gives the dark theme its own ANSI colours rather than the xterm defaults', () => {
+		const theme = xtermTheme(reader(DARK), 'dark');
+		for (const key of ANSI_KEYS) expect(theme[key], key).toMatch(/^#[0-9a-f]{6}$/);
+		// xterm's default yellow, which the tuned table replaces.
+		expect(theme.yellow).not.toBe('#e5e510');
+	});
+
+	// The colours held to the 3:1 non-text floor instead of 4.5:1. Dark: the two
+	// blacks, which are meant to read as dim. Light: Primer's lighter "bright"
+	// variants, which are the faint end of that palette by design.
+	it.each([
+		['dark', DARK, ['black', 'brightBlack']],
+		['light', LIGHT, ['brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite']],
+	] as const)('keeps every %s ANSI colour legible on its ground', (name, tokens, dim) => {
+		const theme = xtermTheme(reader(tokens), name);
+		const ground = theme.background ?? '';
+		for (const key of ANSI_KEYS) {
+			const ratio = contrast(theme[key] ?? '', ground);
+			const floor = (dim as readonly string[]).includes(key) ? 3 : 4.5;
+			expect(ratio, `${name} ${key}`).toBeGreaterThanOrEqual(floor);
+		}
 	});
 
 	it('gives the light theme ANSI colours that read on white', () => {

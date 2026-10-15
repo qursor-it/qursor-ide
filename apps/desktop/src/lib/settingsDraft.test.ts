@@ -30,11 +30,20 @@ const SAVED: SettingsValues = {
 	desktopNotifications: true,
 	keymapOverrides: {},
 	prReviewInstructions: '',
+	terminalFont: 'jetbrains',
+	terminalFontSize: 13,
+	terminalLineHeight: 1,
+	terminalCursor: 'bar',
 };
 
 describe('isSettingsSection', () => {
 	it('accepts every section in the nav', () => {
 		for (const section of SETTINGS_SECTIONS) expect(isSettingsSection(section)).toBe(true);
+	});
+
+	it('puts Terminal straight after Appearance', () => {
+		expect(SETTINGS_SECTIONS.indexOf('terminal')).toBe(SETTINGS_SECTIONS.indexOf('appearance') + 1);
+		expect(settingsSectionOf('terminal')).toBe('terminal');
 	});
 
 	it('resolves the old claude section to agents and nothing else', () => {
@@ -93,6 +102,10 @@ describe('dirtySections', () => {
 			else if (key === 'prReviewInstructions') draft.prReviewInstructions = 'Focus on tests.';
 			else if (key === 'updateChannel') draft.updateChannel = 'alpha';
 			else if (key === 'theme') draft.theme = 'light';
+			else if (key === 'terminalFont') draft.terminalFont = 'consolas';
+			else if (key === 'terminalFontSize') draft.terminalFontSize = 16;
+			else if (key === 'terminalLineHeight') draft.terminalLineHeight = 1.2;
+			else if (key === 'terminalCursor') draft.terminalCursor = 'block';
 			else draft[key] = !SAVED[key];
 			expect(dirtySections(SAVED, draft)).toEqual([SECTION_FOR[key]]);
 		}

@@ -36,6 +36,7 @@ import {
 	attachPrReview,
 } from '@components/viewer/prReviewZones';
 import { usePrReviewInput } from '@hooks/usePrReviewInput';
+import { MONO_STACK } from '@lib/monoFont';
 import { usePrefsStore } from '@store/prefsStore';
 
 /**
@@ -584,7 +585,7 @@ function DiffEditor({
 			wordWrap: 'on',
 			wrappingIndent: 'indent',
 			scrollBeyondLastLine: false,
-			fontFamily: '"JetBrains Mono", "Fira Code", ui-monospace, monospace',
+			fontFamily: MONO_STACK,
 			fontSize: 13,
 			// Same reason as the file viewer: inside a dialog that is mid-open the
 			// container measures zero, so let Monaco own a ResizeObserver.

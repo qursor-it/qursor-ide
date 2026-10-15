@@ -15,9 +15,15 @@ import type { UpdateChannel } from '@factorai/types';
 /** The nav, in order. **Appearance arrived 2026-08-29 with the clock setting**,
  *  which is what the "absent until it has content" rule was waiting for; the
  *  theme joined it with item 32 (#28). **Advanced arrived 2026-09-23 with the update
- *  channel** (ADR-0064), for the same reason. */
+ *  channel** (ADR-0064), for the same reason. **Terminal arrived 2026-10-15**
+ *  (ADR-0082), when the terminal's font, size, line height and cursor became
+ *  settings. */
 export const SETTINGS_SECTIONS = [
 	'appearance',
+	// Beside Appearance because it is the same kind of setting — how the app
+	// looks, set once — but its own section: four controls and a preview are a
+	// page, not a row (ADR-0082).
+	'terminal',
 	// After Appearance because both are app-wide chrome you set once, and before
 	// the sections that are about the agent (F28).
 	'keyboard',
@@ -119,6 +125,10 @@ export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	updateChannel: 'advanced',
 	clock24: 'appearance',
 	theme: 'appearance',
+	terminalFont: 'terminal',
+	terminalFontSize: 'terminal',
+	terminalLineHeight: 'terminal',
+	terminalCursor: 'terminal',
 	keymapOverrides: 'keyboard',
 	prReviewInstructions: 'pulls',
 };

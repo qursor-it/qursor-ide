@@ -531,7 +531,9 @@ function Terminal({ sessionId }: { sessionId: string }) {
 
   // bootstrap xterm once
   useEffect(() => {
-    const term = new XTerm({ allowProposedApi: true, /* theme, font ... */ });
+    // Font, size, line height and cursor come from prefsStore through
+    // terminalOptions() (lib/monoFont.ts, ADR-0082); the palette from themes.ts.
+    const term = new XTerm({ allowProposedApi: true, ...terminalOptions(currentPrefs()), theme });
     term.loadAddon(new FitAddon());
     term.loadAddon(new WebglAddon());
     term.loadAddon(new SearchAddon());

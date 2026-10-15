@@ -17,7 +17,8 @@ import { hotkeysOverTerminal, mergeKeymap } from '@lib/keymap';
 import { cmd, copyText, events, openExternally } from '@lib/tauri';
 import { isMacOS, isWindows } from '@lib/platform';
 import { currentTheme, onThemeChange } from '@lib/theme';
-import { usePrefsStore } from '@store/prefsStore';
+import { terminalOptions } from '@lib/monoFont';
+import { currentPrefs, usePrefsStore } from '@store/prefsStore';
 import { useTerminalStore } from '@store/terminalStore';
 
 /**
@@ -321,6 +322,60 @@ onThemeChange((theme) => {
 	for (const entry of pool.values()) entry.term.options.theme = next;
 });
 
+// The terminal preferences apply live to every pooled terminal, hidden ones
+// included, for the reason a theme switch does: a terminal skipped now would
+// show the old font the next time its tab is picked. Agent and footer shells
+// share the pool, so one loop covers both. A new size or font changes the cell,
+// so each is refitted — which sends the PTY its new grid through `onResize`.
+//
+// A font change refits a second time once `document.fonts.ready` resolves: a
+// family the page has not used yet loads lazily, xterm measured the fallback it
+// drew meanwhile, and re-assigning `fontFamily` is what makes xterm measure the
+// real glyphs. Module-lifetime, like the pool.
+function terminalPrefsKey(s: ReturnType<typeof currentPrefs>): string {
+	return [s.terminalFont, s.terminalFontSize, s.terminalLineHeight, s.terminalCursor].join('|');
+}
+
+function applyTerminalOptions(refit: boolean): void {
+	const options = terminalOptions(currentPrefs());
+	for (const entry of pool.values()) {
+		const o = entry.term.options;
+		if (o.fontFamily !== options.fontFamily || refit) o.fontFamily = options.fontFamily;
+		o.fontSize = options.fontSize;
+		o.lineHeight = options.lineHeight;
+		o.cursorStyle = options.cursorStyle;
+		o.cursorInactiveStyle = options.cursorInactiveStyle;
+		fitToHost(entry);
+	}
+}
+
+let lastTerminalPrefs = terminalPrefsKey(currentPrefs());
+let lastTerminalFont = currentPrefs().terminalFont;
+usePrefsStore.subscribe(() => {
+	const prefs = currentPrefs();
+	const key = terminalPrefsKey(prefs);
+	if (key === lastTerminalPrefs) return;
+	lastTerminalPrefs = key;
+	const fontChanged = prefs.terminalFont !== lastTerminalFont;
+	lastTerminalFont = prefs.terminalFont;
+	applyTerminalOptions(false);
+	if (fontChanged) void document.fonts.ready.then(() => applyTerminalOptions(true));
+});
+
+// The bundled face is a web font, so it loads lazily and the first session of a
+// launch can open before it has: xterm then measured, and the WebGL renderer
+// rasterised, the fallback. Loading it up front and re-assigning `fontFamily`
+// when it lands makes every terminal open so far re-measure the real glyphs.
+// A failed load leaves the fallback in place, which is what the stack is for.
+// The unit tests import this module under node, with no document, hence the
+// guard.
+if (typeof document !== 'undefined' && 'fonts' in document) {
+	void document.fonts
+		.load(`13px "JetBrains Mono Variable"`)
+		.then(() => applyTerminalOptions(true))
+		.catch(() => undefined);
+}
+
 // Memoises the spawn so StrictMode's double-invoke (and any concurrent caller)
 // shares ONE `terminal_spawn` rather than racing two.
 const spawnInFlight = new Map<string, Promise<string>>();
@@ -451,8 +506,8 @@ export function getOrCreateTerm(
 	const host = document.createElement('div');
 	// Stacked, so every pooled terminal in this pane is exactly the pane's size
 	// whether or not it is the visible one. `inset-0` of the container rather
-	// than `h-full w-full` of a padded box: the 8px is on the wrapper, so the
-	// geometry `fitToHost` measures is unchanged.
+	// than `h-full w-full` of a padded box: the padding is on the wrapper, so the
+	// geometry `fitToHost` measures is the box inside it.
 	host.className = 'absolute inset-0';
 	// Appended *before* `term.open`, so xterm's first measurement — char size,
 	// scrollbar width, the initial render dimensions — is taken on an element
@@ -461,8 +516,8 @@ export function getOrCreateTerm(
 	container.appendChild(host);
 
 	const term = new XTerm({
-		fontFamily: '"JetBrains Mono", "Fira Code", ui-monospace, monospace',
-		fontSize: 13,
+		// Font, size, line height and cursor are the user's (ADR-0082).
+		...terminalOptions(currentPrefs()),
 		cursorBlink: true,
 		allowProposedApi: true,
 		scrollback: 10_000,
@@ -980,13 +1035,14 @@ export function Terminal({ sessionId, projectId, projectCwd, sessionCwd }: Termi
 		};
 	}, [sessionId, projectId, projectCwd]);
 
-	// `p-2` is also the slack the rows paint into at a fractional zoom — see the
-	// last-column rule in the desktop app's stylesheet, which is written against
-	// this 8px — and `overflow-hidden` is what keeps that spill inside the pane.
+	// The padding is breathing room for the output (ADR-0082), and its 16px at
+	// the sides is also the slack the rows paint into at a fractional zoom — see
+	// the last-column rule in the desktop app's stylesheet, which needs at least
+	// 8px of it — and `overflow-hidden` is what keeps that spill inside the pane.
 	// The inner element is the hosts' positioning parent, so the padding stays in
-	// one place and `fitToHost` measures exactly the box it used to.
+	// one place and `fitToHost` measures the box inside it.
 	return (
-		<div className="h-full w-full overflow-hidden bg-terminal p-2">
+		<div className="h-full w-full overflow-hidden bg-terminal px-4 py-3">
 			<div ref={containerRef} className="relative h-full w-full" />
 		</div>
 	);

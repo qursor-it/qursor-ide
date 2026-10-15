@@ -1,4 +1,5 @@
 import type { KeymapOverrides } from '@lib/keymap';
+import type { TerminalCursor, TerminalFontId } from '@lib/monoFont';
 import type { ThemePref } from '@lib/theme';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -95,6 +96,18 @@ interface PrefsState {
 	 *  a copy of the default text, so a default we improve later still reaches
 	 *  somebody who never wrote their own, the same reasoning as `keymapOverrides`. */
 	prReviewInstructions: string;
+	/** The terminal's font, as a preset id from `lib/monoFont` (ADR-0082). An id
+	 *  rather than a stack, so a stack we improve later reaches everyone, and an
+	 *  id that no longer exists falls back to the bundled face. */
+	terminalFont: TerminalFontId;
+	/** The terminal's font size in px, 10 to 20. 13 is what every terminal drew
+	 *  before this was a setting. */
+	terminalFontSize: number;
+	/** The terminal's line height as a multiple, 1.0 to 1.6. Above 1.0 the DOM
+	 *  renderer leaves gaps in box-drawing glyphs; see ADR-0082. */
+	terminalLineHeight: number;
+	/** The cursor's shape; the block it used to be is one choice of three. */
+	terminalCursor: TerminalCursor;
 
 	/** The diff footer's own toggle (F13), which sets the same value the Editor
 	 *  section defaults: flipping it there is a choice about how you read diffs,
@@ -131,6 +144,13 @@ const DEFAULT_PREFS: Prefs = {
 	keymapOverrides: {},
 	// Empty: use `DEFAULT_PR_REVIEW_INSTRUCTIONS`, which lives with the prompt.
 	prReviewInstructions: '',
+	terminalFont: 'jetbrains',
+	terminalFontSize: 13,
+	// 1.0, not roomier: xterm's DOM renderer draws box-drawing characters as font
+	// glyphs, so any line height above 1.0 breaks the vertical strokes of Claude's
+	// input box into segments (ADR-0082).
+	terminalLineHeight: 1,
+	terminalCursor: 'bar',
 };
 
 export const usePrefsStore = create<PrefsState>()(
@@ -163,6 +183,10 @@ export const usePrefsStore = create<PrefsState>()(
 				theme: s.theme,
 				keymapOverrides: s.keymapOverrides,
 				prReviewInstructions: s.prReviewInstructions,
+				terminalFont: s.terminalFont,
+				terminalFontSize: s.terminalFontSize,
+				terminalLineHeight: s.terminalLineHeight,
+				terminalCursor: s.terminalCursor,
 			}),
 		},
 	),
@@ -182,5 +206,9 @@ export function currentPrefs(): Prefs {
 		theme: s.theme,
 		keymapOverrides: s.keymapOverrides,
 		prReviewInstructions: s.prReviewInstructions,
+		terminalFont: s.terminalFont,
+		terminalFontSize: s.terminalFontSize,
+		terminalLineHeight: s.terminalLineHeight,
+		terminalCursor: s.terminalCursor,
 	};
 }
