@@ -1907,6 +1907,19 @@ impl TerminalManager {
 
 		self.terminals.insert(id.clone(), handle.clone());
 
+		// **A prompted Claude session announces `Working` at spawn** (F32). The
+		// handle is seeded `Working` silently, and `set_status` only emits on
+		// change, so a session that never prints the idle `✳` at boot would make
+		// the turn's end its first event — which the notifier, by rule, never
+		// alerts on. Emitted before the reader starts, so nothing can precede it.
+		if seeds_working(kind, req.agent, req.initial_prompt.as_deref()) {
+			(self.on_status)(TerminalStatusEvent {
+				id: id.clone(),
+				status: TerminalStatus::Working,
+				last_activity: handle.last_activity.load(Ordering::Relaxed),
+			});
+		}
+
 		// A bridge that never bound is announced immediately: every `openFile`
 		// for this session will silently do nothing, and the header is the only
 		// place that can say so. A healthy one announces nothing — there is no
@@ -2293,6 +2306,19 @@ fn try_adopt(id: &TerminalId, handle: &Arc<TerminalHandle>, payload: &str, on_ad
 	});
 }
 
+/// Whether a spawn emits an initial `Working` event (F32): a Claude agent that
+/// starts with a prompt. A plain interactive spawn emits nothing, so its boot
+/// `✳` stays the notifier's silent first event.
+fn seeds_working(
+	kind: TerminalKind,
+	agent: Option<&'static AgentDescriptor>,
+	initial_prompt: Option<&str>,
+) -> bool {
+	kind == TerminalKind::Agent
+		&& agent.is_some_and(|a| a.id == agents::CLAUDE)
+		&& initial_prompt.is_some_and(|p| !p.is_empty())
+}
+
 fn set_status(
 	id: &TerminalId,
 	handle: &Arc<TerminalHandle>,
@@ -2447,6 +2473,18 @@ mod tests {
 		});
 		assert_eq!(*emitted.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
 		assert_eq!(*tapped.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
+	}
+
+	#[test]
+	fn only_a_prompted_claude_agent_seeds_working_at_spawn() {
+		let claude = Some(claude_desc());
+		assert!(seeds_working(TerminalKind::Agent, claude, Some("Review this PR")));
+		// Plain interactive spawn: the boot title must stay the silent first event.
+		assert!(!seeds_working(TerminalKind::Agent, claude, None));
+		assert!(!seeds_working(TerminalKind::Agent, claude, Some("")));
+		assert!(!seeds_working(TerminalKind::Shell, None, Some("ls")));
+		let codex = agents::descriptor(agents::CODEX);
+		assert!(!seeds_working(TerminalKind::Agent, codex, Some("hi")));
 	}
 
 	fn make_manager() -> (TerminalManager, DataLog, ExitLog) {
