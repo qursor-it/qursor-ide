@@ -871,6 +871,10 @@ pub enum SettingKey {
 	/// `alpha`. Unset → `stable`. Rust reads it because the check runs there —
 	/// the plugin's JS `check()` cannot be given an endpoint.
 	UpdateChannel,
+	/// Whether a session that wants you raises a desktop notification while the
+	/// window is in the background (F32, ADR-0081). Unset → on; `off` → off.
+	/// Rust reads it because Rust sends the notification.
+	DesktopNotifications,
 }
 
 impl SettingKey {
@@ -888,6 +892,7 @@ impl SettingKey {
 			SettingKey::RoutinesCatchupHours => "routines.catchup_hours",
 			SettingKey::RoutinesMaxConcurrent => "routines.max_concurrent",
 			SettingKey::UpdateChannel => "updates.channel",
+			SettingKey::DesktopNotifications => "notifications.desktop",
 		}
 	}
 }
