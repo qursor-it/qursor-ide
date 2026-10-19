@@ -15,6 +15,7 @@ colors:
   primary: "oklch(65.9% 0.088 259)"
   primary-foreground: "oklch(14.5% 0 0)"
   destructive: "oklch(58% 0.22 25)"
+  usage-warn: "oklch(78% 0.15 75)"
   dev: "oklch(67.2% 0.122 295)"
   status-working: "oklch(68% 0.17 150)"
   status-waiting: "oklch(65.9% 0.088 259)"
@@ -259,6 +260,22 @@ a small set of signal and categorical hues that never leave their jobs.
   goes*, and an outline rather than a fill or a border because neither may move
   or recolour the output.
 
+### Signal colours
+
+- **Usage Amber** (`--usage-warn`, `oklch(78% 0.15 75)`; light
+  `oklch(55% 0.13 70)`, the darker, oranger step a 98% ground needs): **a plan
+  limit is getting close** — a status-bar window at 70–89%. That is its single
+  job. It sits near `git-modified`'s hue and is a separate token on purpose:
+  that one is content, this is a signal, and they must be free to move apart.
+- **Destructive Red** (`destructive`, `oklch(58% 0.22 25)`): destroying
+  something, and a second job — **a plan limit is nearly out**, a window at 90%
+  or more.
+- **The usage bar is colourless until it has something to say.** Below 70% its
+  fill is `muted-foreground`; neither Session Green (`working`) nor Qursor Blue
+  (`waiting`) may stand in, because a bar in either would read as a session
+  state. A reading older than 15 minutes dims its whole group to 60% opacity
+  rather than passing for fresh.
+
 ### Content colours
 
 - **Git hues** (`git-added`, `git-modified`, `git-deleted`, `git-renamed`): what
@@ -362,7 +379,8 @@ than by a constant.
 
 **Chrome heights are explicit, never derived.** Top bar 42px (`h-10.5`); file
 panel header, sidebar footer and the session's shell footer 36px (`h-9`);
-session tab 30px (`h-7.5`); menu row 28px; sidebar rows 26–28px; **collapsed
+session tab 30px (`h-7.5`); **status bar 24px (`h-6`)**, full width under
+every column; menu row 28px; sidebar rows 26–28px; **collapsed
 sidebar 48px wide, on a 36px cell**. The sidebar
 footer and the shell footer share a height because they share a **line**: they
 sit level across the bottom of the window, and 6px between them read as a

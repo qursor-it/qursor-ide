@@ -29,6 +29,7 @@ import { tabsFor, type ViewerSubject, useViewerStore, viewerHandoff } from '@sto
 import { PanelResizer } from './PanelResizer';
 import { RestartConfirm } from './RestartConfirm';
 import { Sidebar } from './Sidebar';
+import { StatusBar } from './StatusBar';
 import { TopBar } from './TopBar';
 
 interface AppShellProps {
@@ -283,6 +284,10 @@ export function AppShell({ children }: AppShellProps) {
 				{/* Renders nothing when collapsed; follows the route's project. */}
 				<FileTreePanel />
 			</div>
+			{/* Plan limits and the session's cost (usage monitor): full width, under
+			    every column, so it belongs to the window rather than to a panel.
+			    Renders nothing when the user has turned it off. */}
+			<StatusBar />
 			{/* Portalled, so it stacks over whatever asked for it — including the
 			    settings modal, when About is the door (F29). */}
 			<RestartConfirm />

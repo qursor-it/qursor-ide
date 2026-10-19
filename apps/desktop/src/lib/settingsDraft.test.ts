@@ -34,6 +34,7 @@ const SAVED: SettingsValues = {
 	terminalFontSize: 13,
 	terminalLineHeight: 1,
 	terminalCursor: 'bar',
+	showStatusBar: true,
 };
 
 describe('isSettingsSection', () => {

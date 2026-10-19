@@ -150,6 +150,7 @@
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-dev: var(--dev);
+	--color-usage-warn: var(--usage-warn);
 	--color-terminal: var(--terminal);
 	--color-git-added: var(--git-added);
 	--color-git-modified: var(--git-modified);
@@ -224,6 +225,13 @@
 	   pair: the badge is a chip in F18's shape — border, 12% tint and text all
 	   mixed from this hue — so nothing is ever set *on* solid violet. */
 	--dev: oklch(67.2% 0.122 295);
+
+	/* Usage Amber: a plan limit is getting close (70–89%, usage monitor). Its one
+	   job; the bar is the muted foreground below 70% and `--destructive` from 90%,
+	   so the status bar has no colour until it has something to say. Not
+	   `--git-modified`, though the hue is near: that one is content, this is a
+	   signal, and they must be able to move apart. */
+	--usage-warn: oklch(78% 0.15 75);
 
 	/* The terminal's own ground and text: the agent's PTY, a shell, and the
 	   transcript that stands in for a PTY. A step deeper than `--background` in
@@ -311,6 +319,8 @@
 	--input: oklch(95% 0 0);
 	--ring: oklch(48.9% 0.102 262);
 	--dev: oklch(49.1% 0.121 297);
+	/* Amber on a 98% ground needs a darker, oranger step, the way the accent does. */
+	--usage-warn: oklch(55% 0.13 70);
 	/* White paper, a step above the 98% chrome — the light theme's well goes up,
 	   not down, the way `--card` does. */
 	--terminal: oklch(100% 0 0);

@@ -21,7 +21,8 @@ apps/desktop/src/
 │   │   ├── Sidebar.tsx      # projects, search input, status dots, new-session +
 │   │   ├── PanelResizer.tsx # drag handle for the right panel
 │   │   ├── PanelEmpty.tsx   # the one line a panel tab shows instead of a list
-│   │   └── StatusBar.tsx
+│   │   ├── StatusBar.tsx    # bottom edge: plan limits per agent, active session's tokens + cost; hideable (showStatusBar)
+│   │   └── UsagePopover.tsx # the status bar's detail: every profile, both windows, per-model, source, session breakdown
 │   ├── sessions/
 │   │   ├── SessionList.tsx
 │   │   ├── SessionRow.tsx
@@ -50,11 +51,13 @@ apps/desktop/src/
 │   ├── projectsStore.ts
 │   ├── sessionStore.ts      # active session + side-panel state
 │   ├── terminalStore.ts     # open tabs (persisted) + live PTYs per session
-│   └── prefsStore.ts        # user preferences, localStorage (ADR-0013)
+│   ├── prefsStore.ts        # user preferences, localStorage (ADR-0013)
+│   └── usageStore.ts        # plan limits from get_usage / usage:changed, not persisted
 ├── hooks/
 │   ├── useActiveProject.ts  # project the current route is about
 │   ├── useFileViewer.ts     # ?file= &line= — what the viewer shows, and where
-│   └── useSettingsModal.ts  # ?settings= — which settings section is open (F11)
+│   ├── useSettingsModal.ts  # ?settings= — which settings section is open (F11)
+│   └── useUsageSync.ts      # get_usage once, then usage:changed → usageStore (mounted in __root)
 ├── lib/
 │   ├── tauri.ts             # typed invoke + listen wrappers
 │   ├── queryKeys.ts

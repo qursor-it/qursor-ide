@@ -129,6 +129,7 @@ export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	updateChannel: 'advanced',
 	clock24: 'appearance',
 	theme: 'appearance',
+	showStatusBar: 'appearance',
 	terminalFont: 'terminal',
 	terminalFontSize: 'terminal',
 	terminalLineHeight: 'terminal',

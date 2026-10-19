@@ -38,11 +38,13 @@ import type {
 	PrSummary,
 	Profile,
 	Project,
+	ProviderUsage,
 	Routine,
 	RoutineFireEvent,
 	SearchHit,
 	SessionPage,
 	SessionSummary,
+	SessionUsage,
 	SettingKey,
 	SopsStatus,
 	TerminalId,
@@ -167,6 +169,10 @@ export interface TestFixture {
 	ghPrCheckoutPlans?: Record<string, Partial<PrCheckoutPlan>>;
 	/** Makes `gh_pr_checkout` reject with this error. */
 	ghPrCheckoutFails?: AppError;
+	/** What `get_usage` answers (usage monitor). Absent means no readings yet. */
+	usage?: ProviderUsage[];
+	/** `session_usage` keyed by session id. Absent answers null. */
+	sessionUsage?: Record<string, SessionUsage>;
 	/** What the Project Intelligence commands answer once
 	 *  `settings.projectIntelligence` is `on` (F33). Absent means empty. A spec
 	 *  changes it in the page (`window.__FACTORAI_TEST__.intelligence`) to move
@@ -2312,6 +2318,78 @@ export function fixtureIntelligence(over: IntelligenceFixture = {}): TestFixture
 				previewHash: 'hash-1',
 			},
 			...over,
+		},
+	};
+}
+
+/**
+ * Both agents installed, with plan limits (usage monitor): Claude at 62% / 31%
+ * — neutral — and Codex at 92% / 16%, whose 5-hour window is past the red
+ * line. Claude has a second, non-default profile, which the bar leaves out and
+ * the popover lists. The one session has tokens and a cost.
+ */
+export function fixtureWithUsage(): TestFixture {
+	const base = fixtureOneProjectOneSession();
+	const now = Date.now();
+	const hour = 3_600_000;
+	const installed = (binary: string): ClaudeCliStatus => ({
+		installed: true,
+		binaryPath: `/usr/local/bin/${binary}`,
+		version: '1.0.0',
+	});
+	return {
+		...base,
+		claudeCli: installed('claude'),
+		codexCli: installed('codex'),
+		usage: [
+			{
+				agent: 'claude',
+				profileId: 'default',
+				profileName: 'Default',
+				isDefault: true,
+				fiveHour: { usedPercent: 62, resetsAt: now + 2 * hour },
+				weekly: { usedPercent: 31, resetsAt: now + 80 * hour },
+				perModel: [
+					{ label: 'Weekly Opus', window: { usedPercent: 74, resetsAt: now + 80 * hour } },
+				],
+				source: 'statusLine',
+				updatedAt: now - 120_000,
+			},
+			{
+				agent: 'claude',
+				profileId: 'work',
+				profileName: 'Work',
+				isDefault: false,
+				fiveHour: { usedPercent: 8, resetsAt: now + 4 * hour },
+				weekly: { usedPercent: 12, resetsAt: now + 100 * hour },
+				perModel: [],
+				source: 'statusLine',
+				updatedAt: now - 40 * 60_000,
+			},
+			{
+				agent: 'codex',
+				profileId: 'default',
+				profileName: 'Default',
+				isDefault: true,
+				fiveHour: { usedPercent: 92, resetsAt: now + hour },
+				weekly: { usedPercent: 16, resetsAt: now + 120 * hour },
+				perModel: [],
+				source: 'codexAppServer',
+				updatedAt: now - 60_000,
+			},
+		],
+		sessionUsage: {
+			'session-uuid-001': {
+				sessionId: 'session-uuid-001',
+				model: 'claude-opus-4-6',
+				inputTokens: 12_400,
+				outputTokens: 86_000,
+				cacheReadTokens: 1_650_000,
+				cacheWriteTokens: 51_600,
+				reasoningTokens: 0,
+				totalTokens: 1_800_000,
+				costUsd: 4.123,
+			},
 		},
 	};
 }
