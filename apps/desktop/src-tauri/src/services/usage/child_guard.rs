@@ -12,6 +12,8 @@ pub(crate) struct KillOnDrop {
 	/// Windows: the job the whole tree lives in; closing it kills the tree.
 	#[cfg(windows)]
 	job: Option<std::os::windows::io::OwnedHandle>,
+	/// Cleared by `release`: the tree is left to run.
+	armed: bool,
 }
 
 impl KillOnDrop {
@@ -19,10 +21,21 @@ impl KillOnDrop {
 		#[cfg(windows)]
 		{
 			let job = kill_on_close_job(&child);
-			Self { child, job }
+			Self { child, job, armed: true }
 		}
 		#[cfg(not(windows))]
-		Self { child }
+		Self { child, armed: true }
+	}
+
+	/// Leave the child and its descendants alone on drop: for a child that
+	/// finished on its own and may have started background work on purpose.
+	pub(crate) fn release(&mut self) {
+		self.armed = false;
+		#[cfg(windows)]
+		if let Some(job) = &self.job {
+			// Without this, closing the handle would still kill the tree.
+			set_kill_on_close(job, false);
+		}
 	}
 }
 
@@ -30,6 +43,9 @@ impl Drop for KillOnDrop {
 	fn drop(&mut self) {
 		#[cfg(windows)]
 		drop(self.job.take());
+		if !self.armed {
+			return;
+		}
 		#[cfg(unix)]
 		// SAFETY: plain signal to the process group this child leads.
 		unsafe {
@@ -40,6 +56,30 @@ impl Drop for KillOnDrop {
 	}
 }
 
+/// Turn the job's kill-on-close limit on or off. Returns whether it took.
+#[cfg(windows)]
+fn set_kill_on_close(job: &std::os::windows::io::OwnedHandle, on: bool) -> bool {
+	use std::os::windows::io::AsRawHandle;
+	use windows_sys::Win32::Foundation::HANDLE;
+	use windows_sys::Win32::System::JobObjects::{
+		JobObjectExtendedLimitInformation, SetInformationJobObject,
+		JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+	};
+	let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+	if on {
+		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	}
+	// SAFETY: a valid job handle and a correctly sized limits struct.
+	unsafe {
+		SetInformationJobObject(
+			job.as_raw_handle() as HANDLE,
+			JobObjectExtendedLimitInformation,
+			(&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+			std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+		) != 0
+	}
+}
+
 /// A job object with kill-on-close holding `child`; descendants spawned after
 /// the assignment join it. `None` if the job could not be set up (the direct
 /// child is still killed).
@@ -47,11 +87,7 @@ impl Drop for KillOnDrop {
 fn kill_on_close_job(child: &Child) -> Option<std::os::windows::io::OwnedHandle> {
 	use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 	use windows_sys::Win32::Foundation::HANDLE;
-	use windows_sys::Win32::System::JobObjects::{
-		AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-		SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-		JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-	};
+	use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
 	// SAFETY: plain Win32 calls; the raw handle is wrapped immediately so it is
 	// closed on every path.
 	unsafe {
@@ -60,15 +96,7 @@ fn kill_on_close_job(child: &Child) -> Option<std::os::windows::io::OwnedHandle>
 			return None;
 		}
 		let job = OwnedHandle::from_raw_handle(raw);
-		let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-		let set = SetInformationJobObject(
-			job.as_raw_handle() as HANDLE,
-			JobObjectExtendedLimitInformation,
-			(&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-			std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-		);
-		if set == 0 {
+		if !set_kill_on_close(&job, true) {
 			return None;
 		}
 		let assigned = AssignProcessToJobObject(
