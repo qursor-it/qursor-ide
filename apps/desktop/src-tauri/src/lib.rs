@@ -158,6 +158,20 @@ pub fn run() {
 				.with_status_tap(move |e| attention_tap.on_status(e))
 				// Claude's limits, forwarded by each session's status line.
 				.with_usage_sink_dir(statusline_dir.clone())
+				// Switchable: our status line hides Claude Code's footer hints for
+				// a user with none of their own. Unset = on.
+				.with_usage_statusline_enabled({
+					let db = db.clone();
+					Arc::new(move || {
+						let value = db
+							.with(|conn| {
+								services::settings::get(conn, models::SettingKey::UsageStatusLine)
+							})
+							.ok()
+							.flatten();
+						value.as_deref() != Some("off")
+					})
+				})
 				.with_user_binary(Arc::new(move |agent| {
 					services::settings::binary_override(&settings_db, agent)
 				}))

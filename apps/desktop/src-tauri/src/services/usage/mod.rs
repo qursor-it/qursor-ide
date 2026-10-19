@@ -2,6 +2,7 @@
 //! status bar and the taskbar widget.
 
 pub mod child_guard;
+pub mod claude_api;
 pub mod codex_app_server;
 pub mod codex_log;
 pub mod poller;

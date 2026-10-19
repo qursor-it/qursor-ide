@@ -875,6 +875,15 @@ pub enum SettingKey {
 	/// window is in the background (F32, ADR-0081). Unset → on; `off` → off.
 	/// Rust reads it because Rust sends the notification.
 	DesktopNotifications,
+	/// Whether the usage monitor may ask Anthropic's (unofficial) usage endpoint
+	/// for a Claude profile's limits. `on` → on; unset → off (opt-in).
+	UsageClaudeEndpoint,
+	/// Whether the usage monitor draws its taskbar widget. Unset → on; `off` → off.
+	UsageTaskbarWidget,
+	/// Whether Claude sessions get factorai's `statusLine` injected, which hides
+	/// Claude Code's footer hints for users with no status line of their own.
+	/// Unset → on; `off` → off.
+	UsageStatusLine,
 }
 
 impl SettingKey {
@@ -893,6 +902,9 @@ impl SettingKey {
 			SettingKey::RoutinesMaxConcurrent => "routines.max_concurrent",
 			SettingKey::UpdateChannel => "updates.channel",
 			SettingKey::DesktopNotifications => "notifications.desktop",
+			SettingKey::UsageClaudeEndpoint => "usage.claude_endpoint",
+			SettingKey::UsageTaskbarWidget => "usage.taskbar_widget",
+			SettingKey::UsageStatusLine => "usage.statusline",
 		}
 	}
 }

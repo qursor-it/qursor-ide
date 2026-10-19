@@ -75,6 +75,10 @@ trash = { version = "5.2.6", default-features = false }
 # directory, `persist`ed over it. Doing this by hand means inventing a unique
 # name, cleaning it up on every early return, and getting the rename right.
 tempfile = "3"
+# The opt-in Anthropic usage endpoint (usage monitor): one blocking GET on the
+# poller thread. Default features (rustls); the body is parsed with serde_json,
+# so no `json` feature.
+ureq = "2"
 
 # WebKitGTK's `web-process-terminated`, which is the only warning we get that
 # the renderer has died (ADR-0059). The same version wry already builds — the
