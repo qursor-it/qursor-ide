@@ -76,3 +76,6 @@ apps/desktop/public/build-info.json
 # frames pulled out of it while judging a cut. The film itself is committed to
 # assets/brand/; a 5MB raw take per retake is not.
 .capture/
+
+# Superpowers brainstorm/SDD scratch
+.superpowers/
