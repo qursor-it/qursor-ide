@@ -1580,12 +1580,18 @@ impl TerminalManager {
 				let user = statusline::user_statusline(claude_dir, cwd_path);
 				v.push("--settings".into());
 				// Written for the shell Claude Code will run it in: Git Bash, or
-				// PowerShell on a Windows machine without it.
+				// PowerShell on a Windows machine without it — judged with the
+				// session's settings and the `PATH` the session is given.
+				let shell = statusline::status_shell_for(
+					claude_dir,
+					cwd_path,
+					cfg!(windows).then(crate::services::shell_path::child_path),
+				);
 				v.push(statusline::settings_arg(
 					&exe,
 					sink,
 					user.as_ref().map(|u| &u.settings),
-					statusline::status_shell(),
+					shell,
 				));
 			}
 		}
