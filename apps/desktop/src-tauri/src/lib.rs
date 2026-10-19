@@ -42,6 +42,14 @@ fn claude_dir() -> PathBuf {
 	dirs::home_dir().expect("no home dir").join(".claude")
 }
 
+/// `factorai --usage-statusline <sink dir>`: the status line a factorai Claude
+/// session runs (`services::usage::statusline`). Returns whether this process
+/// was that helper — it has then done its work and must exit before any Tauri
+/// code runs.
+pub fn run_usage_statusline_helper() -> bool {
+	services::usage::statusline::helper_main(std::env::args_os().skip(1))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	tracing_subscriber::fmt()
@@ -145,8 +153,11 @@ pub fn run() {
 				services::attention::SETTLE,
 			));
 			let attention_tap = attention.clone();
+			let statusline_dir = data_dir.join("usage").join("statusline");
 			let terminals = TerminalManager::for_app(app.handle().clone(), cd.clone(), ui.clone())
 				.with_status_tap(move |e| attention_tap.on_status(e))
+				// Claude's limits, forwarded by each session's status line.
+				.with_usage_sink_dir(statusline_dir.clone())
 				.with_user_binary(Arc::new(move |agent| {
 					services::settings::binary_override(&settings_db, agent)
 				}))
@@ -336,7 +347,12 @@ pub fn run() {
 				usage,
 			});
 
-			services::usage::poller::spawn(app.handle().clone(), usage_poll_store, usage_db);
+			services::usage::poller::spawn(
+				app.handle().clone(),
+				usage_poll_store,
+				usage_db,
+				statusline_dir,
+			);
 			spawn_initial_scan(indexer.clone());
 			watcher::spawn(indexer, watch.clone());
 			// Ticking starts with the window, because a routine is scheduled work
