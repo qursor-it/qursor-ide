@@ -79,6 +79,10 @@ tempfile = "3"
 # poller thread. Default features (rustls); the body is parsed with serde_json,
 # so no `json` feature.
 ureq = "2"
+# Taskbar widget renderer (usage monitor): a CPU pixmap + glyph rasteriser, no GPU,
+# no PNG codec in release builds.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+fontdue = "0.9"
 
 # WebKitGTK's `web-process-terminated`, which is the only warning we get that
 # the renderer has died (ADR-0059). The same version wry already builds — the
@@ -95,5 +99,7 @@ trash = { version = "5.2.6", default-features = false, features = ["coinit_multi
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Environment"] }
 
 [dev-dependencies]
+# Only the tests write preview PNGs.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
 regex = "1.13.1"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
