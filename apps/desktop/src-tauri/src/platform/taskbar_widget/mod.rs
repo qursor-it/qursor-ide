@@ -17,13 +17,15 @@ mod windows;
 use std::sync::mpsc::Sender;
 
 use parking_lot::Mutex;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::models::ProviderUsage;
 
 pub use render::{load_system_font, render, render_icon, rows_from, WidgetRow};
 
 /// What the widget thread is asked to do.
+// Only the Windows widget thread reads the payload; elsewhere it is just queued.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum Msg {
 	Update(Vec<ProviderUsage>),
 	Stop,
@@ -33,6 +35,8 @@ pub(crate) enum Msg {
 /// no tray fallback.
 #[derive(Clone, Default)]
 pub(crate) struct Host {
+	// Read only by the Windows widget thread; `start` fills it on every platform.
+	#[cfg_attr(not(windows), allow(dead_code))]
 	pub app: Option<AppHandle>,
 }
 
@@ -137,7 +141,9 @@ impl TaskbarWidget {
 
 /// Bring factorai's main window to the front: what a click on the widget or the
 /// tray icon means.
+#[cfg(windows)]
 pub(crate) fn focus_main(app: &AppHandle) {
+	use tauri::Manager;
 	if let Some(window) = app.get_webview_window("main") {
 		let _ = window.unminimize();
 		let _ = window.show();
