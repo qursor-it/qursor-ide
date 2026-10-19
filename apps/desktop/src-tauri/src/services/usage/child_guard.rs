@@ -33,8 +33,11 @@ impl KillOnDrop {
 		self.armed = false;
 		#[cfg(windows)]
 		if let Some(job) = &self.job {
-			// Without this, closing the handle would still kill the tree.
-			set_kill_on_close(job, false);
+			// Without this, closing the handle would still kill the tree. If it
+			// fails, that kill still happens: the safe direction, no orphans.
+			if !set_kill_on_close(job, false) {
+				tracing::debug!("could not release a job; its processes die with it");
+			}
 		}
 	}
 }

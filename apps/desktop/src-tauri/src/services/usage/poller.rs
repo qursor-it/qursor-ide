@@ -22,7 +22,9 @@ const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 const BINARY_RECHECK: Duration = Duration::from_secs(600);
 /// A status-line sink file untouched this long belongs to a session long gone.
 const SINK_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
-/// How far before the last tick a sink file's mtime may be and still be read.
+/// How far before the last tick a sink file's mtime may be and still be read:
+/// `statusline::write_sink` writes a temp file then renames it, keeping the
+/// temp file's (earlier) mtime.
 const SINK_SLACK: Duration = Duration::from_secs(10);
 
 /// `statusline_dir` is where Claude sessions' status-line helpers drop their

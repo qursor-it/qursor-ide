@@ -9,7 +9,7 @@
 //! no database, no logging. It never fails loudly — a broken status line must
 //! not disturb the session.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -113,7 +113,8 @@ fn write_sink(sink_dir: &Path, payload: &Value, config_dir: &Path) {
 	if std::fs::create_dir_all(sink_dir).is_err() {
 		return;
 	}
-	// Per process: two refreshes of one session may overlap.
+	// Per process: two refreshes of one session may overlap. The rename keeps
+	// the temp file's mtime, which is why the poller reads with `SINK_SLACK`.
 	let tmp = sink_dir.join(format!("{id}.{}.tmp", std::process::id()));
 	let written = std::fs::write(&tmp, body.to_string())
 		.and_then(|_| std::fs::rename(&tmp, sink_dir.join(format!("{id}.json"))));
@@ -126,14 +127,7 @@ fn write_sink(sink_dir: &Path, payload: &Value, config_dir: &Path) {
 /// `<cwd>/.claude/settings.local.json` > `<cwd>/.claude/settings.json` >
 /// `<config_dir>/settings.json`. Our own helper is never an answer.
 pub fn user_statusline(config_dir: &Path, cwd: &Path) -> Option<UserStatusLine> {
-	let project = cwd.join(".claude");
-	let files = [
-		project.join("settings.local.json"),
-		project.join("settings.json"),
-		config_dir.join("settings.json"),
-	];
-	files.iter().find_map(|f| {
-		let v: Value = serde_json::from_slice(&std::fs::read(f).ok()?).ok()?;
+	settings_files(config_dir, cwd).find_map(|v| {
 		let line = v.get("statusLine").filter(|l| l.is_object())?;
 		let command = line.get("command")?.as_str()?.trim();
 		if command.is_empty() || command.contains(HELPER_FLAG) {
@@ -141,6 +135,19 @@ pub fn user_statusline(config_dir: &Path, cwd: &Path) -> Option<UserStatusLine> 
 		}
 		Some(UserStatusLine { command: command.to_string(), settings: line.clone() })
 	})
+}
+
+/// The settings files Claude Code merges, highest precedence first, parsed;
+/// missing or unreadable ones are skipped.
+fn settings_files(config_dir: &Path, cwd: &Path) -> impl Iterator<Item = Value> {
+	let project = cwd.join(".claude");
+	[
+		project.join("settings.local.json"),
+		project.join("settings.json"),
+		config_dir.join("settings.json"),
+	]
+	.into_iter()
+	.filter_map(|f| serde_json::from_slice(&std::fs::read(f).ok()?).ok())
 }
 
 /// A sink file's config directory and reading.
@@ -182,19 +189,42 @@ pub enum StatusShell {
 	PowerShell,
 }
 
-/// The shell Claude Code will use on this machine: Git Bash on Windows when it
-/// is installed, else PowerShell; `sh` elsewhere.
-pub fn status_shell() -> StatusShell {
+/// The shell a Claude session spawned with this config dir and project will
+/// run its status line in: Git Bash on Windows when Claude Code would find it,
+/// else PowerShell; `sh` elsewhere.
+///
+/// Judged against the session's environment, not factorai's: a
+/// `CLAUDE_CODE_GIT_BASH_PATH` in the settings' `env` (which Claude Code
+/// applies to itself) wins over the process variable, and `path` is the `PATH`
+/// the session is given (`shell_path::child_path()`).
+pub fn status_shell_for(config_dir: &Path, project: &Path, path: Option<&OsStr>) -> StatusShell {
 	#[cfg(windows)]
 	{
-		if git_bash().is_some() {
-			StatusShell::Posix
-		} else {
-			StatusShell::PowerShell
+		let explicit = settings_git_bash_path(config_dir, project)
+			.map(OsString::from)
+			.or_else(|| std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH"));
+		match git_bash_in(explicit.as_deref(), path) {
+			Some(_) => StatusShell::Posix,
+			None => StatusShell::PowerShell,
 		}
 	}
 	#[cfg(not(windows))]
-	StatusShell::Posix
+	{
+		let _ = (config_dir, project, path);
+		StatusShell::Posix
+	}
+}
+
+/// `env.CLAUDE_CODE_GIT_BASH_PATH` from the highest-precedence settings file
+/// that sets it.
+#[cfg(windows)]
+fn settings_git_bash_path(config_dir: &Path, project: &Path) -> Option<String> {
+	settings_files(config_dir, project).find_map(|v| {
+		v.pointer("/env/CLAUDE_CODE_GIT_BASH_PATH")
+			.and_then(Value::as_str)
+			.filter(|s| !s.trim().is_empty())
+			.map(str::to_string)
+	})
 }
 
 /// The inline `--settings` JSON for a factorai Claude session: the user's own
@@ -364,18 +394,28 @@ fn run_in(mut cmd: Command, stdin: &[u8], timeout: Duration) -> Vec<u8> {
 	out
 }
 
-/// Git Bash, found the way Claude Code finds it: `CLAUDE_CODE_GIT_BASH_PATH`,
-/// then `<git root>/bin/bash.exe` beside a `git.exe` on `PATH`, then the
-/// default install.
+/// Git Bash as this process sees it. The helper runs inside Claude Code's own
+/// environment, so its variables are already the session's.
 #[cfg(windows)]
 fn git_bash() -> Option<PathBuf> {
-	if let Some(p) = std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH").map(PathBuf::from) {
+	git_bash_in(
+		std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH").as_deref(),
+		std::env::var_os("PATH").as_deref(),
+	)
+}
+
+/// Git Bash, found the way Claude Code finds it: `explicit`
+/// (`CLAUDE_CODE_GIT_BASH_PATH`), then `<git root>/bin/bash.exe` beside a
+/// `git.exe` on `path`, then the default install.
+#[cfg(windows)]
+fn git_bash_in(explicit: Option<&OsStr>, path: Option<&OsStr>) -> Option<PathBuf> {
+	if let Some(p) = explicit.map(PathBuf::from) {
 		if p.is_file() {
 			return Some(p);
 		}
 	}
-	let on_path = std::env::var_os("PATH").and_then(|path| {
-		std::env::split_paths(&path).map(|d| d.join("git.exe")).find(|p| p.is_file())
+	let on_path = path.and_then(|path| {
+		std::env::split_paths(path).map(|d| d.join("git.exe")).find(|p| p.is_file())
 	});
 	if let Some(git) = on_path {
 		// `<root>/cmd/git.exe`, `<root>/bin/git.exe`, `<root>/mingw64/bin/git.exe`.
@@ -551,7 +591,65 @@ mod tests {
 
 	/// The POSIX shell tests need `sh`, or Git Bash on Windows.
 	fn posix() -> bool {
-		status_shell() == StatusShell::Posix
+		#[cfg(windows)]
+		return git_bash().is_some();
+		#[cfg(not(windows))]
+		true
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn settings_env_git_bash_path_wins_over_the_process_env() {
+		let tmp = tempfile::tempdir().unwrap();
+		let (config, project) = (tmp.path().join("config"), tmp.path().join("project"));
+		let (user_bash, local_bash) =
+			(tmp.path().join("user-bash.exe"), tmp.path().join("local-bash.exe"));
+		std::fs::write(&user_bash, "").unwrap();
+		std::fs::write(&local_bash, "").unwrap();
+		std::fs::create_dir_all(&config).unwrap();
+		std::fs::write(
+			config.join("settings.json"),
+			json!({"env": {"CLAUDE_CODE_GIT_BASH_PATH": user_bash}}).to_string(),
+		)
+		.unwrap();
+		assert_eq!(settings_git_bash_path(&config, &project).as_deref(), user_bash.to_str());
+
+		std::fs::create_dir_all(project.join(".claude")).unwrap();
+		std::fs::write(
+			project.join(".claude").join("settings.local.json"),
+			json!({"env": {"CLAUDE_CODE_GIT_BASH_PATH": local_bash}}).to_string(),
+		)
+		.unwrap();
+		assert_eq!(settings_git_bash_path(&config, &project).as_deref(), local_bash.to_str());
+
+		// No Git anywhere on the given PATH, and the process variable (if any)
+		// is beaten by the settings: the settings' bash makes it Posix.
+		let empty = tmp.path().join("empty-path");
+		std::fs::create_dir_all(&empty).unwrap();
+		assert_eq!(
+			status_shell_for(&config, &project, Some(empty.as_os_str())),
+			StatusShell::Posix
+		);
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn the_git_bash_lookup_uses_the_given_path() {
+		let tmp = tempfile::tempdir().unwrap();
+		let root = tmp.path().join("Git");
+		std::fs::create_dir_all(root.join("cmd")).unwrap();
+		std::fs::create_dir_all(root.join("bin")).unwrap();
+		std::fs::write(root.join("cmd").join("git.exe"), "").unwrap();
+		std::fs::write(root.join("bin").join("bash.exe"), "").unwrap();
+		let path = std::env::join_paths([tmp.path().join("nothing"), root.join("cmd")]).unwrap();
+
+		assert_eq!(git_bash_in(None, Some(&path)), Some(root.join("bin").join("bash.exe")));
+		// An explicit path that is not a file falls through to the lookup.
+		let missing = tmp.path().join("missing.exe");
+		assert_eq!(
+			git_bash_in(Some(missing.as_os_str()), Some(&path)),
+			Some(root.join("bin").join("bash.exe"))
+		);
 	}
 
 	#[test]
