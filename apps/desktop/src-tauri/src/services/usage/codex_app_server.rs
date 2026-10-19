@@ -248,9 +248,11 @@ mod tests {
 
 	#[test]
 	fn a_silent_server_times_out_and_its_descendants_are_killed() {
-		let (result, took, pid) = run_silent_fake(Duration::from_secs(8));
+		let _spawn = crate::test_support::spawn_lock();
+		// Long enough for a cold PowerShell to start and write the pidfile.
+		let (result, took, pid) = run_silent_fake(Duration::from_secs(20));
 		assert!(result.is_err());
-		assert!(took < Duration::from_secs(15), "read overran its timeout: {took:?}");
+		assert!(took < Duration::from_secs(27), "read overran its timeout: {took:?}");
 		assert!(pid != 0, "the fake never recorded its grandchild");
 		// Termination is asynchronous; give it a moment.
 		let deadline = Instant::now() + Duration::from_secs(5);

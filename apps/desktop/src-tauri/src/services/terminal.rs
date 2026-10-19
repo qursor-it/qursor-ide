@@ -4077,6 +4077,7 @@ mod windows_tests {
 
 	#[test]
 	fn powershell_runs_in_conpty_and_streams_output() {
+		let _spawn = crate::test_support::spawn_lock();
 		let temp = tempfile::Builder::new()
 			.prefix("factorai ConPTY ü ")
 			.tempdir()
@@ -4098,6 +4099,7 @@ mod windows_tests {
 
 	#[test]
 	fn killing_a_conpty_terminates_a_real_child_process() {
+		let _spawn = crate::test_support::spawn_lock();
 		let temp = tempfile::TempDir::new().expect("temporary directory");
 		let (manager, _data) = make_manager(temp.path());
 		let powershell = crate::services::shell_path::user_shell();

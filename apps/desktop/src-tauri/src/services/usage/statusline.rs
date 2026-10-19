@@ -499,6 +499,7 @@ mod tests {
 
 	#[test]
 	fn payload_without_rate_limits_is_ignored() {
+		let _spawn = crate::test_support::spawn_lock();
 		let tmp = tempfile::tempdir().unwrap();
 		let sink = tmp.path().join("sink");
 		let config = tmp.path().join("config");
@@ -514,6 +515,7 @@ mod tests {
 
 	#[test]
 	fn helper_runs_the_users_statusline_and_prints_its_output() {
+		let _spawn = crate::test_support::spawn_lock();
 		let tmp = tempfile::tempdir().unwrap();
 		let config = tmp.path().join("config");
 		let cwd = tmp.path().join("work");
@@ -535,6 +537,7 @@ mod tests {
 
 	#[test]
 	fn project_settings_come_from_the_project_dir_not_the_current_dir() {
+		let _spawn = crate::test_support::spawn_lock();
 		let tmp = tempfile::tempdir().unwrap();
 		let config = tmp.path().join("config");
 		let (project, current) = (tmp.path().join("project"), tmp.path().join("project/sub"));
@@ -654,6 +657,7 @@ mod tests {
 
 	#[test]
 	fn the_users_command_gets_the_same_stdin() {
+		let _spawn = crate::test_support::spawn_lock();
 		if !posix() {
 			return;
 		}
@@ -664,6 +668,7 @@ mod tests {
 
 	#[test]
 	fn the_users_command_runs_in_the_helpers_own_cwd() {
+		let _spawn = crate::test_support::spawn_lock();
 		if !posix() {
 			return;
 		}
@@ -677,6 +682,7 @@ mod tests {
 
 	#[test]
 	fn a_non_zero_exit_blanks_the_line() {
+		let _spawn = crate::test_support::spawn_lock();
 		if !posix() {
 			return;
 		}
@@ -685,17 +691,20 @@ mod tests {
 
 	#[test]
 	fn a_background_job_neither_blanks_nor_holds_the_line() {
+		let _spawn = crate::test_support::spawn_lock();
 		if !posix() {
 			return;
 		}
 		let started = Instant::now();
-		let out = run_user_command("sleep 4 & echo hi", b"", Duration::from_secs(5));
+		let out = run_user_command("sleep 10 & echo hi", b"", Duration::from_secs(9));
 		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "hi");
-		assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+		// Well short of the sleep: the line was not held for the background job.
+		assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
 	}
 
 	#[test]
 	fn a_hung_user_command_is_cut_off() {
+		let _spawn = crate::test_support::spawn_lock();
 		if !posix() {
 			return;
 		}
@@ -708,6 +717,7 @@ mod tests {
 	#[cfg(windows)]
 	#[test]
 	fn the_powershell_fallback_runs_quotes_and_gets_stdin() {
+		let _spawn = crate::test_support::spawn_lock();
 		let out = run_in(
 			powershell_command("$s = ($input | Out-String).Trim(); Write-Output \"got: $s\""),
 			b"{\"a\":1}",
@@ -719,6 +729,7 @@ mod tests {
 	#[cfg(windows)]
 	#[test]
 	fn the_powershell_fallback_blanks_on_failure_and_timeout() {
+		let _spawn = crate::test_support::spawn_lock();
 		let out =
 			run_in(powershell_command("Write-Output hi; exit 3"), b"", Duration::from_secs(20));
 		assert!(out.is_empty());
@@ -741,6 +752,7 @@ mod tests {
 
 	#[test]
 	fn the_posix_form_survives_the_shell() {
+		let _spawn = crate::test_support::spawn_lock();
 		#[cfg(unix)]
 		let shell = PathBuf::from("sh");
 		#[cfg(windows)]
@@ -769,6 +781,7 @@ mod tests {
 	#[cfg(windows)]
 	#[test]
 	fn the_powershell_form_survives_powershell() {
+		let _spawn = crate::test_support::spawn_lock();
 		let tmp = tempfile::tempdir().unwrap();
 		let dir = awkward_dir(tmp.path());
 		let exe = dir.join("args.cmd");
