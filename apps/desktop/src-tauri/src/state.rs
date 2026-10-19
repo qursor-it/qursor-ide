@@ -46,4 +46,6 @@ pub struct AppState {
 	/// the candidates they produce. Holds the analysis processes it started so
 	/// quitting the app ends them.
 	pub intelligence: crate::services::intelligence::IntelligenceService,
+	/// The latest rate-limit windows per profile, fed by the usage sources.
+	pub usage: Arc<crate::services::usage::store::UsageStore>,
 }

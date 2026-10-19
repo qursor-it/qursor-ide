@@ -24,6 +24,7 @@ pub mod sidebar;
 pub mod sops;
 pub mod terminal;
 pub mod updates;
+pub mod usage;
 pub mod webview;
 
 /// Run one piece of blocking work off the main thread and wait for it.

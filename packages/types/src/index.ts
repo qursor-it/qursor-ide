@@ -1106,6 +1106,38 @@ export interface ProfileInput {
  *  at all. */
 export type ProfilesChangedEvent = Record<string, never>;
 
+// ── Usage limits (usage monitor) ────────────────────────────────────────────
+
+/** One rate-limit window. `resetsAt` is epoch ms, or null when unknown (or the
+ *  window already reset and nothing newer has been seen). */
+export interface UsageWindow {
+	usedPercent: number;
+	resetsAt: number | null;
+}
+
+/** A per-model limit, e.g. a weekly Opus cap. */
+export interface ModelLimit {
+	label: string;
+	window: UsageWindow;
+}
+
+/** Where a reading came from. */
+export type UsageSource = 'statusLine' | 'codexLog' | 'codexAppServer' | 'claudeApi';
+
+/** The latest known limits for one profile. `usage:changed` carries the whole
+ *  list, and `get_usage` returns the same. */
+export interface ProviderUsage {
+	agent: string;
+	profileId: string;
+	profileName: string;
+	isDefault: boolean;
+	fiveHour: UsageWindow | null;
+	weekly: UsageWindow | null;
+	perModel: ModelLimit[];
+	source: UsageSource;
+	updatedAt: number;
+}
+
 // ── Pull requests, read through the user's `gh` (F31, ADR-0077) ────────────
 
 /** Why the pull-request panel can or cannot show anything. `gh_status` never

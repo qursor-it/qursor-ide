@@ -27,6 +27,7 @@ pub mod shell_path;
 pub mod sops;
 pub mod terminal;
 pub mod updates;
+pub mod usage;
 pub mod watcher;
 pub mod webview_health;
 pub mod wsl;
