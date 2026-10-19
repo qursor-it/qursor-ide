@@ -18,6 +18,8 @@ pub struct UsageStore {
 	path: PathBuf,
 	entries: Mutex<HashMap<(String, String), ProviderUsage>>,
 	on_change: Mutex<Option<OnChange>>,
+	/// Serialises `persist`: two source threads share one temp file.
+	persist_lock: Mutex<()>,
 }
 
 impl UsageStore {
@@ -30,7 +32,12 @@ impl UsageStore {
 			.unwrap_or_default();
 		let entries =
 			list.into_iter().map(|u| ((u.agent.clone(), u.profile_id.clone()), u)).collect();
-		Self { path, entries: Mutex::new(entries), on_change: Mutex::new(None) }
+		Self {
+			path,
+			entries: Mutex::new(entries),
+			on_change: Mutex::new(None),
+			persist_lock: Mutex::new(()),
+		}
 	}
 
 	pub fn set_on_change(&self, f: OnChange) {
@@ -67,7 +74,7 @@ impl UsageStore {
 			map.insert(key, merged);
 			sorted(map.values().cloned().collect())
 		};
-		self.persist(&list);
+		self.persist();
 		// Cloned out so the callback runs with no lock held.
 		let cb = self.on_change.lock().clone();
 		if let Some(cb) = cb {
@@ -82,9 +89,13 @@ impl UsageStore {
 	}
 
 	/// Temp file then rename, so a crash mid-write leaves the old file whole.
-	fn persist(&self, list: &[ProviderUsage]) {
+	/// The list is taken under the persist lock, so a slower writer can never
+	/// land an older snapshot over a newer one.
+	fn persist(&self) {
+		let _guard = self.persist_lock.lock();
+		let list = sorted(self.entries.lock().values().cloned().collect());
 		let tmp = self.path.with_extension("json.tmp");
-		let result = serde_json::to_vec(list)
+		let result = serde_json::to_vec(&list)
 			.map_err(std::io::Error::other)
 			.and_then(|b| std::fs::write(&tmp, b))
 			.and_then(|_| std::fs::rename(&tmp, &self.path));
