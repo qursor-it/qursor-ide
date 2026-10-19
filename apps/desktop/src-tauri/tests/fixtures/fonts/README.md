@@ -1,0 +1,1 @@
+LiberationSans-Regular.ttf: copied from apps/desktop/public/pdfjs/standard_fonts/ (Liberation Sans, SIL Open Font License 1.1; see LICENSE_LIBERATION there). Used only by taskbar widget renderer tests.
