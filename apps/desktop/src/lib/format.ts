@@ -39,6 +39,22 @@ export function formatAbsolute(ms: number, clock24 = true): string {
 	});
 }
 
+/**
+ * A reset time as short date and time, no year ("Oct 19, 15:16"): a limit
+ * window resets within days, so the year is width spent on nothing. Follows
+ * `clock24` like `formatAbsolute`.
+ */
+export function formatReset(ms: number, clock24 = true): string {
+	if (!Number.isFinite(ms)) return '—';
+	return new Date(ms).toLocaleString(undefined, {
+		month: 'short',
+		day: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: !clock24,
+	});
+}
+
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 
 /**

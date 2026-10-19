@@ -30,12 +30,17 @@ import { KeyboardSection } from '@components/settings/KeyboardSection';
 import { ProfilesSection } from '@components/settings/ProfilesSection';
 import { desktopNotificationsOf, desktopNotificationsSetting } from '@lib/attention';
 import { formatError } from '@lib/errors';
+import { isWindows } from '@lib/platform';
 import { queryKeys } from '@lib/queryKeys';
 import {
 	binaryOverride,
 	channelOf,
 	channelSetting,
 	dirtySections,
+	usageEndpointOf,
+	usageEndpointSetting,
+	usageOffSetting,
+	usageOnByDefault,
 	SETTINGS_SECTIONS,
 	CATCHUP,
 	CONCURRENT,
@@ -68,6 +73,7 @@ const SECTION_LABELS: Record<SettingsSection, string> = {
 	editor: 'Editor',
 	confirmations: 'Confirmations',
 	sessions: 'Sessions',
+	usage: 'Usage',
 	routines: 'Routines',
 	pulls: 'Pull requests',
 	intelligence: 'Intelligence',
@@ -118,6 +124,9 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 			routinesMaxConcurrent: (await cmd.getSetting('routinesMaxConcurrent')) ?? '',
 			updateChannel: channelOf(await cmd.getSetting('updateChannel')),
 			desktopNotifications: desktopNotificationsOf(await cmd.getSetting('desktopNotifications')),
+			usageClaudeEndpoint: usageEndpointOf(await cmd.getSetting('usageClaudeEndpoint')),
+			usageTaskbarWidget: usageOnByDefault(await cmd.getSetting('usageTaskbarWidget')),
+			usageStatusLine: usageOnByDefault(await cmd.getSetting('usageStatusLine')),
 		}),
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -174,6 +183,9 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 								routinesMaxConcurrent: '',
 								updateChannel: 'stable',
 								desktopNotifications: true,
+								usageClaudeEndpoint: false,
+								usageTaskbarWidget: true,
+								usageStatusLine: true,
 							}
 						}
 						dirtyRef={dirtyRef}
@@ -196,6 +208,9 @@ interface SettingsFormProps {
 		| 'routinesMaxConcurrent'
 		| 'updateChannel'
 		| 'desktopNotifications'
+		| 'usageClaudeEndpoint'
+		| 'usageTaskbarWidget'
+		| 'usageStatusLine'
 	>;
 	/** Where the shell reads "is there an edit" from, for its click-outside
 	 *  guard. The form is the only thing that knows. */
@@ -297,6 +312,20 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 					desktopNotificationsSetting(draft.desktopNotifications),
 				);
 			}
+			// The usage monitor's switches. Rust reads them when it next polls or
+			// starts a session, so a status line change reaches new sessions only.
+			if (draft.usageClaudeEndpoint !== saved.usageClaudeEndpoint) {
+				await cmd.setSetting(
+					'usageClaudeEndpoint',
+					usageEndpointSetting(draft.usageClaudeEndpoint),
+				);
+			}
+			if (draft.usageTaskbarWidget !== saved.usageTaskbarWidget) {
+				await cmd.setSetting('usageTaskbarWidget', usageOffSetting(draft.usageTaskbarWidget));
+			}
+			if (draft.usageStatusLine !== saved.usageStatusLine) {
+				await cmd.setSetting('usageStatusLine', usageOffSetting(draft.usageStatusLine));
+			}
 			queryClient.setQueryData(queryKeys.setting('claudeBinaryPath'), {
 				claudeBinary: paths.claude ?? '',
 				codexBinary: paths.codex ?? '',
@@ -304,6 +333,9 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 				routinesMaxConcurrent: concurrent ?? '',
 				updateChannel: draft.updateChannel,
 				desktopNotifications: draft.desktopNotifications,
+				usageClaudeEndpoint: draft.usageClaudeEndpoint,
+				usageTaskbarWidget: draft.usageTaskbarWidget,
+				usageStatusLine: draft.usageStatusLine,
 			});
 			applyPrefs(prefsOf(draft));
 			if (channelChanged && !import.meta.env.DEV) checkNow();
@@ -737,6 +769,61 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 							</SettingRow>
 						</div>
 					)}
+
+					{section === 'usage' && (
+						<div className="divide-y divide-border">
+							<SettingRow
+								label="Show the status bar"
+								htmlFor="settings-show-status-bar"
+								description="Plan limits for each agent and the session in front, along the bottom of the window."
+							>
+								<Switch
+									id="settings-show-status-bar"
+									data-testid="settings-show-status-bar"
+									checked={draft.showStatusBar}
+									onCheckedChange={(v) => set('showStatusBar', v)}
+								/>
+							</SettingRow>
+							<SettingRow
+								label="Forward Claude limits through the status line"
+								htmlFor="settings-usage-status-line"
+								description="factorai adds a status line to the Claude sessions it starts, to read your plan limits from it. Your own status line keeps working. If you have none, Claude Code hides some footer hints (like esc to interrupt) while a status line is set — turn this off to get them back; Claude limits then only come from the endpoint below. Takes effect for sessions started after the change."
+							>
+								<Switch
+									id="settings-usage-status-line"
+									data-testid="settings-usage-status-line"
+									checked={draft.usageStatusLine}
+									onCheckedChange={(v) => set('usageStatusLine', v)}
+								/>
+							</SettingRow>
+							{isWindows() && (
+								<SettingRow
+									label="Show usage in the Windows taskbar"
+									htmlFor="settings-usage-taskbar"
+									description="A small readout beside the system tray while factorai is running."
+								>
+									<Switch
+										id="settings-usage-taskbar"
+										data-testid="settings-usage-taskbar"
+										checked={draft.usageTaskbarWidget}
+										onCheckedChange={(v) => set('usageTaskbarWidget', v)}
+									/>
+								</SettingRow>
+							)}
+							<SettingRow
+								label="Read Claude limits from Anthropic's usage endpoint"
+								htmlFor="settings-usage-endpoint"
+								description="Polls an undocumented Anthropic endpoint with the login Claude Code saved on this computer, for fresher limits and per-model figures. Anthropic's terms restrict third-party use of Claude.ai credentials; turn this on only if you accept that. factorai only reads the login, never changes or sends it anywhere else."
+							>
+								<Switch
+									id="settings-usage-endpoint"
+									data-testid="settings-usage-endpoint"
+									checked={draft.usageClaudeEndpoint}
+									onCheckedChange={(v) => set('usageClaudeEndpoint', v)}
+								/>
+							</SettingRow>
+						</div>
+					)}
 				</div>
 			</div>
 
@@ -844,6 +931,9 @@ function prefsOf(values: SettingsValues): Prefs {
 		routinesMaxConcurrent: _concurrent,
 		updateChannel: _channel,
 		desktopNotifications: _notifications,
+		usageClaudeEndpoint: _usageEndpoint,
+		usageTaskbarWidget: _usageTaskbar,
+		usageStatusLine: _usageStatusLine,
 		...prefs
 	} = values;
 	// Empty means the shipped default (F31); stored trimmed so it stays empty.

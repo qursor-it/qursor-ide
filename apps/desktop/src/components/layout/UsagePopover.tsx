@@ -1,6 +1,6 @@
 import type { AgentId, ProviderUsage, SessionUsage, UsageWindow } from '@factorai/types';
 import { agentName } from '@lib/agents';
-import { formatAbsolute, formatRelative } from '@lib/format';
+import { formatRelative, formatReset } from '@lib/format';
 import {
 	formatCost,
 	formatTokens,
@@ -152,7 +152,7 @@ function WindowRow({
 						{Math.round(window.usedPercent)}%
 					</span>
 					<span className="truncate text-muted-foreground">
-						{window.resetsAt !== null ? `resets ${formatAbsolute(window.resetsAt, clock24)}` : ''}
+						{window.resetsAt !== null ? `resets ${formatReset(window.resetsAt, clock24)}` : ''}
 					</span>
 				</>
 			) : (
