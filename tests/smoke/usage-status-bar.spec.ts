@@ -38,6 +38,20 @@ test.describe('usage status bar', () => {
 		await expect(popover.getByText('This session')).toBeVisible();
 	});
 
+	test('@smoke usage status bar does not overflow at the minimum window width', async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1100, height: 700 });
+		await installMockBridge(page, fixtureWithUsage());
+		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
+
+		const bar = page.getByTestId('status-bar');
+		await expect(bar).toBeVisible();
+		await expect(page.getByTestId('usage-group-claude')).toContainText('62%');
+		const fits = await bar.evaluate((el) => el.scrollWidth <= el.clientWidth);
+		expect(fits).toBe(true);
+	});
+
 	test('@smoke usage status bar is absent when turned off', async ({ page }) => {
 		await page.addInitScript(() => {
 			window.localStorage.setItem(

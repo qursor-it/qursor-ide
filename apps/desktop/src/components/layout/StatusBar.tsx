@@ -56,7 +56,7 @@ function StatusBarRow() {
 			<PopoverTrigger
 				data-testid="status-bar"
 				title="Plan limits and session usage"
-				className="flex h-6 w-full shrink-0 items-center gap-4 border-border border-t bg-card px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+				className="@container flex h-6 w-full min-w-0 shrink-0 items-center gap-4 overflow-hidden border-border border-t bg-card px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
 			>
 				{rows.map((row) => (
 					<ProviderGroup
@@ -69,7 +69,10 @@ function StatusBarRow() {
 				))}
 				<span className="min-w-0 flex-1" />
 				{sessionUsage && (
-					<span data-testid="status-bar-session" className="shrink-0 tabular-nums">
+					<span
+						data-testid="status-bar-session"
+						className="min-w-0 truncate whitespace-nowrap tabular-nums"
+					>
 						{formatTokens(sessionUsage.totalTokens)} tok · {formatCost(sessionUsage.costUsd)}
 					</span>
 				)}
@@ -108,7 +111,7 @@ function ProviderGroup({ agent, usage, clock24, now }: BarRow & { clock24: boole
 	return (
 		<span
 			data-testid={`usage-group-${agent}`}
-			className={`flex shrink-0 items-center gap-1.5 ${isStale(usage.updatedAt, now) ? 'opacity-60' : ''}`}
+			className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap ${isStale(usage.updatedAt, now) ? 'opacity-60' : ''}`}
 		>
 			<span className="text-secondary-foreground">{name}</span>
 			<WindowCell
@@ -142,7 +145,9 @@ function WindowCell({
 					<span className={`tabular-nums ${inkOf(window.usedPercent)}`}>
 						{Math.round(window.usedPercent)}%
 					</span>
-					{reset && <span className="tabular-nums">· {reset}</span>}
+					{/* The reset clocks go before anything else is cut: the session text
+						    on the right truncates first, then these drop out below @xl. */}
+					{reset && <span className="hidden tabular-nums @xl:inline">· {reset}</span>}
 				</>
 			) : (
 				<span>—</span>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatAbsolute, formatBytes, formatRelative } from './format';
+import { formatAbsolute, formatBytes, formatRelative, formatReset } from './format';
 
 const NOW = 1_700_000_000_000; // fixed reference
 
@@ -59,6 +59,26 @@ describe('formatBytes', () => {
 	it('returns a dash for nonsense rather than NaN', () => {
 		expect(formatBytes(Number.NaN)).toBe('—');
 		expect(formatBytes(-1)).toBe('—');
+	});
+});
+
+describe('formatReset', () => {
+	const at = new Date(2026, 9, 19, 15, 16).getTime();
+
+	it('gives a short date and the time, with no year', () => {
+		const out = formatReset(at, true);
+		expect(out).not.toMatch(/2026/);
+		expect(out).toMatch(/19/);
+		expect(out).toMatch(/15:16/);
+	});
+
+	it('follows the clock preference', () => {
+		expect(formatReset(at, false)).toMatch(/3:16/);
+		expect(formatReset(at, false)).not.toMatch(/15:16/);
+	});
+
+	it('returns a dash for nonsense', () => {
+		expect(formatReset(Number.NaN, true)).toBe('—');
 	});
 });
 

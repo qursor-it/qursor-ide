@@ -76,6 +76,26 @@ test.describe('settings', () => {
 		await expect(page.getByTestId('settings-about-channel')).toHaveText('Alpha');
 	});
 
+	test('@smoke usage section saves the endpoint toggle', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/?settings=usage');
+
+		await expect(page.getByTestId('settings-show-status-bar')).toBeChecked();
+		await expect(page.getByTestId('settings-usage-status-line')).toBeChecked();
+		const endpoint = page.getByTestId('settings-usage-endpoint');
+		await expect(endpoint).not.toBeChecked();
+		await endpoint.click();
+		await page.getByTestId('settings-usage-status-line').click();
+		await expect(page.getByTestId('settings-dirty-usage')).toBeVisible();
+		await page.getByTestId('settings-save').click();
+		await expect(page.getByTestId('settings-modal')).toHaveCount(0);
+
+		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
+		const sets = calls.filter((c) => c.name === 'set_setting').map((c) => c.args);
+		expect(sets).toContainEqual({ key: 'usageClaudeEndpoint', value: 'on' });
+		expect(sets).toContainEqual({ key: 'usageStatusLine', value: 'off' });
+	});
+
 	test('@smoke the confirmations copy says when each one asks', async ({ page }) => {
 		await installMockBridge(page, fixtureOneProjectOneSession());
 		await page.goto('/?settings=confirmations');
