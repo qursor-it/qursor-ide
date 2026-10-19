@@ -71,20 +71,22 @@ pub fn run_helper(sink_dir: &Path, stdin: &[u8], env_config_dir: Option<&Path>) 
 	if let Some(p) = &payload {
 		write_sink(sink_dir, p, &config_dir);
 	}
-	let workspace = payload.as_ref().and_then(payload_cwd);
-	let settings_cwd =
-		workspace.clone().or_else(|| std::env::current_dir().ok()).unwrap_or_default();
-	let Some(user) = user_statusline(&config_dir, &settings_cwd) else { return Vec::new() };
-	let cwd = workspace.filter(|p| p.is_dir());
-	run_user_command(&user.command, stdin, cwd.as_deref(), USER_COMMAND_TIMEOUT)
+	let project = payload
+		.as_ref()
+		.and_then(project_dir)
+		.or_else(|| std::env::current_dir().ok())
+		.unwrap_or_default();
+	let Some(user) = user_statusline(&config_dir, &project) else { return Vec::new() };
+	// The user's command runs in the helper's own cwd: the one Claude Code chose.
+	run_user_command(&user.command, stdin, USER_COMMAND_TIMEOUT)
 }
 
-/// `workspace.current_dir`, else `cwd`.
-fn payload_cwd(p: &Value) -> Option<PathBuf> {
-	p.pointer("/workspace/current_dir")
-		.and_then(Value::as_str)
-		.or_else(|| p.get("cwd").and_then(Value::as_str))
-		.filter(|s| !s.is_empty())
+/// Where Claude Code reads project settings from: `workspace.project_dir` (the
+/// launch directory), else `workspace.current_dir`, else `cwd`.
+fn project_dir(p: &Value) -> Option<PathBuf> {
+	["/workspace/project_dir", "/workspace/current_dir", "/cwd"]
+		.iter()
+		.find_map(|ptr| p.pointer(ptr).and_then(Value::as_str).filter(|s| !s.is_empty()))
 		.map(PathBuf::from)
 }
 
@@ -170,33 +172,89 @@ pub fn parse_sink(v: &Value) -> Option<(PathBuf, UsageReading)> {
 	))
 }
 
+/// The shell Claude Code runs a status-line command in, which decides how our
+/// command has to be written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusShell {
+	/// `sh` / Git Bash.
+	Posix,
+	/// Windows with no Git Bash: Claude Code falls back to PowerShell.
+	PowerShell,
+}
+
+/// The shell Claude Code will use on this machine: Git Bash on Windows when it
+/// is installed, else PowerShell; `sh` elsewhere.
+pub fn status_shell() -> StatusShell {
+	#[cfg(windows)]
+	{
+		if git_bash().is_some() {
+			StatusShell::Posix
+		} else {
+			StatusShell::PowerShell
+		}
+	}
+	#[cfg(not(windows))]
+	StatusShell::Posix
+}
+
 /// The inline `--settings` JSON for a factorai Claude session: the user's own
 /// `statusLine` object with every field kept but `command`, which runs the
-/// helper (and the helper runs theirs).
-pub fn settings_arg(exe: &Path, sink_dir: &Path, user: Option<&Value>) -> String {
+/// helper (and the helper runs theirs), written for `shell`.
+pub fn settings_arg(
+	exe: &Path,
+	sink_dir: &Path,
+	user: Option<&Value>,
+	shell: StatusShell,
+) -> String {
 	let mut line: Map<String, Value> = user.and_then(Value::as_object).cloned().unwrap_or_default();
 	line.insert("type".into(), "command".into());
-	line.insert(
-		"command".into(),
-		format!("{} {HELPER_FLAG} {}", quote_path(exe), quote_path(sink_dir)).into(),
-	);
+	line.insert("command".into(), helper_command(exe, sink_dir, shell).into());
 	json!({ "statusLine": line }).to_string()
 }
 
-/// Double-quoted for the shell Claude Code runs the command in. On Windows the
-/// separators become `/`, which Git Bash and `cmd` both accept and neither
-/// treats as an escape.
-fn quote_path(p: &Path) -> String {
+/// Single-quoted in both shells, so nothing in a path (`$`, a backtick, a
+/// space) is expanded. PowerShell needs `&` to run a quoted path.
+fn helper_command(exe: &Path, sink_dir: &Path, shell: StatusShell) -> String {
+	let (exe, sink) = (path_text(exe), path_text(sink_dir));
+	match shell {
+		StatusShell::Posix => format!("{} {HELPER_FLAG} {}", sh_quote(&exe), sh_quote(&sink)),
+		StatusShell::PowerShell => {
+			format!("& {} {HELPER_FLAG} {}", ps_quote(&exe), ps_quote(&sink))
+		}
+	}
+}
+
+/// On Windows the separators become `/`, which Git Bash and PowerShell both
+/// accept and neither treats as an escape.
+fn path_text(p: &Path) -> String {
 	let s = p.to_string_lossy();
 	#[cfg(windows)]
 	let s = s.strip_prefix(r"\\?\").unwrap_or(&s).replace('\\', "/");
-	#[cfg(not(windows))]
-	let s = s.replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$").replace('`', "\\`");
-	format!("\"{s}\"")
+	s.to_string()
+}
+
+/// POSIX single quotes: a `'` inside closes, escapes and reopens.
+fn sh_quote(s: &str) -> String {
+	format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// PowerShell single quotes: a quote inside is doubled. PowerShell also takes
+/// the typographic single quotes as delimiters, so those are doubled too.
+fn ps_quote(s: &str) -> String {
+	let mut out = String::with_capacity(s.len() + 2);
+	out.push('\'');
+	for c in s.chars() {
+		if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+			out.push(c);
+		}
+		out.push(c);
+	}
+	out.push('\'');
+	out
 }
 
 /// The shell Claude Code itself runs a status line in: Git Bash on Windows
-/// (`cmd` when there is none), `sh` elsewhere.
+/// (PowerShell when there is none), `sh` elsewhere.
 fn shell_command(command: &str) -> Command {
 	#[cfg(windows)]
 	{
@@ -207,7 +265,7 @@ fn shell_command(command: &str) -> Command {
 				cmd.arg("-c").arg(command);
 				cmd
 			}
-			None => cmd_command(command),
+			None => powershell_command(command),
 		};
 		cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
 		cmd
@@ -223,25 +281,29 @@ fn shell_command(command: &str) -> Command {
 	}
 }
 
-/// `cmd /S /C "<command>"`: `/S` strips exactly the outer quotes, so the
-/// command's own quotes reach `cmd` untouched.
 #[cfg(windows)]
-fn cmd_command(command: &str) -> Command {
-	use std::os::windows::process::CommandExt;
-	let mut cmd = Command::new("cmd");
-	cmd.raw_arg(format!("/D /S /C \"{command}\""));
+fn powershell_command(command: &str) -> Command {
+	let mut cmd = Command::new("powershell");
+	cmd.args(["-NoProfile", "-NonInteractive", "-Command", command]);
 	cmd
 }
 
-/// Run the user's command with `stdin` piped in and return its stdout. Past
-/// `timeout` the command and everything it started are killed and whatever it
-/// printed so far is returned.
-fn run_user_command(command: &str, stdin: &[u8], cwd: Option<&Path>, timeout: Duration) -> Vec<u8> {
-	let mut cmd = shell_command(command);
+/// After the command exits, how long a background job it left holding stdout
+/// may keep us waiting for the rest of the output.
+const OUTPUT_GRACE: Duration = Duration::from_millis(200);
+
+/// Run the user's command with `stdin` piped in and return its stdout — only
+/// when it exits with status 0 within `timeout`, as Claude Code shows it.
+/// Anything else is an empty line. Past `timeout` the command and everything
+/// it started are killed; a command that finished is left alone, background
+/// jobs included.
+fn run_user_command(command: &str, stdin: &[u8], timeout: Duration) -> Vec<u8> {
+	run_in(shell_command(command), stdin, timeout)
+}
+
+/// `run_user_command` for an already-built shell command.
+fn run_in(mut cmd: Command, stdin: &[u8], timeout: Duration) -> Vec<u8> {
 	cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-	if let Some(dir) = cwd {
-		cmd.current_dir(dir);
-	}
 	let Ok(child) = cmd.spawn() else { return Vec::new() };
 	let mut guard = KillOnDrop::new(child);
 	let (Some(mut input), Some(mut output)) = (guard.child.stdin.take(), guard.child.stdout.take())
@@ -267,8 +329,37 @@ fn run_user_command(command: &str, stdin: &[u8], cwd: Option<&Path>, timeout: Du
 	}
 	let deadline = Instant::now() + timeout;
 	let mut out = Vec::new();
-	while let Ok(chunk) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-		out.extend_from_slice(&chunk);
+	let mut eof = false;
+	let status = loop {
+		match guard.child.try_wait() {
+			Ok(Some(status)) => break status,
+			Ok(None) => {}
+			Err(_) => return Vec::new(),
+		}
+		if Instant::now() >= deadline {
+			// The guard kills the whole tree.
+			return Vec::new();
+		}
+		if eof {
+			std::thread::sleep(Duration::from_millis(10));
+			continue;
+		}
+		match rx.recv_timeout(Duration::from_millis(10)) {
+			Ok(chunk) => out.extend_from_slice(&chunk),
+			Err(mpsc::RecvTimeoutError::Disconnected) => eof = true,
+			Err(mpsc::RecvTimeoutError::Timeout) => {}
+		}
+	};
+	guard.release();
+	if !status.success() {
+		return Vec::new();
+	}
+	let grace = (Instant::now() + OUTPUT_GRACE).min(deadline);
+	while !eof {
+		match rx.recv_timeout(grace.saturating_duration_since(Instant::now())) {
+			Ok(chunk) => out.extend_from_slice(&chunk),
+			Err(_) => eof = true,
+		}
 	}
 	out
 }
@@ -397,9 +488,28 @@ mod tests {
 
 		#[cfg(unix)]
 		assert_eq!(out, b"hi\n");
-		// Git Bash prints `hi\n`, the `cmd` fallback `hi\r\n`.
+		// Git Bash prints `hi\n`, the PowerShell fallback `hi\r\n`.
 		#[cfg(windows)]
 		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "hi");
+	}
+
+	#[test]
+	fn project_settings_come_from_the_project_dir_not_the_current_dir() {
+		let tmp = tempfile::tempdir().unwrap();
+		let config = tmp.path().join("config");
+		let (project, current) = (tmp.path().join("project"), tmp.path().join("project/sub"));
+		write_settings(&project.join(".claude"), json!({"command": "echo project"}));
+		write_settings(&current.join(".claude"), json!({"command": "echo current"}));
+		let input = json!({"session_id": "s", "cwd": current,
+			"workspace": {"current_dir": current, "project_dir": project}});
+
+		let out = run_helper(
+			&tmp.path().join("sink"),
+			&serde_json::to_vec(&input).unwrap(),
+			Some(&config),
+		);
+
+		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "project");
 	}
 
 	#[test]
@@ -439,34 +549,150 @@ mod tests {
 		assert!(!sink.exists() || std::fs::read_dir(&sink).unwrap().count() == 0);
 	}
 
+	/// The POSIX shell tests need `sh`, or Git Bash on Windows.
+	fn posix() -> bool {
+		status_shell() == StatusShell::Posix
+	}
+
 	#[test]
 	fn the_users_command_gets_the_same_stdin() {
-		#[cfg(windows)]
-		if git_bash().is_none() {
+		if !posix() {
 			return;
 		}
 		let input = b"{\"session_id\":\"x\"}";
-		let out = run_user_command("cat", input, None, Duration::from_secs(5));
+		let out = run_user_command("cat", input, Duration::from_secs(5));
 		assert_eq!(out, input);
 	}
 
-	#[cfg(windows)]
 	#[test]
-	fn the_cmd_fallback_keeps_the_commands_own_quotes() {
-		let out = cmd_command("echo \"a b\"").stdout(Stdio::piped()).output().unwrap().stdout;
-		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "\"a b\"");
+	fn the_users_command_runs_in_the_helpers_own_cwd() {
+		if !posix() {
+			return;
+		}
+		let here = std::env::current_dir().unwrap();
+		let out = run_user_command("basename \"$PWD\"", b"", Duration::from_secs(5));
+		assert_eq!(
+			String::from_utf8_lossy(&out).trim_end(),
+			here.file_name().unwrap().to_string_lossy()
+		);
+	}
+
+	#[test]
+	fn a_non_zero_exit_blanks_the_line() {
+		if !posix() {
+			return;
+		}
+		assert!(run_user_command("echo hi; exit 1", b"", Duration::from_secs(5)).is_empty());
+	}
+
+	#[test]
+	fn a_background_job_neither_blanks_nor_holds_the_line() {
+		if !posix() {
+			return;
+		}
+		let started = Instant::now();
+		let out = run_user_command("sleep 4 & echo hi", b"", Duration::from_secs(5));
+		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "hi");
+		assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
 	}
 
 	#[test]
 	fn a_hung_user_command_is_cut_off() {
+		if !posix() {
+			return;
+		}
 		let started = Instant::now();
-		#[cfg(unix)]
-		let command = "sleep 30";
-		#[cfg(windows)]
-		let command = if git_bash().is_some() { "sleep 30" } else { "ping -n 30 127.0.0.1 >NUL" };
-		let out = run_user_command(command, b"", None, Duration::from_secs(1));
+		let out = run_user_command("echo partial; sleep 30", b"", Duration::from_secs(1));
+		assert!(out.is_empty(), "a timeout blanks the line");
+		assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn the_powershell_fallback_runs_quotes_and_gets_stdin() {
+		let out = run_in(
+			powershell_command("$s = ($input | Out-String).Trim(); Write-Output \"got: $s\""),
+			b"{\"a\":1}",
+			Duration::from_secs(20),
+		);
+		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "got: {\"a\":1}");
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn the_powershell_fallback_blanks_on_failure_and_timeout() {
+		let out =
+			run_in(powershell_command("Write-Output hi; exit 3"), b"", Duration::from_secs(20));
+		assert!(out.is_empty());
+		let started = Instant::now();
+		let out = run_in(
+			powershell_command("Write-Output hi; Start-Sleep 30"),
+			b"",
+			Duration::from_secs(3),
+		);
 		assert!(out.is_empty());
 		assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+	}
+
+	/// A directory whose name has a space and a single quote, holding `name`.
+	fn awkward_dir(tmp: &Path) -> PathBuf {
+		let dir = tmp.join("it's a dir");
+		std::fs::create_dir_all(&dir).unwrap();
+		dir
+	}
+
+	#[test]
+	fn the_posix_form_survives_the_shell() {
+		#[cfg(unix)]
+		let shell = PathBuf::from("sh");
+		#[cfg(windows)]
+		let Some(shell) = git_bash() else {
+			return;
+		};
+		let tmp = tempfile::tempdir().unwrap();
+		let dir = awkward_dir(tmp.path());
+		let exe = dir.join("args.sh");
+		std::fs::write(&exe, "#!/bin/sh\nprintf '%s|%s' \"$1\" \"$2\"\n").unwrap();
+		#[cfg(unix)]
+		{
+			use std::os::unix::fs::PermissionsExt;
+			std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+		}
+		let sink = dir.join("sink $HOME `x`");
+		let command = helper_command(&exe, &sink, StatusShell::Posix);
+		let out = Command::new(shell).arg("-c").arg(&command).output().unwrap();
+		assert_eq!(
+			String::from_utf8_lossy(&out.stdout),
+			format!("{HELPER_FLAG}|{}", path_text(&sink)),
+			"{command}"
+		);
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn the_powershell_form_survives_powershell() {
+		let tmp = tempfile::tempdir().unwrap();
+		let dir = awkward_dir(tmp.path());
+		let exe = dir.join("args.cmd");
+		std::fs::write(&exe, "@echo off\r\necho [%~1] [%~2]\r\n").unwrap();
+		let sink = dir.join("sink $HOME");
+		let command = helper_command(&exe, &sink, StatusShell::PowerShell);
+		let out = Command::new("powershell")
+			.args(["-NoProfile", "-NonInteractive", "-Command", &command])
+			.output()
+			.unwrap();
+		assert_eq!(
+			String::from_utf8_lossy(&out.stdout).trim_end(),
+			format!("[{HELPER_FLAG}] [{}]", path_text(&sink)),
+			"{command}"
+		);
+	}
+
+	#[test]
+	fn quotes_escape_an_embedded_single_quote_per_shell() {
+		assert_eq!(sh_quote("it's"), r"'it'\''s'");
+		assert_eq!(ps_quote("it's"), "'it''s'");
+		assert_eq!(ps_quote("it\u{2019}s"), "'it\u{2019}\u{2019}s'");
 	}
 
 	#[test]
@@ -534,21 +760,27 @@ mod tests {
 	fn settings_arg_is_valid_json_with_quoted_paths() {
 		let exe = Path::new(r"C:\Users\Fyruz DEV\factorai\factorai.exe");
 		let sink = Path::new(r"C:\Users\Fyruz DEV\AppData\Roaming\factorai\usage\statusline");
-		let v: Value = serde_json::from_str(&settings_arg(exe, sink, None)).unwrap();
-		let line = v["statusLine"].as_object().unwrap();
-		assert_eq!(line.len(), 2, "{line:?}");
-		assert_eq!(line["type"], "command");
-		let command = line["command"].as_str().unwrap();
+		let command = |shell| {
+			let v: Value = serde_json::from_str(&settings_arg(exe, sink, None, shell)).unwrap();
+			let line = v["statusLine"].as_object().unwrap().clone();
+			assert_eq!(line.len(), 2, "{line:?}");
+			assert_eq!(line["type"], "command");
+			line["command"].as_str().unwrap().to_string()
+		};
 		#[cfg(windows)]
-		assert_eq!(
-			command,
-			"\"C:/Users/Fyruz DEV/factorai/factorai.exe\" --usage-statusline \
-			 \"C:/Users/Fyruz DEV/AppData/Roaming/factorai/usage/statusline\""
+		let (exe_text, sink_text) = (
+			"C:/Users/Fyruz DEV/factorai/factorai.exe",
+			"C:/Users/Fyruz DEV/AppData/Roaming/factorai/usage/statusline",
 		);
 		#[cfg(unix)]
+		let (exe_text, sink_text) = (exe.to_str().unwrap(), sink.to_str().unwrap());
 		assert_eq!(
-			command,
-			format!("\"{}\" --usage-statusline \"{}\"", exe.display(), sink.display())
+			command(StatusShell::Posix),
+			format!("'{exe_text}' --usage-statusline '{sink_text}'")
+		);
+		assert_eq!(
+			command(StatusShell::PowerShell),
+			format!("& '{exe_text}' --usage-statusline '{sink_text}'")
 		);
 	}
 
@@ -560,6 +792,7 @@ mod tests {
 			Path::new("/opt/factorai"),
 			Path::new("/data/sink"),
 			Some(&user),
+			StatusShell::Posix,
 		))
 		.unwrap();
 		let line = &v["statusLine"];

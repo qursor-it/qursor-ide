@@ -22,6 +22,8 @@ const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(15);
 const BINARY_RECHECK: Duration = Duration::from_secs(600);
 /// A status-line sink file untouched this long belongs to a session long gone.
 const SINK_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
+/// How far before the last tick a sink file's mtime may be and still be read.
+const SINK_SLACK: Duration = Duration::from_secs(10);
 
 /// `statusline_dir` is where Claude sessions' status-line helpers drop their
 /// readings (`services::usage::statusline`).
@@ -72,6 +74,10 @@ fn statusline_step(
 ) {
 	// Taken before the scan, so a file written during it is read next tick.
 	let started = SystemTime::now();
+	// A sink file keeps its temp file's mtime through the rename, so one renamed
+	// just after a scan began can predate `since`. Re-reading is harmless: the
+	// store drops a reading it already has.
+	let floor = since.checked_sub(SINK_SLACK).unwrap_or(SystemTime::UNIX_EPOCH);
 	let Ok(entries) = std::fs::read_dir(dir) else {
 		*since = started;
 		return;
@@ -83,7 +89,7 @@ fn statusline_step(
 			let _ = std::fs::remove_file(&path);
 			continue;
 		}
-		if modified < *since || path.extension().is_none_or(|e| e != "json") {
+		if modified < floor || path.extension().is_none_or(|e| e != "json") {
 			continue;
 		}
 		let parsed = std::fs::read(&path)
@@ -243,5 +249,28 @@ mod tests {
 		assert!(store.snapshot(0).is_empty(), "nothing new since the last tick");
 		assert!(seen.exists());
 		assert!(!old.exists(), "a week-old sink file is deleted");
+	}
+
+	#[test]
+	fn a_file_renamed_just_after_the_last_scan_began_is_still_read() {
+		let tmp = tempfile::tempdir().unwrap();
+		let store = UsageStore::load(tmp.path().join("usage.json"));
+		let sink = tmp.path().join("sink");
+		std::fs::create_dir_all(&sink).unwrap();
+		let dir = tmp.path().join("cfg");
+		let profiles = vec![profile("p", CLAUDE, &dir.to_string_lossy())];
+		let mut since = SystemTime::now();
+		// Its temp file was written 3 s before that scan; the rename came after.
+		let late = sink_file(&sink, "late.json", &dir.to_string_lossy(), 30.0, 100);
+		std::fs::File::options()
+			.write(true)
+			.open(&late)
+			.unwrap()
+			.set_modified(since - Duration::from_secs(3))
+			.unwrap();
+
+		statusline_step(&store, &profiles, &sink, &mut since);
+
+		assert_eq!(store.snapshot(0).len(), 1);
 	}
 }

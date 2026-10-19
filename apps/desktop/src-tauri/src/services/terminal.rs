@@ -1579,7 +1579,14 @@ impl TerminalManager {
 			if let Ok(exe) = std::env::current_exe() {
 				let user = statusline::user_statusline(claude_dir, cwd_path);
 				v.push("--settings".into());
-				v.push(statusline::settings_arg(&exe, sink, user.as_ref().map(|u| &u.settings)));
+				// Written for the shell Claude Code will run it in: Git Bash, or
+				// PowerShell on a Windows machine without it.
+				v.push(statusline::settings_arg(
+					&exe,
+					sink,
+					user.as_ref().map(|u| &u.settings),
+					statusline::status_shell(),
+				));
 			}
 		}
 		v.push(session_flag(claude_dir, cwd_path, session_id).into());
