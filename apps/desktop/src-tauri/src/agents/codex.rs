@@ -260,13 +260,13 @@ pub struct Meta {
 }
 
 #[derive(Deserialize)]
-struct Line {
+pub(crate) struct Line {
 	#[serde(default)]
-	timestamp: Option<String>,
+	pub(crate) timestamp: Option<String>,
 	#[serde(rename = "type")]
-	kind: String,
+	pub(crate) kind: String,
 	#[serde(default)]
-	payload: serde_json::Value,
+	pub(crate) payload: serde_json::Value,
 }
 
 /// The first line of a rollout, when it is a `session_meta`. `None` for a file

@@ -309,6 +309,8 @@ pub fn run() {
 				}));
 			}
 
+			let usage_db = db.clone();
+			let usage_poll_store = usage.clone();
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),
@@ -325,6 +327,7 @@ pub fn run() {
 				usage,
 			});
 
+			services::usage::poller::spawn(app.handle().clone(), usage_poll_store, usage_db);
 			spawn_initial_scan(indexer.clone());
 			watcher::spawn(indexer, watch.clone());
 			// Ticking starts with the window, because a routine is scheduled work
