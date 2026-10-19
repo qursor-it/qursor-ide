@@ -31,7 +31,7 @@ pub async fn session_usage(
 	crate::commands::off_main(move || {
 		let row = db.with(|conn| {
 			conn.query_row(
-				"SELECT d.key, s.subagent_of, s.transcript_path, pr.agent
+				"SELECT d.key, s.subagent_of, s.transcript_path, pr.agent, pr.config_dir
 				 FROM sessions s
 				 JOIN discovered_projects d ON d.id = s.discovered_id
 				 JOIN profiles pr ON pr.id = d.profile_id
@@ -43,19 +43,22 @@ pub async fn session_usage(
 						r.get::<_, Option<String>>(1)?,
 						r.get::<_, Option<String>>(2)?,
 						r.get::<_, String>(3)?,
+						r.get::<_, String>(4)?,
 					))
 				},
 			)
 			.optional()
 			.map_err(AppError::from)
 		})?;
-		let Some((key, parent, recorded, agent)) = row else { return Ok(None) };
-		// The recorded path first: a Codex rollout sits under a date directory
-		// only the indexer knows; Claude's is derived from the store key.
-		let path = match recorded {
-			Some(p) => PathBuf::from(p),
-			None => transcript_path(&claude_dir, &key, parent.as_deref(), &session_id),
-		};
+		let Some((key, parent, recorded, agent, config_dir)) = row else { return Ok(None) };
+		let path = resolve_path(
+			&config_dir,
+			&claude_dir,
+			&key,
+			parent.as_deref(),
+			recorded.as_deref(),
+			&session_id,
+		);
 		if !path.is_file() {
 			return Ok(None);
 		}
@@ -68,4 +71,43 @@ pub async fn session_usage(
 		Ok(Some(usage))
 	})
 	.await
+}
+
+/// The transcript file. The recorded path first: a Codex rollout sits under a
+/// date directory only the indexer knows. Claude's is derived from the store key
+/// under the **profile's** config dir (the indexer reads each profile there),
+/// falling back to the global Claude dir only when the profile has none.
+fn resolve_path(
+	config_dir: &str,
+	fallback: &std::path::Path,
+	key: &str,
+	parent: Option<&str>,
+	recorded: Option<&str>,
+	session_id: &str,
+) -> PathBuf {
+	if let Some(p) = recorded {
+		return PathBuf::from(p);
+	}
+	let dir = if config_dir.is_empty() { fallback } else { std::path::Path::new(config_dir) };
+	transcript_path(dir, key, parent, session_id)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn a_session_under_a_second_profile_dir_resolves() {
+		let global = tempfile::tempdir().unwrap();
+		let second = tempfile::tempdir().unwrap();
+		let dir = second.path().join("projects/-p");
+		std::fs::create_dir_all(&dir).unwrap();
+		std::fs::write(dir.join("s1.jsonl"), "").unwrap();
+		let cfg = second.path().to_string_lossy().to_string();
+		let path = resolve_path(&cfg, global.path(), "-p", None, None, "s1");
+		assert!(path.is_file());
+		// An empty profile dir falls back to the global one.
+		let path = resolve_path("", global.path(), "-p", None, None, "s1");
+		assert!(path.starts_with(global.path()));
+	}
 }

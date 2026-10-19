@@ -42,6 +42,8 @@ const TABLE: &[(&str, Price)] = &[
 	("claude-opus-4", p(15.0, 75.0, 1.50, 18.75)),
 	("claude-sonnet-5-5", p(2.0, 10.0, 0.10, 2.5)),
 	("claude-sonnet-5", p(2.0, 10.0, 0.20, 2.5)),
+	("claude-sonnet-4-6", p(3.0, 15.0, 0.30, 3.75)),
+	("claude-sonnet-4-5", p(3.0, 15.0, 0.30, 3.75)),
 	("claude-sonnet-4", p(3.0, 15.0, 0.30, 3.75)),
 	("claude-haiku-5-5", p(0.10, 0.50, 0.01, 0.125)),
 	("claude-haiku-4-5", p(1.0, 5.0, 0.10, 1.25)),
@@ -54,13 +56,26 @@ const TABLE: &[(&str, Price)] = &[
 	("gpt-6-luna", p(0.10, 0.50, 0.01, 0.125)),
 ];
 
+/// Whether `rest` (what follows a matched prefix) is a boundary: nothing, a
+/// `@`/`[` suffix, or a `-YYYYMMDD` date. So an unlisted `claude-opus-4-9` does
+/// not silently take `claude-opus-4`'s price.
+fn at_boundary(rest: &str) -> bool {
+	match rest.as_bytes().first() {
+		None | Some(b'@') | Some(b'[') => true,
+		Some(b'-') => {
+			rest.as_bytes()[1..].iter().take(8).filter(|b| b.is_ascii_digit()).count() == 8
+		}
+		_ => false,
+	}
+}
+
 /// The price of `model`, matching on the longest table prefix so dated ids
 /// (`claude-sonnet-4-5-20250929`) resolve. `None` for a model not listed.
 pub fn price_for(model: &str) -> Option<Price> {
 	let model = model.to_ascii_lowercase();
 	TABLE
 		.iter()
-		.filter(|(prefix, _)| model.starts_with(prefix))
+		.filter(|(prefix, _)| model.strip_prefix(*prefix).is_some_and(at_boundary))
 		.max_by_key(|(prefix, _)| prefix.len())
 		.map(|(_, price)| *price)
 }
@@ -79,6 +94,8 @@ mod tests {
 		assert_eq!(price_for("claude-opus-4-8").unwrap().input, 5.0);
 		assert_eq!(price_for("claude-opus-5-5").unwrap().output, 20.0);
 		assert_eq!(price_for("gpt-5.6-sol").unwrap().cache_read, 0.40);
+		assert_eq!(price_for("claude-opus-4-9"), None);
+		assert_eq!(price_for("claude-opus-4-8[1m]").unwrap().input, 5.0);
 		assert_eq!(price_for("gpt-9-unknown"), None);
 		assert_eq!(price_for(""), None);
 	}
