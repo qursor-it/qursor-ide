@@ -1,7 +1,7 @@
 //! One thread that polls every usage source on a fixed tick and records into
 //! the store. Each source is a step in `tick`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -38,9 +38,17 @@ pub fn spawn(app: AppHandle, store: Arc<UsageStore>, db: Db, statusline_dir: Pat
 		// Epoch: the first tick reads every sink file; the store drops what is
 		// older than what it already has.
 		let mut sink_since = SystemTime::UNIX_EPOCH;
+		let mut unmatched = HashSet::new();
 		let mut backoff = Backoff::default();
 		loop {
-			tick(&poll_store, &poll_db, &statusline_dir, &mut sink_since, &mut backoff);
+			tick(
+				&poll_store,
+				&poll_db,
+				&statusline_dir,
+				&mut sink_since,
+				&mut unmatched,
+				&mut backoff,
+			);
 			std::thread::sleep(TICK);
 		}
 	});
@@ -53,7 +61,7 @@ pub fn spawn(app: AppHandle, store: Arc<UsageStore>, db: Db, statusline_dir: Pat
 		std::thread::Builder::new().name("usage-codex-app-server".into()).spawn(move || {
 			let mut state = AppServerState::default();
 			loop {
-				codex_app_server_step(&store, &db, &mut state);
+				guarded("codex app-server", || codex_app_server_step(&store, &db, &mut state));
 				std::thread::sleep(TICK);
 			}
 		});
@@ -67,12 +75,32 @@ fn tick(
 	db: &Db,
 	statusline_dir: &Path,
 	sink_since: &mut SystemTime,
+	unmatched: &mut HashSet<String>,
 	backoff: &mut Backoff,
 ) {
 	let profiles = profiles::all(db);
-	codex_log_step(store, &profiles);
-	statusline_step(store, &profiles, statusline_dir, sink_since);
-	claude_api_step(store, db, &profiles, backoff);
+	// A rename or a new default shows within a tick, not at the next reading.
+	guarded("profile sync", || {
+		store.sync_profiles(&profiles);
+	});
+	guarded("codex log", || codex_log_step(store, &profiles));
+	guarded("status line", || {
+		statusline_step(store, &profiles, statusline_dir, sink_since, unmatched)
+	});
+	guarded("claude endpoint", || claude_api_step(store, db, &profiles, backoff));
+}
+
+/// Run one poller step; a panic in it is logged and the poller carries on,
+/// rather than the thread ending silently for the rest of the app's life.
+fn guarded(step: &str, f: impl FnOnce()) {
+	if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+		let message = panic
+			.downcast_ref::<&str>()
+			.map(|s| s.to_string())
+			.or_else(|| panic.downcast_ref::<String>().cloned())
+			.unwrap_or_default();
+		tracing::error!("usage poller step {step} panicked: {message}");
+	}
 }
 
 /// Claude limits from Anthropic's usage endpoint, only while the user has
@@ -115,12 +143,14 @@ fn claude_api_step(
 
 /// Claude limits from the status-line sink: every file written since the last
 /// tick, recorded against the Claude profile whose config directory it names.
-/// Files older than `SINK_MAX_AGE` are deleted.
+/// Files older than `SINK_MAX_AGE` are deleted. A config directory no profile
+/// has is logged once (`unmatched` remembers it), since its readings are lost.
 fn statusline_step(
 	store: &UsageStore,
 	profiles: &[crate::models::Profile],
 	dir: &Path,
 	since: &mut SystemTime,
+	unmatched: &mut HashSet<String>,
 ) {
 	// Taken before the scan, so a file written during it is read next tick.
 	let started = SystemTime::now();
@@ -151,8 +181,17 @@ fn statusline_step(
 		let profile = profiles
 			.iter()
 			.find(|p| p.agent == CLAUDE && statusline::same_dir(&p.config_dir, &config_dir));
-		if let Some(p) = profile {
-			store.record(CLAUDE, p, reading);
+		match profile {
+			Some(p) => {
+				store.record(CLAUDE, p, reading);
+			}
+			None => {
+				if unmatched.insert(config_dir.to_string()) {
+					tracing::warn!(
+						"status-line readings for {config_dir} match no Claude profile; ignored"
+					);
+				}
+			}
 		}
 	}
 	*since = started;
@@ -266,7 +305,8 @@ mod tests {
 		sink_file(&sink, "unknown.json", "/nowhere", 99.0, 100);
 
 		let mut since = SystemTime::UNIX_EPOCH;
-		statusline_step(&store, &profiles, &sink, &mut since);
+		let mut unmatched = HashSet::new();
+		statusline_step(&store, &profiles, &sink, &mut since, &mut unmatched);
 
 		let snap = store.snapshot(0);
 		assert_eq!(snap.len(), 1, "{snap:?}");
@@ -274,6 +314,16 @@ mod tests {
 		assert_eq!(snap[0].profile_id, "work");
 		assert_eq!(snap[0].five_hour.as_ref().unwrap().used_percent, 42.0);
 		assert!(since > SystemTime::UNIX_EPOCH);
+		// The stray file's directory is remembered, so it is logged once.
+		assert_eq!(unmatched, HashSet::from(["/nowhere".to_string()]));
+	}
+
+	#[test]
+	fn a_panicking_step_is_contained() {
+		let mut after = false;
+		guarded("test", || panic!("boom"));
+		guarded("test", || after = true);
+		assert!(after);
 	}
 
 	#[test]
@@ -294,7 +344,7 @@ mod tests {
 		set_age(&old, SINK_MAX_AGE + Duration::from_secs(60));
 
 		let mut since = SystemTime::now() - Duration::from_secs(60);
-		statusline_step(&store, &profiles, &sink, &mut since);
+		statusline_step(&store, &profiles, &sink, &mut since, &mut HashSet::new());
 
 		assert!(store.snapshot(0).is_empty(), "nothing new since the last tick");
 		assert!(seen.exists());
@@ -319,7 +369,7 @@ mod tests {
 			.set_modified(since - Duration::from_secs(3))
 			.unwrap();
 
-		statusline_step(&store, &profiles, &sink, &mut since);
+		statusline_step(&store, &profiles, &sink, &mut since, &mut HashSet::new());
 
 		assert_eq!(store.snapshot(0).len(), 1);
 	}

@@ -36,9 +36,10 @@ pub struct UserStatusLine {
 }
 
 /// The helper's whole job when the binary was started as
-/// `factorai --usage-statusline <sink dir>`: read stdin, run, print. Returns
-/// whether `args` (argv without argv[0]) was a helper invocation; if it was,
-/// the caller exits without starting the app.
+/// `factorai --usage-statusline <sink dir> [<profile config dir>]`: read stdin,
+/// run, print. Returns whether `args` (argv without argv[0]) was a helper
+/// invocation; if it was, the caller exits without starting the app. The
+/// two-argument form (sessions started by an older build) still works.
 pub fn helper_main(mut args: impl Iterator<Item = OsString>) -> bool {
 	if args.next().as_deref() != Some(std::ffi::OsStr::new(HELPER_FLAG)) {
 		return false;
@@ -46,11 +47,12 @@ pub fn helper_main(mut args: impl Iterator<Item = OsString>) -> bool {
 	// Nothing reaches the status line but the user's own output.
 	std::panic::set_hook(Box::new(|_| {}));
 	let sink_dir = args.next().map(PathBuf::from).unwrap_or_default();
+	let profile_dir = args.next().map(PathBuf::from);
 	let _ = std::panic::catch_unwind(|| {
 		let mut stdin = Vec::new();
 		let _ = std::io::stdin().read_to_end(&mut stdin);
 		let config_dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
-		let out = run_helper(&sink_dir, &stdin, config_dir.as_deref());
+		let out = run_helper(&sink_dir, &stdin, profile_dir.as_deref(), config_dir.as_deref());
 		let mut stdout = std::io::stdout().lock();
 		let _ = stdout.write_all(&out);
 		let _ = stdout.flush();
@@ -61,15 +63,28 @@ pub fn helper_main(mut args: impl Iterator<Item = OsString>) -> bool {
 /// Forward `stdin`'s `rate_limits` to `<sink_dir>/<session_id>.json`, then run
 /// the user's `statusLine` with the same `stdin` and return what it printed
 /// (empty when there is none or it failed).
-pub fn run_helper(sink_dir: &Path, stdin: &[u8], env_config_dir: Option<&Path>) -> Vec<u8> {
+///
+/// The sink names `profile_dir` — the profile's config directory as factorai
+/// stores it, passed on the command line — so the poller matches it exactly
+/// even when factorai and the session see different `CLAUDE_CONFIG_DIR`s.
+/// Without one (the two-argument form) it names the directory the session
+/// reads, `env_config_dir` or `~/.claude`, which is also where the user's own
+/// settings are looked up.
+pub fn run_helper(
+	sink_dir: &Path,
+	stdin: &[u8],
+	profile_dir: Option<&Path>,
+	env_config_dir: Option<&Path>,
+) -> Vec<u8> {
 	let payload: Option<Value> = serde_json::from_slice(stdin).ok();
+	let non_empty = |p: &&Path| !p.as_os_str().is_empty();
 	let config_dir = env_config_dir
-		.filter(|p| !p.as_os_str().is_empty())
+		.filter(non_empty)
 		.map(Path::to_path_buf)
 		.or_else(|| dirs::home_dir().map(|h| h.join(".claude")));
 	let Some(config_dir) = config_dir else { return Vec::new() };
 	if let Some(p) = &payload {
-		write_sink(sink_dir, p, &config_dir);
+		write_sink(sink_dir, p, profile_dir.filter(non_empty).unwrap_or(&config_dir));
 	}
 	let project = payload
 		.as_ref()
@@ -229,27 +244,32 @@ fn settings_git_bash_path(config_dir: &Path, project: &Path) -> Option<String> {
 
 /// The inline `--settings` JSON for a factorai Claude session: the user's own
 /// `statusLine` object with every field kept but `command`, which runs the
-/// helper (and the helper runs theirs), written for `shell`.
+/// helper (and the helper runs theirs), written for `shell`. `config_dir` is
+/// the profile's config directory, which the helper writes into each sink file
+/// so the poller can tell whose reading it is.
 pub fn settings_arg(
 	exe: &Path,
 	sink_dir: &Path,
+	config_dir: &Path,
 	user: Option<&Value>,
 	shell: StatusShell,
 ) -> String {
 	let mut line: Map<String, Value> = user.and_then(Value::as_object).cloned().unwrap_or_default();
 	line.insert("type".into(), "command".into());
-	line.insert("command".into(), helper_command(exe, sink_dir, shell).into());
+	line.insert("command".into(), helper_command(exe, sink_dir, config_dir, shell).into());
 	json!({ "statusLine": line }).to_string()
 }
 
 /// Single-quoted in both shells, so nothing in a path (`$`, a backtick, a
 /// space) is expanded. PowerShell needs `&` to run a quoted path.
-fn helper_command(exe: &Path, sink_dir: &Path, shell: StatusShell) -> String {
-	let (exe, sink) = (path_text(exe), path_text(sink_dir));
+fn helper_command(exe: &Path, sink_dir: &Path, config_dir: &Path, shell: StatusShell) -> String {
+	let (exe, sink, config) = (path_text(exe), path_text(sink_dir), path_text(config_dir));
 	match shell {
-		StatusShell::Posix => format!("{} {HELPER_FLAG} {}", sh_quote(&exe), sh_quote(&sink)),
+		StatusShell::Posix => {
+			format!("{} {HELPER_FLAG} {} {}", sh_quote(&exe), sh_quote(&sink), sh_quote(&config))
+		}
 		StatusShell::PowerShell => {
-			format!("& {} {HELPER_FLAG} {}", ps_quote(&exe), ps_quote(&sink))
+			format!("& {} {HELPER_FLAG} {} {}", ps_quote(&exe), ps_quote(&sink), ps_quote(&config))
 		}
 	}
 }
@@ -486,7 +506,7 @@ mod tests {
 		let cwd = tmp.path().join("work");
 		std::fs::create_dir_all(&cwd).unwrap();
 
-		run_helper(&sink, &payload("abc-123", &cwd, Some(limits())), Some(&config));
+		run_helper(&sink, &payload("abc-123", &cwd, Some(limits())), None, Some(&config));
 
 		let written: Value =
 			serde_json::from_slice(&std::fs::read(sink.join("abc-123.json")).unwrap()).unwrap();
@@ -495,6 +515,42 @@ mod tests {
 		assert!(written["observedAt"].as_i64().unwrap() > 0);
 		// No temp file left behind.
 		assert_eq!(std::fs::read_dir(&sink).unwrap().count(), 1);
+	}
+
+	/// factorai's own view of the profile's directory names the reading, even
+	/// when the session reads another one (an inherited `CLAUDE_CONFIG_DIR`);
+	/// the user's settings still come from the directory the session reads.
+	#[test]
+	fn an_explicit_profile_dir_names_the_sink() {
+		let _spawn = crate::test_support::spawn_lock();
+		let tmp = tempfile::tempdir().unwrap();
+		let sink = tmp.path().join("sink");
+		let (profile, session) = (tmp.path().join("profile"), tmp.path().join("session"));
+		let cwd = tmp.path().join("work");
+		std::fs::create_dir_all(&cwd).unwrap();
+		write_settings(&session, json!({"type": "command", "command": "echo session"}));
+
+		let out = run_helper(
+			&sink,
+			&payload("abc", &cwd, Some(limits())),
+			Some(&profile),
+			Some(&session),
+		);
+
+		let written: Value =
+			serde_json::from_slice(&std::fs::read(sink.join("abc.json")).unwrap()).unwrap();
+		assert_eq!(written["configDir"], profile.to_string_lossy().as_ref());
+		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "session");
+		// An empty argument is no argument.
+		run_helper(
+			&sink,
+			&payload("abd", &cwd, Some(limits())),
+			Some(Path::new("")),
+			Some(&session),
+		);
+		let written: Value =
+			serde_json::from_slice(&std::fs::read(sink.join("abd.json")).unwrap()).unwrap();
+		assert_eq!(written["configDir"], session.to_string_lossy().as_ref());
 	}
 
 	#[test]
@@ -507,7 +563,7 @@ mod tests {
 		std::fs::create_dir_all(&cwd).unwrap();
 		write_settings(&config, json!({"type": "command", "command": "echo hi"}));
 
-		let out = run_helper(&sink, &payload("abc", &cwd, None), Some(&config));
+		let out = run_helper(&sink, &payload("abc", &cwd, None), None, Some(&config));
 
 		assert!(!sink.join("abc.json").exists());
 		assert_eq!(String::from_utf8_lossy(&out).trim_end(), "hi");
@@ -525,6 +581,7 @@ mod tests {
 		let out = run_helper(
 			&tmp.path().join("sink"),
 			&payload("s", &cwd, Some(limits())),
+			None,
 			Some(&config),
 		);
 
@@ -549,6 +606,7 @@ mod tests {
 		let out = run_helper(
 			&tmp.path().join("sink"),
 			&serde_json::to_vec(&input).unwrap(),
+			None,
 			Some(&config),
 		);
 
@@ -563,6 +621,7 @@ mod tests {
 		let out = run_helper(
 			&tmp.path().join("sink"),
 			&payload("s", &cwd, Some(limits())),
+			None,
 			Some(&tmp.path().join("config")),
 		);
 		assert!(out.is_empty());
@@ -572,7 +631,7 @@ mod tests {
 	fn garbage_stdin_prints_nothing_and_writes_nothing() {
 		let tmp = tempfile::tempdir().unwrap();
 		let sink = tmp.path().join("sink");
-		let out = run_helper(&sink, b"{not json", Some(&tmp.path().join("config")));
+		let out = run_helper(&sink, b"{not json", None, Some(&tmp.path().join("config")));
 		assert!(out.is_empty());
 		assert!(!sink.exists());
 	}
@@ -586,6 +645,7 @@ mod tests {
 		run_helper(
 			&sink,
 			&payload("../escape", &cwd, Some(limits())),
+			None,
 			Some(&tmp.path().join("config")),
 		);
 		assert!(!tmp.path().join("escape.json").exists());
@@ -762,18 +822,19 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let dir = awkward_dir(tmp.path());
 		let exe = dir.join("args.sh");
-		std::fs::write(&exe, "#!/bin/sh\nprintf '%s|%s' \"$1\" \"$2\"\n").unwrap();
+		std::fs::write(&exe, "#!/bin/sh\nprintf '%s|%s|%s' \"$1\" \"$2\" \"$3\"\n").unwrap();
 		#[cfg(unix)]
 		{
 			use std::os::unix::fs::PermissionsExt;
 			std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
 		}
 		let sink = dir.join("sink $HOME `x`");
-		let command = helper_command(&exe, &sink, StatusShell::Posix);
+		let config = dir.join(".claude $(x)");
+		let command = helper_command(&exe, &sink, &config, StatusShell::Posix);
 		let out = Command::new(shell).arg("-c").arg(&command).output().unwrap();
 		assert_eq!(
 			String::from_utf8_lossy(&out.stdout),
-			format!("{HELPER_FLAG}|{}", path_text(&sink)),
+			format!("{HELPER_FLAG}|{}|{}", path_text(&sink), path_text(&config)),
 			"{command}"
 		);
 	}
@@ -785,16 +846,17 @@ mod tests {
 		let tmp = tempfile::tempdir().unwrap();
 		let dir = awkward_dir(tmp.path());
 		let exe = dir.join("args.cmd");
-		std::fs::write(&exe, "@echo off\r\necho [%~1] [%~2]\r\n").unwrap();
+		std::fs::write(&exe, "@echo off\r\necho [%~1] [%~2] [%~3]\r\n").unwrap();
 		let sink = dir.join("sink $HOME");
-		let command = helper_command(&exe, &sink, StatusShell::PowerShell);
+		let config = dir.join(".claude $(x)");
+		let command = helper_command(&exe, &sink, &config, StatusShell::PowerShell);
 		let out = Command::new("powershell")
 			.args(["-NoProfile", "-NonInteractive", "-Command", &command])
 			.output()
 			.unwrap();
 		assert_eq!(
 			String::from_utf8_lossy(&out.stdout).trim_end(),
-			format!("[{HELPER_FLAG}] [{}]", path_text(&sink)),
+			format!("[{HELPER_FLAG}] [{}] [{}]", path_text(&sink), path_text(&config)),
 			"{command}"
 		);
 	}
@@ -871,27 +933,31 @@ mod tests {
 	fn settings_arg_is_valid_json_with_quoted_paths() {
 		let exe = Path::new(r"C:\Users\Fyruz DEV\factorai\factorai.exe");
 		let sink = Path::new(r"C:\Users\Fyruz DEV\AppData\Roaming\factorai\usage\statusline");
+		let config = Path::new(r"C:\Users\Fyruz DEV\.claude-work");
 		let command = |shell| {
-			let v: Value = serde_json::from_str(&settings_arg(exe, sink, None, shell)).unwrap();
+			let v: Value =
+				serde_json::from_str(&settings_arg(exe, sink, config, None, shell)).unwrap();
 			let line = v["statusLine"].as_object().unwrap().clone();
 			assert_eq!(line.len(), 2, "{line:?}");
 			assert_eq!(line["type"], "command");
 			line["command"].as_str().unwrap().to_string()
 		};
 		#[cfg(windows)]
-		let (exe_text, sink_text) = (
+		let (exe_text, sink_text, config_text) = (
 			"C:/Users/Fyruz DEV/factorai/factorai.exe",
 			"C:/Users/Fyruz DEV/AppData/Roaming/factorai/usage/statusline",
+			"C:/Users/Fyruz DEV/.claude-work",
 		);
 		#[cfg(unix)]
-		let (exe_text, sink_text) = (exe.to_str().unwrap(), sink.to_str().unwrap());
+		let (exe_text, sink_text, config_text) =
+			(exe.to_str().unwrap(), sink.to_str().unwrap(), config.to_str().unwrap());
 		assert_eq!(
 			command(StatusShell::Posix),
-			format!("'{exe_text}' --usage-statusline '{sink_text}'")
+			format!("'{exe_text}' --usage-statusline '{sink_text}' '{config_text}'")
 		);
 		assert_eq!(
 			command(StatusShell::PowerShell),
-			format!("& '{exe_text}' --usage-statusline '{sink_text}'")
+			format!("& '{exe_text}' --usage-statusline '{sink_text}' '{config_text}'")
 		);
 	}
 
@@ -902,6 +968,7 @@ mod tests {
 		let v: Value = serde_json::from_str(&settings_arg(
 			Path::new("/opt/factorai"),
 			Path::new("/data/sink"),
+			Path::new("/home/me/.claude"),
 			Some(&user),
 			StatusShell::Posix,
 		))
