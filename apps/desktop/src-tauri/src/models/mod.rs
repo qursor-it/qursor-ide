@@ -882,6 +882,15 @@ pub enum SettingKey {
 	/// and off means every intelligence command refuses and no analysis process
 	/// is ever started. Rust reads it because Rust enforces it.
 	ProjectIntelligence,
+	/// Whether the usage monitor may ask Anthropic's (unofficial) usage endpoint
+	/// for a Claude profile's limits. `on` → on; unset → off (opt-in).
+	UsageClaudeEndpoint,
+	/// Whether the usage monitor draws its taskbar widget. Unset → on; `off` → off.
+	UsageTaskbarWidget,
+	/// Whether Claude sessions get factorai's `statusLine` injected, which hides
+	/// Claude Code's footer hints for users with no status line of their own.
+	/// Unset → on; `off` → off.
+	UsageStatusLine,
 }
 
 impl SettingKey {
@@ -901,6 +910,9 @@ impl SettingKey {
 			SettingKey::UpdateChannel => "updates.channel",
 			SettingKey::DesktopNotifications => "notifications.desktop",
 			SettingKey::ProjectIntelligence => "intelligence.enabled",
+			SettingKey::UsageClaudeEndpoint => "usage.claude_endpoint",
+			SettingKey::UsageTaskbarWidget => "usage.taskbar_widget",
+			SettingKey::UsageStatusLine => "usage.statusline",
 		}
 	}
 }

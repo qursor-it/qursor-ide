@@ -773,6 +773,9 @@ pub struct TerminalManager {
 	/// Where a Claude session's status-line helper drops its rate limits.
 	/// `None` — every test that does not wire it — adds no `--settings`.
 	usage_sink_dir: Option<PathBuf>,
+	/// Whether the status-line injection is switched on, read at **spawn time**.
+	/// `None` — every test that does not wire it — means on.
+	usage_statusline_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 	on_worktree: WorktreeCb,
 	/// What the renderer has on screen, for the bridge's answers (F20).
 	ui: Arc<UiState>,
@@ -822,6 +825,7 @@ impl TerminalManager {
 			worktree_store: None,
 			routine_store: None,
 			usage_sink_dir: None,
+			usage_statusline_enabled: None,
 			on_worktree: Arc::new(move |e| {
 				let _ = app_worktree.emit("session:worktree", e);
 			}),
@@ -850,6 +854,7 @@ impl TerminalManager {
 			worktree_store: None,
 			routine_store: None,
 			usage_sink_dir: None,
+			usage_statusline_enabled: None,
 			on_worktree: Arc::new(|_| {}),
 			ui: Arc::new(UiState::default()),
 			on_ide_open: Arc::new(|_| {}),
@@ -930,6 +935,16 @@ impl TerminalManager {
 	/// in `lib.rs`.
 	pub fn with_usage_sink_dir(mut self, dir: PathBuf) -> Self {
 		self.usage_sink_dir = Some(dir);
+		self
+	}
+
+	/// Whether a Claude session gets factorai's status line, per spawn
+	/// (`SettingKey::UsageStatusLine`). Wired to the `settings` table in `lib.rs`.
+	pub fn with_usage_statusline_enabled(
+		mut self,
+		cb: Arc<dyn Fn() -> bool + Send + Sync>,
+	) -> Self {
+		self.usage_statusline_enabled = Some(cb);
 		self
 	}
 
@@ -1575,7 +1590,8 @@ impl TerminalManager {
 		// **Claude's limits ride on the status line** (usage monitor): ours runs
 		// the factorai binary as a helper that forwards `rate_limits` and then
 		// runs the user's own `statusLine`, whose other fields are kept here.
-		if let Some(sink) = &self.usage_sink_dir {
+		let statusline_on = self.usage_statusline_enabled.as_ref().is_none_or(|cb| cb());
+		if let Some(sink) = self.usage_sink_dir.as_ref().filter(|_| statusline_on) {
 			if let Ok(exe) = std::env::current_exe() {
 				let user = statusline::user_statusline(claude_dir, cwd_path);
 				v.push("--settings".into());
@@ -3671,6 +3687,23 @@ mod tests {
 		let command = settings["statusLine"]["command"].as_str().expect("a command");
 		assert!(command.contains("--usage-statusline"), "{command}");
 		assert_eq!(settings["statusLine"]["type"], "command");
+	}
+
+	#[test]
+	fn usage_statusline_switch_is_read_per_spawn() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let o = opts(80, 24);
+		for on in [false, true] {
+			let (mgr, _data, _exit) = make_manager();
+			let mut mgr = mgr
+				.with_usage_sink_dir(tmp.path().join("sink"))
+				.with_usage_statusline_enabled(Arc::new(move || on));
+			mgr.set_binary(PathBuf::from("/bin/echo"));
+			let argv = mgr
+				.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+				.expect("argv");
+			assert_eq!(argv.iter().any(|a| a == "--settings"), on, "{argv:?}");
+		}
 	}
 
 	#[test]

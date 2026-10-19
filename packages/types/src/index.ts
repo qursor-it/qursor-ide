@@ -396,7 +396,10 @@ export type SettingKey =
 	| 'routinesMaxConcurrent'
 	| 'updateChannel'
 	| 'desktopNotifications'
-	| 'projectIntelligence';
+	| 'projectIntelligence'
+	| 'usageClaudeEndpoint'
+	| 'usageTaskbarWidget'
+	| 'usageStatusLine';
 
 /**
  * The update channel an install follows (F14, ADR-0064). Stored under

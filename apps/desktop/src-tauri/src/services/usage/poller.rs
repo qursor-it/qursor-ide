@@ -8,10 +8,12 @@ use std::time::{Duration, Instant, SystemTime};
 
 use tauri::AppHandle;
 
+use super::claude_api::{self, Backoff, TokenState};
 use super::store::UsageStore;
-use super::{codex_app_server, codex_log, statusline};
+use super::{codex_app_server, codex_log, now_ms, statusline};
 use crate::agents::{CLAUDE, CODEX};
 use crate::db::Db;
+use crate::models::SettingKey;
 use crate::services::{agent_cli, profiles, settings};
 
 const TICK: Duration = Duration::from_secs(60);
@@ -36,8 +38,9 @@ pub fn spawn(app: AppHandle, store: Arc<UsageStore>, db: Db, statusline_dir: Pat
 		// Epoch: the first tick reads every sink file; the store drops what is
 		// older than what it already has.
 		let mut sink_since = SystemTime::UNIX_EPOCH;
+		let mut backoff = Backoff::default();
 		loop {
-			tick(&poll_store, &poll_db, &statusline_dir, &mut sink_since);
+			tick(&poll_store, &poll_db, &statusline_dir, &mut sink_since, &mut backoff);
 			std::thread::sleep(TICK);
 		}
 	});
@@ -59,10 +62,55 @@ pub fn spawn(app: AppHandle, store: Arc<UsageStore>, db: Db, statusline_dir: Pat
 	}
 }
 
-fn tick(store: &UsageStore, db: &Db, statusline_dir: &Path, sink_since: &mut SystemTime) {
+fn tick(
+	store: &UsageStore,
+	db: &Db,
+	statusline_dir: &Path,
+	sink_since: &mut SystemTime,
+	backoff: &mut Backoff,
+) {
 	let profiles = profiles::all(db);
 	codex_log_step(store, &profiles);
 	statusline_step(store, &profiles, statusline_dir, sink_since);
+	claude_api_step(store, db, &profiles, backoff);
+}
+
+/// Claude limits from Anthropic's usage endpoint, only while the user has
+/// opted in. Per Claude profile, paced by `Backoff`; an expired or missing
+/// token skips the profile. Failures are logged by status only.
+fn claude_api_step(
+	store: &UsageStore,
+	db: &Db,
+	profiles: &[crate::models::Profile],
+	backoff: &mut Backoff,
+) {
+	let on = db
+		.with(|conn| settings::get(conn, SettingKey::UsageClaudeEndpoint))
+		.ok()
+		.flatten()
+		.is_some_and(|v| v == "on");
+	if !on {
+		return;
+	}
+	for p in profiles.iter().filter(|p| p.agent == CLAUDE && !p.config_dir.trim().is_empty()) {
+		let now = now_ms();
+		if !backoff.due(&p.id, now) {
+			continue;
+		}
+		let TokenState::Ok(token) = claude_api::read_token(Path::new(&p.config_dir), now) else {
+			continue;
+		};
+		let fetched = claude_api::fetch(&token);
+		backoff.on_result(&p.id, now_ms(), fetched.status, fetched.retry_after_s);
+		match fetched.body {
+			Some(body) => {
+				store.record(CLAUDE, p, claude_api::parse_usage_response(&body, now_ms()));
+			}
+			None => {
+				tracing::debug!("claude usage endpoint for {}: status {}", p.name, fetched.status)
+			}
+		}
+	}
 }
 
 /// Claude limits from the status-line sink: every file written since the last
