@@ -108,6 +108,10 @@ interface PrefsState {
 	terminalLineHeight: number;
 	/** The cursor's shape; the block it used to be is one choice of three. */
 	terminalCursor: TerminalCursor;
+	/** Show the status bar of plan limits and session cost along the window's
+	 *  bottom edge (usage monitor). **On by default**: it is the feature, and
+	 *  somebody who does not want it says so once. */
+	showStatusBar: boolean;
 
 	/** The diff footer's own toggle (F13), which sets the same value the Editor
 	 *  section defaults: flipping it there is a choice about how you read diffs,
@@ -151,6 +155,7 @@ const DEFAULT_PREFS: Prefs = {
 	// input box into segments (ADR-0082).
 	terminalLineHeight: 1,
 	terminalCursor: 'bar',
+	showStatusBar: true,
 };
 
 export const usePrefsStore = create<PrefsState>()(
@@ -187,6 +192,7 @@ export const usePrefsStore = create<PrefsState>()(
 				terminalFontSize: s.terminalFontSize,
 				terminalLineHeight: s.terminalLineHeight,
 				terminalCursor: s.terminalCursor,
+				showStatusBar: s.showStatusBar,
 			}),
 		},
 	),
@@ -210,5 +216,6 @@ export function currentPrefs(): Prefs {
 		terminalFontSize: s.terminalFontSize,
 		terminalLineHeight: s.terminalLineHeight,
 		terminalCursor: s.terminalCursor,
+		showStatusBar: s.showStatusBar,
 	};
 }

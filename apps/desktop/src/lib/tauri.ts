@@ -347,8 +347,7 @@ export const cmd = {
 		invoke<ClaudeCliStatus>('validate_agent_binary', { agent, path }),
 	/** The latest known rate-limit windows per profile. */
 	getUsage: () => invoke<ProviderUsage[]>('get_usage'),
-	sessionUsage: (sessionId: string) =>
-		invoke<SessionUsage | null>('session_usage', { sessionId }),
+	sessionUsage: (sessionId: string) => invoke<SessionUsage | null>('session_usage', { sessionId }),
 	/** Every Claude profile, default first (F25). */
 	listProfiles: () => invoke<Profile[]>('list_profiles'),
 	/** Create one, making its config directory if it is missing and leaving it
@@ -866,6 +865,10 @@ interface TestFixture {
 	/** Blob text keyed by `<sha>:<relPath>`; absent answers null (no such file at
 	 *  that commit). */
 	ghBlobs?: Record<string, string>;
+	/** What `get_usage` answers (usage monitor). Absent means no readings yet. */
+	usage?: ProviderUsage[];
+	/** `session_usage` keyed by session id. Absent answers null. */
+	sessionUsage?: Record<string, SessionUsage>;
 }
 
 /** One mocked command call, recorded in order while a fixture is installed. */
@@ -1551,7 +1554,9 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		case 'resolve_project_path':
 			return null as unknown as T;
 		case 'get_usage':
-			return [] as unknown as T;
+			return (fx?.usage ?? []) as unknown as T;
+		case 'session_usage':
+			return (fx?.sessionUsage?.[String(args?.sessionId ?? '')] ?? null) as unknown as T;
 		case 'list_profiles':
 			return (fx?.profiles ?? [seededDefaultProfile()]) as unknown as T;
 		case 'create_profile': {
