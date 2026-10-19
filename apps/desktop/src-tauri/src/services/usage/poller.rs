@@ -90,8 +90,9 @@ fn tick(
 	guarded("claude endpoint", || claude_api_step(store, db, &profiles, backoff));
 }
 
-/// Run one poller step; a panic in it is logged and the poller carries on,
-/// rather than the thread ending silently for the rest of the app's life.
+/// Run one poller step; in debug and test builds a panic in it is logged and
+/// the poller carries on. Release builds use `panic = "abort"` (Cargo.toml), so
+/// there a panic ends the app instead.
 fn guarded(step: &str, f: impl FnOnce()) {
 	if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
 		let message = panic
