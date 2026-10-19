@@ -653,6 +653,7 @@ mod windows_tests {
 
 	#[test]
 	fn a_fake_batch_cli_receives_arguments_as_separate_values() {
+		let _spawn = crate::test_support::spawn_lock();
 		let dir = tempfile::TempDir::new().unwrap();
 		let batch = dir.path().join("fake cli.cmd");
 		let capture = dir.path().join("argv.json");

@@ -580,3 +580,18 @@ pub(crate) fn epoch_ms() -> i64 {
 		.map(|d| d.as_millis() as i64)
 		.unwrap_or(0)
 }
+
+#[cfg(test)]
+pub(crate) mod test_support {
+	use parking_lot::{Mutex, MutexGuard};
+
+	static SPAWN: Mutex<()> = Mutex::new(());
+
+	/// Held by every test that starts a shell (PowerShell, Git Bash, cmd, a
+	/// ConPTY child, the fake `codex`). Their start-up is CPU-bound and their
+	/// assertions are timed, so they run one at a time while the rest of the
+	/// suite stays parallel.
+	pub(crate) fn spawn_lock() -> MutexGuard<'static, ()> {
+		SPAWN.lock()
+	}
+}
