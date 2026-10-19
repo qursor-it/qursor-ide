@@ -6,6 +6,8 @@ pub mod claude_api;
 pub mod codex_app_server;
 pub mod codex_log;
 pub mod poller;
+pub mod prices;
+pub mod session_cost;
 pub mod statusline;
 pub mod store;
 

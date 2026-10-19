@@ -513,6 +513,7 @@ pub fn run() {
 			commands::terminal::app_quit_confirmed,
 			commands::webview::webview_crash_notice,
 			commands::usage::get_usage,
+			commands::usage::session_usage,
 		])
 		.run(tauri::generate_context!())
 		.expect("error while running factorai");
