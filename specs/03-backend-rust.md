@@ -1695,7 +1695,7 @@ binary that spawns sessions perfectly well, which is the same class of mistake a
   `sync_profiles` rewrites stored profile names and default flags (and drops
   deleted profiles) at the top of every poller tick, notifying only on change.
 - **The poller** is one named thread on a 60 s tick (each step wrapped in
-  `catch_unwind`, a panic logged): status-line sink files,
+  `catch_unwind`, a panic logged in debug builds; release builds abort on panic): status-line sink files,
   Codex rollouts, `codex app-server` every 5 minutes (15 s timeout, process tree
   killed through `child_guard`), and the opt-in Claude endpoint at most every
   5 minutes per profile.
