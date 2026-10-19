@@ -17,9 +17,10 @@ const BAR_X: f32 = 18.0;
 const BAR_W: f32 = 52.0;
 const BAR_H: f32 = 6.0;
 const PCT_X: f32 = 76.0;
-const WEEK_X: f32 = 104.0;
+const WEEK_X: f32 = 106.0;
 const FONT_PX: f32 = 11.0;
 const STALE_ALPHA: f32 = 0.6;
+const MAX_SCALE: f32 = 4.0;
 
 /// One line of the widget.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,10 +64,10 @@ pub fn load_system_font() -> Option<Font> {
 
 /// Draw the rows into a transparent `150x36` (logical) pixmap.
 pub fn render(rows: &[WidgetRow], font: &Font, scale: f32, light_taskbar: bool) -> Pixmap {
-	let scale = scale.max(0.5);
+	let scale = if scale.is_finite() { scale.clamp(0.5, MAX_SCALE) } else { 1.0 };
 	let w = (WIDTH * scale).round().max(1.0) as u32;
 	let h = (ROW_H * ROWS as f32 * scale).round().max(1.0) as u32;
-	// Both dimensions are clamped to at least 1, so allocation cannot be refused.
+	// Scale is clamped to 0.5..=4, so the size is non-zero and small.
 	let mut pm = Pixmap::new(w, h).expect("non-zero pixmap size");
 	let text: [u8; 3] = if light_taskbar { [0, 0, 0] } else { [255, 255, 255] };
 
@@ -112,9 +113,18 @@ pub fn render(rows: &[WidgetRow], font: &Font, scale: f32, light_taskbar: bool) 
 	pm
 }
 
+/// NaN reads as 0; everything else clamps to 0..=100.
+fn sane(p: f64) -> f64 {
+	if p.is_nan() {
+		0.0
+	} else {
+		p.clamp(0.0, 100.0)
+	}
+}
+
 fn pct_label(v: Option<f64>, prefix: &str) -> String {
 	match v {
-		Some(p) => format!("{prefix}{}%", p.clamp(0.0, 100.0).round() as u32),
+		Some(p) => format!("{prefix}{}%", sane(p).round() as u32),
 		None => format!("{prefix}--"),
 	}
 }
@@ -132,12 +142,11 @@ fn draw_bar(
 	let bw = (BAR_W * scale).round();
 	let bh = (BAR_H * scale).round().max(1.0);
 	let y = top + ((row_h - bh) / 2.0).round();
-	fill_rect(pm, x, y, bw, bh, rgba(text, 0.25 * alpha));
-	let Some(p) = pct else { return };
-	let fw = (bw * (p.clamp(0.0, 100.0) as f32) / 100.0).round();
-	if fw < 1.0 {
-		return;
-	}
+	let p = pct.map(sane);
+	let fw = p.map_or(0.0, |p| (bw * p as f32 / 100.0).round());
+	// The track is drawn only where the fill is not, so the fill keeps its exact alpha.
+	fill_rect(pm, x + fw, y, bw - fw, bh, rgba(text, 0.25 * alpha));
+	let Some(p) = p else { return };
 	let color = if p >= CRITICAL {
 		rgba([0xE5, 0x48, 0x4D], alpha)
 	} else if p >= WARN {
@@ -268,6 +277,77 @@ mod tests {
 		// The critical row is row 0 here: bar x 18..70, 6px tall centred in 18px.
 		let px = pm.pixel(30, 9).unwrap();
 		assert_eq!((px.red(), px.green(), px.blue(), px.alpha()), (0xE5, 0x48, 0x4D, 255));
+	}
+
+	/// Pixel in the middle of the first row's bar, at `fraction` of its width.
+	fn bar_px(pct: f64, stale: bool, light: bool) -> [u8; 4] {
+		let row = WidgetRow { letter: 'C', five_hour: Some(pct), weekly: None, stale };
+		let pm = render(&[row], &font(), 1.0, light);
+		let p = pm.pixel(19, 9).unwrap();
+		[p.red(), p.green(), p.blue(), p.alpha()]
+	}
+
+	fn near(a: [u8; 4], b: [u8; 4]) -> bool {
+		a.iter().zip(b).all(|(x, y)| (*x as i32 - y as i32).abs() <= 1)
+	}
+
+	#[test]
+	fn warn_bar_is_amber() {
+		assert_eq!(bar_px(75.0, false, false), [0xE8, 0xA3, 0x3D, 255]);
+	}
+
+	#[test]
+	fn stale_critical_bar_is_premultiplied_at_60_percent() {
+		let want =
+			[(0xE5 as f32 * 0.6) as u8, (0x48 as f32 * 0.6) as u8, (0x4D as f32 * 0.6) as u8, 153];
+		assert!(near(bar_px(95.0, true, false), want), "{:?}", bar_px(95.0, true, false));
+	}
+
+	#[test]
+	fn neutral_fill_is_exactly_70_percent_text_colour() {
+		// White at 70% alpha, premultiplied: 255 * 0.7 = 178.5.
+		assert!(near(bar_px(50.0, false, false), [179, 179, 179, 179]));
+		// Black at 70% alpha: colour 0, alpha 179.
+		assert!(near(bar_px(50.0, false, true), [0, 0, 0, 179]));
+	}
+
+	#[test]
+	fn threshold_boundaries() {
+		let neutral = [179, 179, 179, 179];
+		assert!(near(bar_px(69.9, false, false), neutral));
+		assert_eq!(bar_px(70.0, false, false), [0xE8, 0xA3, 0x3D, 255]);
+		assert_eq!(bar_px(89.9, false, false), [0xE8, 0xA3, 0x3D, 255]);
+		assert_eq!(bar_px(90.0, false, false), [0xE5, 0x48, 0x4D, 255]);
+	}
+
+	#[test]
+	fn more_than_two_rows_are_truncated() {
+		let mut rows = sample();
+		rows.push(WidgetRow {
+			letter: 'Z',
+			five_hour: Some(95.0),
+			weekly: Some(95.0),
+			stale: false,
+		});
+		let a = render(&rows, &font(), 1.0, false);
+		let b = render(&rows[..2], &font(), 1.0, false);
+		assert_eq!((a.width(), a.height()), (150, 36));
+		assert_eq!(a.data(), b.data());
+	}
+
+	#[test]
+	fn out_of_range_and_nan_inputs_clamp_without_panicking() {
+		for v in [f64::NAN, -5.0, 150.0, f64::INFINITY] {
+			let row = WidgetRow { letter: 'C', five_hour: Some(v), weekly: Some(v), stale: false };
+			let pm = render(&[row], &font(), 1.0, false);
+			assert_eq!(pm.width(), 150);
+		}
+		assert_eq!(bar_px(150.0, false, false), [0xE5, 0x48, 0x4D, 255]);
+		// -5 and NaN fill nothing: the pixel is the track (25% alpha).
+		assert!(near(bar_px(-5.0, false, false), [64, 64, 64, 64]));
+		assert!(near(bar_px(f64::NAN, false, false), [64, 64, 64, 64]));
+		let huge = render(&sample(), &font(), 1000.0, false);
+		assert_eq!(huge.width(), 600);
 	}
 
 	#[test]
