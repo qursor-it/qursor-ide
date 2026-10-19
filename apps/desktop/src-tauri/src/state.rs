@@ -48,4 +48,7 @@ pub struct AppState {
 	pub intelligence: crate::services::intelligence::IntelligenceService,
 	/// The latest rate-limit windows per profile, fed by the usage sources.
 	pub usage: Arc<crate::services::usage::store::UsageStore>,
+	/// The usage widget in the Windows taskbar (ADR-0084). Held so the setting
+	/// can start and stop it and the quit path can take it down.
+	pub taskbar_widget: Arc<crate::platform::taskbar_widget::TaskbarWidget>,
 }

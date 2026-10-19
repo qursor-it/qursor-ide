@@ -1,10 +1,11 @@
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::agents;
 use crate::commands::off_main;
 use crate::error::AppError;
 use crate::error::AppResult;
 use crate::models::SettingKey;
+use crate::platform::taskbar_widget;
 use crate::services::agent_cli::{self, ClaudeCliStatus};
 use crate::services::{profiles, settings};
 use crate::state::AppState;
@@ -18,8 +19,11 @@ pub fn get_setting(state: State<'_, AppState>, key: SettingKey) -> AppResult<Opt
 /// Write one setting. `null` deletes the row, which is how the Claude section
 /// clears an override and goes back to auto-detection — an empty string would
 /// be a *set* value that happens to be empty, and would break the probe.
+///
+/// The taskbar widget follows its setting live (ADR-0084).
 #[tauri::command]
 pub fn set_setting(
+	app: AppHandle,
 	state: State<'_, AppState>,
 	key: SettingKey,
 	value: Option<String>,
@@ -29,6 +33,11 @@ pub fn set_setting(
 	// "off" means no process and not merely no new ones (F33).
 	if key == SettingKey::ProjectIntelligence && value.as_deref() != Some("on") {
 		state.intelligence.cancel_all();
+	}
+	if key == SettingKey::UsageTaskbarWidget {
+		state.taskbar_widget.set_enabled(&app, taskbar_widget::enabled(value.as_deref()), || {
+			state.usage.snapshot(crate::services::usage::now_ms())
+		});
 	}
 	Ok(())
 }

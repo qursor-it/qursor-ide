@@ -338,10 +338,19 @@ pub fn run() {
 				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
 			{
 				let handle = app.handle().clone();
-				usage.set_on_change(Arc::new(move |list| {
+				usage.add_on_change(Arc::new(move |list| {
 					let _ = handle.emit("usage:changed", list);
 				}));
 			}
+			// The taskbar widget (ADR-0084) hears the same changes. `update` only
+			// posts to the widget thread, so a hung Explorer cannot hold a source.
+			let taskbar_widget = Arc::new(platform::taskbar_widget::TaskbarWidget::default());
+			{
+				let widget = taskbar_widget.clone();
+				usage.add_on_change(Arc::new(move |list| widget.update(list)));
+			}
+			let widget_setting =
+				db.with(|c| services::settings::get(c, models::SettingKey::UsageTaskbarWidget));
 
 			let usage_db = db.clone();
 			let usage_poll_store = usage.clone();
@@ -359,8 +368,15 @@ pub fn run() {
 				webview_health,
 				attention,
 				intelligence,
-				usage,
+				usage: usage.clone(),
+				taskbar_widget: taskbar_widget.clone(),
 			});
+			// On unless the setting says `off`; a no-op off Windows.
+			taskbar_widget.set_enabled(
+				app.handle(),
+				platform::taskbar_widget::enabled(widget_setting.ok().flatten().as_deref()),
+				|| usage.snapshot(services::usage::now_ms()),
+			);
 
 			services::usage::poller::spawn(
 				app.handle().clone(),
@@ -438,6 +454,10 @@ pub fn run() {
 						// returns: `kill_all`'s 500ms SIGTERM grace has to finish
 						// before the process goes or the grace period is a no-op.
 						state.terminals.kill_all();
+					}
+					// The close goes ahead: the widget goes with it.
+					if working == 0 {
+						state.taskbar_widget.stop();
 					}
 				}
 			}
