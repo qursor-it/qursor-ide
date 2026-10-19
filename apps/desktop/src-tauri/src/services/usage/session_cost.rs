@@ -51,8 +51,10 @@ type Entry = (Option<String>, [u64; 4]);
 /// a response, each carrying the same `message.id` and usage, so a response is
 /// counted once (the last line seen for its id).
 pub fn claude(path: &Path) -> SessionUsage {
-	let mut by_id: HashMap<String, Entry> = HashMap::new();
-	let mut anonymous: Vec<Entry> = Vec::new();
+	// Insertion order is kept (`order`) so `model` is the last line's, not a
+	// hash order's.
+	let mut by_id: HashMap<String, usize> = HashMap::new();
+	let mut entries: Vec<Entry> = Vec::new();
 	for_each_line(path, |line| {
 		if !contains(line, b"\"assistant\"") || !contains(line, b"\"usage\"") {
 			return;
@@ -73,26 +75,33 @@ pub fn claude(path: &Path) -> SessionUsage {
 			],
 		);
 		match message.get("id").and_then(Value::as_str) {
-			Some(id) => {
-				by_id.insert(id.to_owned(), entry);
-			}
-			None => anonymous.push(entry),
+			Some(id) => match by_id.get(id) {
+				Some(&i) => entries[i] = entry,
+				None => {
+					by_id.insert(id.to_owned(), entries.len());
+					entries.push(entry);
+				}
+			},
+			None => entries.push(entry),
 		}
 	});
 
 	let mut out = SessionUsage::default();
 	let mut total_cost = 0.0;
 	let mut unknown = false;
-	for (model, [input, output, read, write]) in by_id.into_values().chain(anonymous) {
+	for (model, [input, output, read, write]) in entries {
 		out.input_tokens += input;
 		out.output_tokens += output;
 		out.cache_read_tokens += read;
 		out.cache_write_tokens += write;
 		match model.as_deref().and_then(price_for) {
 			Some(price) => total_cost += cost(price, input, output, read, write),
+			// Synthetic and zero-usage lines (API errors, interrupts) cost nothing.
+			None if model.as_deref() == Some("<synthetic>")
+				|| input + output + read + write == 0 => {}
 			None => unknown = true,
 		}
-		if model.is_some() {
+		if model.is_some() && model.as_deref() != Some("<synthetic>") {
 			out.model = model;
 		}
 	}
@@ -187,6 +196,31 @@ mod tests {
 		let u = claude(&path);
 		assert_eq!((u.input_tokens, u.output_tokens, u.total_tokens), (7, 3, 10));
 		assert_eq!(u.cost_usd, None);
+	}
+
+	#[test]
+	fn synthetic_zero_usage_lines_do_not_poison_the_cost() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("s.jsonl");
+		let lines = [
+			r#"{"type":"assistant","message":{"id":"a","model":"claude-opus-4-8","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+			r#"{"type":"assistant","message":{"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+			r#"{"type":"assistant","message":{"id":"b","model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":1,"output_tokens":1}}}"#,
+			r#"{"type":"assistant","message":{"model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+		];
+		std::fs::write(
+			&path,
+			lines.join(
+				"
+",
+			),
+		)
+		.unwrap();
+		let u = claude(&path);
+		assert!(u.cost_usd.is_some());
+		// The last real model, deterministically.
+		assert_eq!(u.model.as_deref(), Some("claude-sonnet-4-5-20250929"));
+		assert_eq!(claude(&path).model, u.model);
 	}
 
 	#[test]
