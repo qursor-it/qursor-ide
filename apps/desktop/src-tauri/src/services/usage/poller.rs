@@ -33,7 +33,7 @@ fn tick(store: &UsageStore, db: &Db) {
 
 /// Codex limits from each Codex profile's newest rollout.
 fn codex_log_step(store: &UsageStore, profiles: &[crate::models::Profile]) {
-	for p in profiles.iter().filter(|p| p.agent == CODEX) {
+	for p in profiles.iter().filter(|p| p.agent == CODEX && !p.config_dir.trim().is_empty()) {
 		if let Some(reading) = codex_log::latest_reading(Path::new(&p.config_dir)) {
 			store.record(CODEX, p, reading);
 		}

@@ -2,7 +2,7 @@
 //! (`payload.rate_limits`). Reading the newest one costs no quota.
 
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -14,12 +14,21 @@ use crate::models::{UsageReading, UsageSource, UsageWindow};
 
 /// How many of the most recently written rollouts are searched.
 const RECENT_ROLLOUTS: usize = 20;
+/// Rollout names embed their start time, so the newest files are among the
+/// last names; only these are stat-ed (a margin over `RECENT_ROLLOUTS`, since a
+/// resumed old session can be written to later than a newer-named one).
+const CANDIDATES: usize = 40;
+/// First tail read per rollout; widened x4 until a reading is found.
+const TAIL: u64 = 256 * 1024;
 
 /// The newest `token_count` with non-null `rate_limits` across the most
 /// recently modified rollouts.
 pub fn latest_reading(codex_dir: &Path) -> Option<UsageReading> {
-	let mut files: Vec<(SystemTime, PathBuf)> = rollouts(codex_dir)
+	let all = rollouts(codex_dir);
+	let skip = all.len().saturating_sub(CANDIDATES);
+	let mut files: Vec<(SystemTime, PathBuf)> = all
 		.into_iter()
+		.skip(skip)
 		.filter_map(|p| Some((std::fs::metadata(&p).ok()?.modified().ok()?, p)))
 		.collect();
 	files.sort_by_key(|f| std::cmp::Reverse(f.0));
@@ -30,33 +39,51 @@ pub fn latest_reading(codex_dir: &Path) -> Option<UsageReading> {
 		.max_by_key(|r| r.observed_at)
 }
 
-/// The last `token_count` in one rollout that carries rate limits.
+/// The last `token_count` in one rollout that carries rate limits. Reads the
+/// tail of the file, widening only when the tail holds none.
 fn last_reading(path: &Path) -> Option<UsageReading> {
-	let mut found = None;
-	for text in BufReader::new(File::open(path).ok()?).lines().map_while(Result::ok) {
-		// Cheap pre-filter: most lines are not token counts.
-		if !text.contains("token_count") {
-			continue;
+	let mut file = File::open(path).ok()?;
+	let len = file.metadata().ok()?.len();
+	let mut window = TAIL;
+	loop {
+		let start = len.saturating_sub(window);
+		file.seek(SeekFrom::Start(start)).ok()?;
+		let mut buf = Vec::new();
+		(&mut file).take(len - start).read_to_end(&mut buf).ok()?;
+		let mut lines = buf.split(|b| *b == b'\n');
+		// A tail read begins mid-line; that fragment is not a line.
+		if start > 0 {
+			lines.next();
 		}
-		let Ok(line) = serde_json::from_str::<Line>(&text) else { continue };
-		if line.kind != "event_msg"
-			|| line.payload.get("type").and_then(Value::as_str) != Some("token_count")
-		{
-			continue;
+		if let Some(r) = lines.rev().find_map(reading_of_line) {
+			return Some(r);
 		}
-		let observed_at = line
-			.timestamp
-			.as_deref()
-			.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-			.map(|t| t.timestamp_millis())
-			.unwrap_or_else(now_ms);
-		if let Some(r) =
-			line.payload.get("rate_limits").and_then(|v| parse_rate_limits(v, observed_at))
-		{
-			found = Some(r);
+		if start == 0 {
+			return None;
 		}
+		window = window.saturating_mul(4);
 	}
-	found
+}
+
+/// The reading in one raw rollout line, if it is a `token_count` with limits.
+fn reading_of_line(bytes: &[u8]) -> Option<UsageReading> {
+	// Cheap pre-filter: most lines are not token counts.
+	if !bytes.windows(b"token_count".len()).any(|w| w == b"token_count") {
+		return None;
+	}
+	let line: Line = serde_json::from_slice(bytes).ok()?;
+	if line.kind != "event_msg"
+		|| line.payload.get("type").and_then(Value::as_str) != Some("token_count")
+	{
+		return None;
+	}
+	let observed_at = line
+		.timestamp
+		.as_deref()
+		.and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+		.map(|t| t.timestamp_millis())
+		.unwrap_or_else(now_ms);
+	parse_rate_limits(line.payload.get("rate_limits")?, observed_at)
 }
 
 /// A `rate_limits` object (`primary` / `secondary`, each with `used_percent`,
@@ -160,6 +187,46 @@ mod tests {
 		)
 		.unwrap();
 		assert_eq!(latest_reading(home.path()), None);
+	}
+
+	#[test]
+	fn invalid_utf8_line_does_not_hide_later_readings() {
+		let home = tempfile::tempdir().unwrap();
+		let day = home.path().join("sessions/2026/09/22");
+		std::fs::create_dir_all(&day).unwrap();
+		let mut bytes = vec![0xff, 0xfe, b'\n'];
+		bytes.extend_from_slice(b"{\"timestamp\":\"2026-09-22T14:11:39.137Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":9.0,\"window_minutes\":300,\"resets_at\":1790000000}}}}
+");
+		std::fs::write(
+			day.join("rollout-2026-09-22T16-11-31-01a0c975-21fa-7e51-ae6f-cb1045c10d51.jsonl"),
+			bytes,
+		)
+		.unwrap();
+		let r = latest_reading(home.path()).unwrap();
+		assert_eq!(r.five_hour.unwrap().used_percent, 9.0);
+	}
+
+	#[test]
+	fn reading_before_a_large_tail_is_still_found() {
+		let home = tempfile::tempdir().unwrap();
+		let day = home.path().join("sessions/2026/09/22");
+		std::fs::create_dir_all(&day).unwrap();
+		let mut text = String::from("{\"timestamp\":\"2026-09-22T14:11:39.137Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":3.0,\"window_minutes\":300,\"resets_at\":1790000000}}}}
+");
+		for _ in 0..4 {
+			text.push_str(&format!(
+				"{{\"type\":\"response_item\",\"payload\":\"{}\"}}
+",
+				"x".repeat(200_000)
+			));
+		}
+		std::fs::write(
+			day.join("rollout-2026-09-22T16-11-31-01a0c975-21fa-7e51-ae6f-cb1045c10d51.jsonl"),
+			text,
+		)
+		.unwrap();
+		let r = latest_reading(home.path()).unwrap();
+		assert_eq!(r.five_hour.unwrap().used_percent, 3.0);
 	}
 
 	#[test]
