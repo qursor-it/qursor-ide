@@ -57,6 +57,7 @@ use crate::services::ide::scope;
 use crate::services::ide::server::IdeServer;
 use crate::services::ide::ui_state::UiState;
 use crate::services::osc_title::TitleScanner;
+use crate::services::usage::statusline;
 
 pub type TerminalId = String;
 
@@ -769,6 +770,9 @@ pub struct TerminalManager {
 	/// `None` leaves the tools advertised but answering that they are
 	/// unavailable — see [`RoutineStore`].
 	routine_store: Option<RoutineStore>,
+	/// Where a Claude session's status-line helper drops its rate limits.
+	/// `None` — every test that does not wire it — adds no `--settings`.
+	usage_sink_dir: Option<PathBuf>,
 	on_worktree: WorktreeCb,
 	/// What the renderer has on screen, for the bridge's answers (F20).
 	ui: Arc<UiState>,
@@ -817,6 +821,7 @@ impl TerminalManager {
 			profile_dir: None,
 			worktree_store: None,
 			routine_store: None,
+			usage_sink_dir: None,
 			on_worktree: Arc::new(move |e| {
 				let _ = app_worktree.emit("session:worktree", e);
 			}),
@@ -844,6 +849,7 @@ impl TerminalManager {
 			profile_dir: None,
 			worktree_store: None,
 			routine_store: None,
+			usage_sink_dir: None,
 			on_worktree: Arc::new(|_| {}),
 			ui: Arc::new(UiState::default()),
 			on_ide_open: Arc::new(|_| {}),
@@ -916,6 +922,14 @@ impl TerminalManager {
 	/// Wired to the `routines` table in `lib.rs`.
 	pub fn with_routine_store(mut self, store: RoutineStore) -> Self {
 		self.routine_store = Some(store);
+		self
+	}
+
+	/// Where a Claude session's status line forwards its rate limits
+	/// (`services::usage::statusline`). Wired to `<data_dir>/usage/statusline`
+	/// in `lib.rs`.
+	pub fn with_usage_sink_dir(mut self, dir: PathBuf) -> Self {
+		self.usage_sink_dir = Some(dir);
 		self
 	}
 
@@ -1556,6 +1570,16 @@ impl TerminalManager {
 		if let Some(tools) = tools {
 			v.push("--mcp-config".into());
 			v.push(tools.mcp_config_arg());
+		}
+		// **Claude's limits ride on the status line** (usage monitor): ours runs
+		// the factorai binary as a helper that forwards `rate_limits` and then
+		// runs the user's own `statusLine`, whose other fields are kept here.
+		if let Some(sink) = &self.usage_sink_dir {
+			if let Ok(exe) = std::env::current_exe() {
+				let user = statusline::user_statusline(claude_dir, cwd_path);
+				v.push("--settings".into());
+				v.push(statusline::settings_arg(&exe, sink, user.as_ref().map(|u| &u.settings)));
+			}
 		}
 		v.push(session_flag(claude_dir, cwd_path, session_id).into());
 		v.push(session_id.to_string());
@@ -3608,6 +3632,46 @@ mod tests {
 		// **Merging, never replacing.** `--strict-mcp-config` would drop every
 		// MCP server the user configured for themselves.
 		assert!(!argv.iter().any(|a| a == "--strict-mcp-config"), "{argv:?}");
+	}
+
+	#[test]
+	fn claude_argv_carries_the_usage_statusline_when_a_sink_is_set() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _data, _exit) = make_manager();
+		let mut mgr = mgr.with_usage_sink_dir(tmp.path().join("sink"));
+		mgr.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+
+		let argv = mgr
+			.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		let at = argv.iter().position(|a| a == "--settings").expect("--settings is passed");
+		let session_at = argv.iter().position(|a| a == &o.session_id).expect("session id");
+		assert!(at < session_at, "{argv:?}");
+		let settings: serde_json::Value = serde_json::from_str(&argv[at + 1]).expect("valid json");
+		let command = settings["statusLine"]["command"].as_str().expect("a command");
+		assert!(command.contains("--usage-statusline"), "{command}");
+		assert_eq!(settings["statusLine"]["type"], "command");
+	}
+
+	#[test]
+	fn no_settings_flag_without_a_sink_or_for_codex() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mut plain, _data, _exit) = make_manager();
+		plain.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+		let argv = plain
+			.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		assert!(!argv.iter().any(|a| a == "--settings"), "{argv:?}");
+
+		let (mgr, _data, _exit) = make_manager();
+		let mut sunk = mgr.with_usage_sink_dir(tmp.path().join("sink"));
+		sunk.set_binary(PathBuf::from("/bin/echo"));
+		let argv = sunk
+			.argv_for(codex_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		assert!(!argv.iter().any(|a| a == "--settings"), "{argv:?}");
 	}
 
 	#[test]
