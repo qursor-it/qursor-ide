@@ -86,6 +86,21 @@ fn reading_of_line(bytes: &[u8]) -> Option<UsageReading> {
 	parse_rate_limits(line.payload.get("rate_limits")?, observed_at)
 }
 
+/// Files a window under 5-hour or weekly by its length; other lengths are
+/// dropped. The first window of each kind wins.
+pub(super) fn place_by_length(
+	minutes: i64,
+	window: UsageWindow,
+	five_hour: &mut Option<UsageWindow>,
+	weekly: &mut Option<UsageWindow>,
+) {
+	if minutes <= 360 {
+		five_hour.get_or_insert(window);
+	} else if minutes >= 1440 {
+		weekly.get_or_insert(window);
+	}
+}
+
 /// A `rate_limits` object (`primary` / `secondary`, each with `used_percent`,
 /// `window_minutes`, `resets_at` in Unix seconds). Windows are classified by
 /// their length, not their slot: Codex puts the weekly window in `primary`
@@ -101,11 +116,7 @@ pub fn parse_rate_limits(v: &Value, observed_at: i64) -> Option<UsageReading> {
 			used_percent,
 			resets_at: w.get("resets_at").and_then(Value::as_i64).map(|s| s * 1000),
 		};
-		if minutes <= 360 {
-			five_hour = five_hour.or(Some(window));
-		} else if minutes >= 1440 {
-			weekly = weekly.or(Some(window));
-		}
+		place_by_length(minutes, window, &mut five_hour, &mut weekly);
 	}
 	if five_hour.is_none() && weekly.is_none() {
 		return None;
