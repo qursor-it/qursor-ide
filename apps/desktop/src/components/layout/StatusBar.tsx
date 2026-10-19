@@ -56,7 +56,7 @@ function StatusBarRow() {
 			<PopoverTrigger
 				data-testid="status-bar"
 				title="Plan limits and session usage"
-				className="@container flex h-6 w-full min-w-0 shrink-0 items-center gap-4 overflow-hidden border-border border-t bg-card px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+				className="flex h-6 w-full min-w-0 shrink-0 items-center gap-4 overflow-hidden border-border border-t bg-card px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
 			>
 				{rows.map((row) => (
 					<ProviderGroup
@@ -145,9 +145,7 @@ function WindowCell({
 					<span className={`tabular-nums ${inkOf(window.usedPercent)}`}>
 						{Math.round(window.usedPercent)}%
 					</span>
-					{/* The reset clocks go before anything else is cut: the session text
-						    on the right truncates first, then these drop out below @xl. */}
-					{reset && <span className="hidden tabular-nums @xl:inline">· {reset}</span>}
+					{reset && <span className="tabular-nums">· {reset}</span>}
 				</>
 			) : (
 				<span>—</span>
