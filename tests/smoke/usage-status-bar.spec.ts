@@ -38,7 +38,7 @@ test.describe('usage status bar', () => {
 		await expect(popover.getByText('This session')).toBeVisible();
 	});
 
-	test('@smoke usage status bar does not overflow at the minimum window width', async ({
+	test('@smoke usage status bar truncates the session text instead of overflowing', async ({
 		page,
 	}) => {
 		await page.setViewportSize({ width: 1100, height: 700 });
@@ -46,10 +46,22 @@ test.describe('usage status bar', () => {
 		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
 
 		const bar = page.getByTestId('status-bar');
-		await expect(bar).toBeVisible();
-		await expect(page.getByTestId('usage-group-claude')).toContainText('62%');
-		const fits = await bar.evaluate((el) => el.scrollWidth <= el.clientWidth);
-		expect(fits).toBe(true);
+		const session = page.getByTestId('status-bar-session');
+		await expect(session).toBeVisible();
+		// At the minimum window width the content fits as it is.
+		expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+		// Squeeze the bar to just past the two provider groups, so the session
+		// text on the right has to give way. Without `min-w-0 overflow-hidden` the
+		// bar's scrollWidth would exceed its clientWidth here.
+		await bar.evaluate((el) => {
+			const groups = [...el.querySelectorAll('[data-testid^="usage-group-"]')];
+			const last = groups[groups.length - 1].getBoundingClientRect();
+			el.style.width = `${Math.ceil(last.right - el.getBoundingClientRect().left) + 12 + 40}px`;
+		});
+		expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+		expect(await session.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+		await expect(page.getByTestId('usage-group-codex')).toContainText('92%');
 	});
 
 	test('@smoke usage status bar is absent when turned off', async ({ page }) => {
