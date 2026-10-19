@@ -17,7 +17,8 @@ type OnChange = Arc<dyn Fn(Vec<ProviderUsage>) + Send + Sync>;
 pub struct UsageStore {
 	path: PathBuf,
 	entries: Mutex<HashMap<(String, String), ProviderUsage>>,
-	on_change: Mutex<Option<OnChange>>,
+	/// Everyone told about a change: the renderer's event and the taskbar widget.
+	on_change: Mutex<Vec<OnChange>>,
 	/// Serialises `persist`: two source threads share one temp file.
 	persist_lock: Mutex<()>,
 }
@@ -35,13 +36,13 @@ impl UsageStore {
 		Self {
 			path,
 			entries: Mutex::new(entries),
-			on_change: Mutex::new(None),
+			on_change: Mutex::new(Vec::new()),
 			persist_lock: Mutex::new(()),
 		}
 	}
 
-	pub fn set_on_change(&self, f: OnChange) {
-		*self.on_change.lock() = Some(f);
+	pub fn add_on_change(&self, f: OnChange) {
+		self.on_change.lock().push(f);
 	}
 
 	/// Merge one reading in. Returns whether anything changed.
@@ -76,9 +77,10 @@ impl UsageStore {
 		};
 		self.persist();
 		// Cloned out so the callback runs with no lock held.
-		let cb = self.on_change.lock().clone();
-		if let Some(cb) = cb {
-			cb(apply_resets(list, now_ms()));
+		let subscribers = self.on_change.lock().clone();
+		let list = apply_resets(list, now_ms());
+		for cb in subscribers {
+			cb(list.clone());
 		}
 		true
 	}
@@ -119,7 +121,9 @@ fn reset_if_expired(w: &mut Option<UsageWindow>, now_ms: i64) {
 	}
 }
 
-fn apply_resets(mut list: Vec<ProviderUsage>, now_ms: i64) -> Vec<ProviderUsage> {
+/// A window whose reset time has passed reads as reset. Public so the taskbar
+/// widget, which keeps a list between changes, can age it on its own tick.
+pub fn apply_resets(mut list: Vec<ProviderUsage>, now_ms: i64) -> Vec<ProviderUsage> {
 	for u in &mut list {
 		reset_if_expired(&mut u.five_hour, now_ms);
 		reset_if_expired(&mut u.weekly, now_ms);
@@ -243,7 +247,7 @@ mod tests {
 		let (_d, _p, s) = store();
 		let n = Arc::new(AtomicUsize::new(0));
 		let n2 = n.clone();
-		s.set_on_change(Arc::new(move |_| {
+		s.add_on_change(Arc::new(move |_| {
 			n2.fetch_add(1, Ordering::SeqCst);
 		}));
 		let r = reading(Some(win(62.0, None)), None, 100);
@@ -252,6 +256,22 @@ mod tests {
 		s.record("claude", &profile(), r);
 		assert_eq!(n.load(Ordering::SeqCst), 1);
 		s.record("claude", &profile(), reading(Some(win(63.0, None)), None, 200));
+		assert_eq!(n.load(Ordering::SeqCst), 2);
+	}
+
+	/// The renderer and the taskbar widget both listen.
+	#[test]
+	fn every_subscriber_hears_a_change() {
+		let (_d, _p, s) = store();
+		let n = Arc::new(AtomicUsize::new(0));
+		for _ in 0..2 {
+			let n = n.clone();
+			s.add_on_change(Arc::new(move |list| {
+				assert_eq!(list.len(), 1);
+				n.fetch_add(1, Ordering::SeqCst);
+			}));
+		}
+		s.record("claude", &profile(), reading(Some(win(62.0, None)), None, 100));
 		assert_eq!(n.load(Ordering::SeqCst), 2);
 	}
 }

@@ -147,14 +147,44 @@ fn draw_bar(
 	// The track is drawn only where the fill is not, so the fill keeps its exact alpha.
 	fill_rect(pm, x + fw, y, bw - fw, bh, rgba(text, 0.25 * alpha));
 	let Some(p) = p else { return };
-	let color = if p >= CRITICAL {
-		rgba([0xE5, 0x48, 0x4D], alpha)
-	} else if p >= WARN {
-		rgba([0xE8, 0xA3, 0x3D], alpha)
-	} else {
-		rgba(text, 0.7 * alpha)
+	let color = match band_rgb(p) {
+		Some(c) => rgba(c, alpha),
+		None => rgba(text, 0.7 * alpha),
 	};
 	fill_rect(pm, x, y, fw, bh, color);
+}
+
+/// Amber or red past the thresholds; `None` is the neutral band.
+fn band_rgb(p: f64) -> Option<[u8; 3]> {
+	if p >= CRITICAL {
+		Some([0xE5, 0x48, 0x4D])
+	} else if p >= WARN {
+		Some([0xE8, 0xA3, 0x3D])
+	} else {
+		None
+	}
+}
+
+/// The tray fallback's square icon: the percentage (no `%`, it would not fit)
+/// in its band colour, the taskbar's text colour when neutral, shrunk until it
+/// fits with a pixel to spare on each side.
+pub fn render_icon(pct: Option<f64>, font: &Font, size: u32, light_taskbar: bool) -> Pixmap {
+	let size = size.clamp(1, 256);
+	let mut pm = Pixmap::new(size, size).expect("non-zero pixmap size");
+	let s = size as f32;
+	let label = pct.map_or_else(|| "--".to_string(), |p| (sane(p).round() as u32).to_string());
+	let text = if light_taskbar { [0, 0, 0] } else { [255, 255, 255] };
+	let color = pct.map(sane).and_then(band_rgb).unwrap_or(text);
+	let width = |px: f32| label.chars().map(|c| font.metrics(c, px).advance_width).sum::<f32>();
+	let mut px = s * 0.75;
+	while px > 4.0 && width(px) > s - 3.0 {
+		px -= 0.5;
+	}
+	let x = ((s - width(px)) / 2.0).round();
+	// Digits are about 0.7 em tall in Segoe UI and Liberation Sans.
+	let baseline = ((s + px * 0.7) / 2.0).round();
+	draw_text(&mut pm, font, px, &label, x, baseline, color, 1.0);
+	pm
 }
 
 fn rgba(c: [u8; 3], a: f32) -> Color {
@@ -355,6 +385,33 @@ mod tests {
 		let pm = render(&sample(), &font(), 1.0, false);
 		let ink = (76..100).any(|x| (0..18).any(|y| pm.pixel(x, y).unwrap().alpha() > 0));
 		assert!(ink);
+	}
+
+	fn max_ink(pm: &Pixmap) -> [u8; 4] {
+		let p = pm.pixels().iter().max_by_key(|p| p.alpha()).unwrap();
+		[p.red(), p.green(), p.blue(), p.alpha()]
+	}
+
+	#[test]
+	fn icon_is_square_with_the_number_in_its_band_colour() {
+		for pct in [Some(5.0), Some(62.0), Some(100.0), None] {
+			let pm = render_icon(pct, &font(), 32, false);
+			assert_eq!((pm.width(), pm.height()), (32, 32));
+			assert!(pm.pixels().iter().any(|p| p.alpha() > 0), "{pct:?} drew nothing");
+		}
+		assert_eq!(max_ink(&render_icon(Some(95.0), &font(), 32, false)), [0xE5, 0x48, 0x4D, 255]);
+		assert_eq!(max_ink(&render_icon(Some(75.0), &font(), 32, false)), [0xE8, 0xA3, 0x3D, 255]);
+		assert_eq!(max_ink(&render_icon(Some(10.0), &font(), 32, true)), [0, 0, 0, 255]);
+	}
+
+	#[test]
+	fn icon_text_stays_inside_the_square() {
+		// Three digits are shrunk to fit: the outer columns stay empty.
+		let pm = render_icon(Some(100.0), &font(), 32, false);
+		for y in 0..32 {
+			assert_eq!(pm.pixel(0, y).unwrap().alpha(), 0);
+			assert_eq!(pm.pixel(31, y).unwrap().alpha(), 0);
+		}
 	}
 
 	#[test]

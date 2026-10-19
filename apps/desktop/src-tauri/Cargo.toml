@@ -96,7 +96,11 @@ webkit2gtk = "2.0.2"
 [target.'cfg(windows)'.dependencies]
 dunce = "1"
 trash = { version = "5.2.6", default-features = false, features = ["coinit_multithreaded"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Environment"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_Accessibility", "Win32_UI_HiDpi"] }
+# The usage widget's fallback when it cannot embed in the taskbar (ADR-0084): a
+# Cargo feature of Tauri itself, not a plugin, and Windows only so Linux builds
+# do not take on the appindicator dependency for an icon they never show.
+tauri = { version = "2", features = ["tray-icon"] }
 
 [dev-dependencies]
 # Only the tests write preview PNGs.
