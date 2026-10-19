@@ -97,7 +97,8 @@ pub fn parse_usage_response(v: &Value, observed_at: i64) -> UsageReading {
 }
 
 /// Per-profile pacing: 5 minutes between requests; a 429 waits at least
-/// `Retry-After`, doubling on consecutive 429s up to an hour; a 2xx resets.
+/// `Retry-After`, doubling on consecutive 429s up to an hour; a redirect (never
+/// followed, see `fetch`) backs off the same way; a 2xx resets.
 #[derive(Default)]
 pub struct Backoff {
 	/// profile id → (next request not before ms, current 429 interval s)
@@ -116,7 +117,7 @@ impl Backoff {
 		status: u16,
 		retry_after_s: Option<u64>,
 	) {
-		let (wait_s, interval) = if status == 429 {
+		let (wait_s, interval) = if status == 429 || (300..400).contains(&status) {
 			let prev = self.state.get(profile_id).map(|(_, i)| *i).filter(|i| *i > 0);
 			let interval = prev.map_or(BASE_INTERVAL_S, |i| (i * 2).min(MAX_INTERVAL_S));
 			(retry_after_s.unwrap_or(0).max(interval).min(MAX_INTERVAL_S), interval)
@@ -137,8 +138,18 @@ pub struct Fetched {
 }
 
 /// One blocking request. Nothing here logs or returns the token.
+///
+/// Redirects are never followed, so the bearer token cannot leave
+/// `api.anthropic.com`: the endpoint does not redirect, and a 3xx comes back
+/// as a failure status.
 pub fn fetch(token: &str) -> Fetched {
-	let result = ureq::get(URL)
+	fetch_from(URL, token)
+}
+
+fn fetch_from(url: &str, token: &str) -> Fetched {
+	let agent = ureq::AgentBuilder::new().redirects(0).build();
+	let result = agent
+		.get(url)
 		.set("Authorization", &format!("Bearer {token}"))
 		.set("anthropic-beta", "oauth-2025-04-20")
 		.timeout(TIMEOUT)
@@ -267,6 +278,48 @@ mod tests {
 		assert_eq!((b.state["p"].0 - now) / 1000, 3600);
 		// Profiles are independent.
 		assert!(b.due("other", 0));
+	}
+
+	/// A redirect is not followed — the token never reaches the second host —
+	/// and backs off like a 429.
+	#[test]
+	fn a_redirect_is_not_followed_and_backs_off() {
+		use std::io::{BufRead, BufReader, Write};
+		use std::net::TcpListener;
+
+		let elsewhere = TcpListener::bind("127.0.0.1:0").unwrap();
+		elsewhere.set_nonblocking(true).unwrap();
+		let target = format!("http://{}/steal", elsewhere.local_addr().unwrap());
+		let server = TcpListener::bind("127.0.0.1:0").unwrap();
+		let url = format!("http://{}/api/oauth/usage", server.local_addr().unwrap());
+		let answer = std::thread::spawn(move || {
+			let (mut conn, _) = server.accept().unwrap();
+			let mut reader = BufReader::new(conn.try_clone().unwrap());
+			let mut line = String::new();
+			while reader.read_line(&mut line).is_ok_and(|n| n > 2) {
+				line.clear();
+			}
+			write!(
+				conn,
+				"HTTP/1.1 302 Found
+Location: {target}
+Content-Length: 0
+
+"
+			)
+			.unwrap();
+		});
+
+		let fetched = fetch_from(&url, "secret-token");
+		answer.join().unwrap();
+
+		assert_eq!(fetched.status, 302);
+		assert!(fetched.body.is_none());
+		assert!(elsewhere.accept().is_err(), "the redirect target was contacted");
+		let mut b = Backoff::default();
+		b.on_result("p", 0, 302, None);
+		b.on_result("p", 300_000, 302, None);
+		assert_eq!((b.state["p"].0 - 300_000) / 1000, 600);
 	}
 
 	#[test]
