@@ -1405,3 +1405,21 @@ pub struct UsageReading {
 	/// Epoch milliseconds the source observed these values.
 	pub observed_at: i64,
 }
+
+/// Tokens and estimated list-price cost of one session. Mirrors
+/// `@factorai/types` `SessionUsage`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUsage {
+	pub session_id: String,
+	pub model: Option<String>,
+	pub input_tokens: u64,
+	pub output_tokens: u64,
+	pub cache_read_tokens: u64,
+	pub cache_write_tokens: u64,
+	/// Already counted inside `output_tokens` (Codex reports it separately).
+	pub reasoning_tokens: u64,
+	pub total_tokens: u64,
+	/// `None` when a model in the session has no known price.
+	pub cost_usd: Option<f64>,
+}

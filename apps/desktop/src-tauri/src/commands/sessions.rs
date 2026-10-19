@@ -478,7 +478,7 @@ pub async fn delete_session(
 /// Where a session's transcript lives, addressed by the store directory we
 /// recorded for it. A sub-agent's is nested under its parent's id:
 /// `<store dir>/<parent>/subagents/agent-*.jsonl`.
-fn transcript_path(
+pub(crate) fn transcript_path(
 	claude_dir: &std::path::Path,
 	key: &str,
 	subagent_of: Option<&str>,

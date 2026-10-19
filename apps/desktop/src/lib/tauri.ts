@@ -51,6 +51,7 @@ import type {
 	SearchHit,
 	SessionPage,
 	SessionSummary,
+	SessionUsage,
 	SessionWorktreeEvent,
 	SessionsChangedEvent,
 	SettingKey,
@@ -359,6 +360,8 @@ export const cmd = {
 		invoke<ClaudeCliStatus>('validate_agent_binary', { agent, path }),
 	/** The latest known rate-limit windows per profile. */
 	getUsage: () => invoke<ProviderUsage[]>('get_usage'),
+	sessionUsage: (sessionId: string) =>
+		invoke<SessionUsage | null>('session_usage', { sessionId }),
 	/** Every Claude profile, default first (F25). */
 	listProfiles: () => invoke<Profile[]>('list_profiles'),
 	/** Create one, making its config directory if it is missing and leaving it

@@ -1141,6 +1141,21 @@ export interface ProviderUsage {
 	updatedAt: number;
 }
 
+/** Tokens and estimated list-price cost of one session. `costUsd` is null when
+ *  a model in the session has no known price. */
+export interface SessionUsage {
+	sessionId: string;
+	model: string | null;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+	/** Already counted inside `outputTokens`. */
+	reasoningTokens: number;
+	totalTokens: number;
+	costUsd: number | null;
+}
+
 // ── Pull requests, read through the user's `gh` (F31, ADR-0077) ────────────
 
 /** Why the pull-request panel can or cannot show anything. `gh_status` never
