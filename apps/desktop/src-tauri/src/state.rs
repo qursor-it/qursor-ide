@@ -42,4 +42,6 @@ pub struct AppState {
 	pub webview_health: Arc<Health>,
 	/// Desktop notifications for a session that wants you (F32, ADR-0081).
 	pub attention: Arc<crate::services::attention::AttentionNotifier>,
+	/// The latest rate-limit windows per profile, fed by the usage sources.
+	pub usage: Arc<crate::services::usage::store::UsageStore>,
 }

@@ -1331,3 +1331,57 @@ pub struct PrCheckoutPlan {
 	/// The pull request's head commit now.
 	pub head_oid: String,
 }
+
+/// One rate-limit window. Mirrors `@factorai/types` `UsageWindow`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageWindow {
+	pub used_percent: f64,
+	/// Epoch milliseconds; `None` when unknown.
+	pub resets_at: Option<i64>,
+}
+
+/// A per-model limit. Mirrors `@factorai/types` `ModelLimit`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelLimit {
+	pub label: String,
+	pub window: UsageWindow,
+}
+
+/// Where a usage reading came from. Mirrors `@factorai/types` `UsageSource`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageSource {
+	StatusLine,
+	CodexLog,
+	CodexAppServer,
+	ClaudeApi,
+}
+
+/// The latest known limits for one profile. Mirrors `@factorai/types`
+/// `ProviderUsage`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUsage {
+	pub agent: String,
+	pub profile_id: String,
+	pub profile_name: String,
+	pub is_default: bool,
+	pub five_hour: Option<UsageWindow>,
+	pub weekly: Option<UsageWindow>,
+	pub per_model: Vec<ModelLimit>,
+	pub source: UsageSource,
+	pub updated_at: i64,
+}
+
+/// What a usage source hands the store: limits with no profile attached.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageReading {
+	pub five_hour: Option<UsageWindow>,
+	pub weekly: Option<UsageWindow>,
+	pub per_model: Vec<ModelLimit>,
+	pub source: UsageSource,
+	/// Epoch milliseconds the source observed these values.
+	pub observed_at: i64,
+}

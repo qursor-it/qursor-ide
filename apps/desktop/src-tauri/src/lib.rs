@@ -298,6 +298,17 @@ pub fn run() {
 				});
 			}
 
+			// The usage snapshot persists beside the database and tells the
+			// renderer whenever a source changes it.
+			let usage =
+				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
+			{
+				let handle = app.handle().clone();
+				usage.set_on_change(Arc::new(move |list| {
+					let _ = handle.emit("usage:changed", list);
+				}));
+			}
+
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),
@@ -311,6 +322,7 @@ pub fn run() {
 				media: Arc::new(std::sync::OnceLock::new()),
 				webview_health,
 				attention,
+				usage,
 			});
 
 			spawn_initial_scan(indexer.clone());
@@ -467,6 +479,7 @@ pub fn run() {
 			commands::terminal::shell_name,
 			commands::terminal::app_quit_confirmed,
 			commands::webview::webview_crash_notice,
+			commands::usage::get_usage,
 		])
 		.run(tauri::generate_context!())
 		.expect("error while running factorai");
