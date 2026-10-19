@@ -3,6 +3,7 @@ import { agentName } from '@lib/agents';
 import { formatRelative, formatReset } from '@lib/format';
 import {
 	formatCost,
+	formatPercent,
 	formatTokens,
 	isStale,
 	levelOf,
@@ -149,7 +150,7 @@ function WindowRow({
 				<>
 					<UsageMeter percent={window.usedPercent} className="w-16" />
 					<span className={`text-right tabular-nums ${inkOf(window.usedPercent)}`}>
-						{Math.round(window.usedPercent)}%
+						{formatPercent(window.usedPercent)}
 					</span>
 					<span className="truncate text-muted-foreground">
 						{window.resetsAt !== null ? `resets ${formatReset(window.resetsAt, clock24)}` : ''}

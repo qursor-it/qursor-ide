@@ -7,7 +7,15 @@ import { agentName } from '@lib/agents';
 import { formatClock } from '@lib/cron';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
-import { type BarRow, barRows, formatCost, formatTokens, isStale, windowAt } from '@lib/usage';
+import {
+	type BarRow,
+	barRows,
+	formatCost,
+	formatPercent,
+	formatTokens,
+	isStale,
+	windowAt,
+} from '@lib/usage';
 import { useAttentionStore } from '@store/attentionStore';
 import { usePrefsStore } from '@store/prefsStore';
 import { useUsageStore } from '@store/usageStore';
@@ -143,7 +151,7 @@ function WindowCell({
 				<>
 					<UsageMeter percent={window.usedPercent} testId={testId} />
 					<span className={`tabular-nums ${inkOf(window.usedPercent)}`}>
-						{Math.round(window.usedPercent)}%
+						{formatPercent(window.usedPercent)}
 					</span>
 					{reset && <span className="tabular-nums">· {reset}</span>}
 				</>

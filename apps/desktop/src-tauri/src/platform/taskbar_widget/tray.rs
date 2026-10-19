@@ -11,7 +11,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::AppHandle;
 use tracing::warn;
 
-use super::render::sane;
+use super::render::{sane, whole_pct};
 use super::{focus_main, render_icon, WidgetRow};
 
 const ID: &str = "usage-widget";
@@ -93,8 +93,8 @@ pub(super) fn tooltip(rows: &[WidgetRow]) -> String {
 	if rows.is_empty() {
 		return "No usage data yet".into();
 	}
-	let pct = |p: Option<f64>| match p.map(sane) {
-		Some(p) => format!("{}%", p.round() as u32),
+	let pct = |p: Option<f64>| match p {
+		Some(p) => format!("{}%", whole_pct(p)),
 		None => "--".into(),
 	};
 	rows.iter()
@@ -126,6 +126,8 @@ mod tests {
 		assert_eq!(tooltip(&[]), "No usage data yet");
 		// NaN reads as 0, as the widget's own `sane` has it.
 		assert_eq!(tooltip(&[row('C', Some(f64::NAN), None)]), "Claude 5h 0% · wk --");
+		// Floored, like the widget: 89.9 is still amber, so it reads 89%.
+		assert_eq!(tooltip(&[row('C', Some(89.9), Some(69.99))]), "Claude 5h 89% · wk 69%");
 	}
 
 	#[test]

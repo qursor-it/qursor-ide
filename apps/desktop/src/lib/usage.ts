@@ -17,6 +17,13 @@ export function levelOf(percent: number): UsageLevel {
 	return 'ok';
 }
 
+/** `89%`. Floored, so the number never reaches a threshold before the colour
+ *  does: 89.9 is amber and reads 89%, not a red-looking 90%. */
+export function formatPercent(percent: number): string {
+	const p = Number.isNaN(percent) ? 0 : Math.min(100, Math.max(0, percent));
+	return `${Math.floor(p)}%`;
+}
+
 const STALE_AFTER_MS = 15 * 60_000;
 
 /** A reading older than 15 minutes is shown muted, never as fresh. */

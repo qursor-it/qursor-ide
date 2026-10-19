@@ -36,16 +36,21 @@ fn tokens(v: &Value, key: &str) -> u64 {
 	v.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
-fn cost(price: Price, input: u64, output: u64, read: u64, write: u64) -> f64 {
+/// `write_1h` is the part of `write` that went to the 1-hour cache, billed at
+/// twice the input price rather than the 5-minute `cache_write` price.
+fn cost(price: Price, input: u64, output: u64, read: u64, write: u64, write_1h: u64) -> f64 {
+	let write_1h = write_1h.min(write);
 	(input as f64 * price.input
 		+ output as f64 * price.output
 		+ read as f64 * price.cache_read
-		+ write as f64 * price.cache_write)
+		+ (write - write_1h) as f64 * price.cache_write
+		+ write_1h as f64 * price.input * 2.0)
 		/ 1_000_000.0
 }
 
-/// One response's model and `[input, output, cache read, cache write]` tokens.
-type Entry = (Option<String>, [u64; 4]);
+/// One response's model and `[input, output, cache read, cache write, of which
+/// 1-hour cache write]` tokens.
+type Entry = (Option<String>, [u64; 5]);
 
 /// A Claude transcript. Claude writes one `assistant` line per content block of
 /// a response, each carrying the same `message.id` and usage, so a response is
@@ -72,6 +77,8 @@ pub fn claude(path: &Path) -> SessionUsage {
 				tokens(usage, "output_tokens"),
 				tokens(usage, "cache_read_input_tokens"),
 				tokens(usage, "cache_creation_input_tokens"),
+				// The breakdown, when the transcript has one.
+				usage.get("cache_creation").map_or(0, |c| tokens(c, "ephemeral_1h_input_tokens")),
 			],
 		);
 		match message.get("id").and_then(Value::as_str) {
@@ -89,13 +96,13 @@ pub fn claude(path: &Path) -> SessionUsage {
 	let mut out = SessionUsage::default();
 	let mut total_cost = 0.0;
 	let mut unknown = false;
-	for (model, [input, output, read, write]) in entries {
+	for (model, [input, output, read, write, write_1h]) in entries {
 		out.input_tokens += input;
 		out.output_tokens += output;
 		out.cache_read_tokens += read;
 		out.cache_write_tokens += write;
 		match model.as_deref().and_then(price_for) {
-			Some(price) => total_cost += cost(price, input, output, read, write),
+			Some(price) => total_cost += cost(price, input, output, read, write, write_1h),
 			// Synthetic and zero-usage lines (API errors, interrupts) cost nothing.
 			None if model.as_deref() == Some("<synthetic>")
 				|| input + output + read + write == 0 => {}
@@ -149,7 +156,7 @@ pub fn codex(path: &Path) -> SessionUsage {
 		.model
 		.as_deref()
 		.and_then(price_for)
-		.map(|p| cost(p, out.input_tokens, out.output_tokens, out.cache_read_tokens, 0));
+		.map(|p| cost(p, out.input_tokens, out.output_tokens, out.cache_read_tokens, 0, 0));
 	out
 }
 
@@ -181,6 +188,22 @@ mod tests {
 		// opus 4.8:   4*5  + 100*25 + 2000*0.50
 		let expected = (30.0 + 3000.0 + 1500.0 + 3750.0 + 20.0 + 2500.0 + 1000.0) / 1_000_000.0;
 		assert!((u.cost_usd.unwrap() - expected).abs() < 1e-12);
+	}
+
+	#[test]
+	fn one_hour_cache_writes_are_priced_at_twice_input() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("s.jsonl");
+		std::fs::write(
+			&path,
+			r#"{"type":"assistant","message":{"id":"m1","model":"claude-sonnet-4-5","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":400,"ephemeral_1h_input_tokens":600}}}}"#,
+		)
+		.unwrap();
+		let u = claude(&path);
+		assert_eq!(u.cache_write_tokens, 1000);
+		// sonnet 4.5: 400 * 3.75 (5-minute write) + 600 * 3 * 2 (1-hour write).
+		let expected = (400.0 * 3.75 + 600.0 * 6.0) / 1_000_000.0;
+		assert!((u.cost_usd.unwrap() - expected).abs() < 1e-12, "{:?}", u.cost_usd);
 	}
 
 	#[test]

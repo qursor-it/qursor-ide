@@ -86,6 +86,13 @@ fn set_kill_on_close(job: &std::os::windows::io::OwnedHandle, on: bool) -> bool 
 /// A job object with kill-on-close holding `child`; descendants spawned after
 /// the assignment join it. `None` if the job could not be set up (the direct
 /// child is still killed).
+///
+/// The child runs from `spawn()` until the assignment, so anything it starts
+/// in that window escapes the job. Every caller's direct child is a shell
+/// (PowerShell, cmd, Git Bash) or `codex`, none of which can start a process
+/// that fast, so the window is theoretical; closing it would take
+/// `CREATE_SUSPENDED`, and `std::process::Child` does not hand back the
+/// thread handle needed to resume it.
 #[cfg(windows)]
 fn kill_on_close_job(child: &Child) -> Option<std::os::windows::io::OwnedHandle> {
 	use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};

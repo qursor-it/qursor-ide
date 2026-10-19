@@ -122,9 +122,15 @@ pub(crate) fn sane(p: f64) -> f64 {
 	}
 }
 
+/// The whole percent shown for `p`: floored, so a label never reaches a band
+/// threshold (70, 90) before the colour does — 89.9 reads "89%" in amber.
+pub(crate) fn whole_pct(p: f64) -> u32 {
+	sane(p).floor() as u32
+}
+
 fn pct_label(v: Option<f64>, prefix: &str) -> String {
 	match v {
-		Some(p) => format!("{prefix}{}%", sane(p).round() as u32),
+		Some(p) => format!("{prefix}{}%", whole_pct(p)),
 		None => format!("{prefix}--"),
 	}
 }
@@ -172,7 +178,7 @@ pub fn render_icon(pct: Option<f64>, font: &Font, size: u32, light_taskbar: bool
 	let size = size.clamp(1, 256);
 	let mut pm = Pixmap::new(size, size).expect("non-zero pixmap size");
 	let s = size as f32;
-	let label = pct.map_or_else(|| "--".to_string(), |p| (sane(p).round() as u32).to_string());
+	let label = pct.map_or_else(|| "--".to_string(), |p| whole_pct(p).to_string());
 	let text = if light_taskbar { [0, 0, 0] } else { [255, 255, 255] };
 	let color = pct.map(sane).and_then(band_rgb).unwrap_or(text);
 	let width = |px: f32| label.chars().map(|c| font.metrics(c, px).advance_width).sum::<f32>();
@@ -248,9 +254,20 @@ mod tests {
 	use crate::models::{UsageSource, UsageWindow};
 
 	fn font() -> Font {
-		let p =
-			concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fonts/LiberationSans-Regular.ttf");
+		let p = concat!(
+			env!("CARGO_MANIFEST_DIR"),
+			"/../../../tests/fixtures/fonts/LiberationSans-Regular.ttf"
+		);
 		Font::from_bytes(std::fs::read(p).unwrap(), FontSettings::default()).unwrap()
+	}
+
+	#[test]
+	fn labels_floor_so_they_agree_with_the_band() {
+		assert_eq!(pct_label(Some(89.9), ""), "89%");
+		assert_eq!(pct_label(Some(69.99), "w "), "w 69%");
+		assert_eq!(pct_label(Some(90.0), ""), "90%");
+		assert_eq!(pct_label(Some(150.0), ""), "100%");
+		assert_eq!(pct_label(None, "w "), "w --");
 	}
 
 	fn usage(agent: &str, id: &str, default: bool, five: f64, week: f64, at: i64) -> ProviderUsage {

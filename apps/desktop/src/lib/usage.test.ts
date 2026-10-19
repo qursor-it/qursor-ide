@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	barRows,
 	formatCost,
+	formatPercent,
 	formatTokens,
 	isStale,
 	levelOf,
@@ -24,6 +25,22 @@ function usage(over: Partial<ProviderUsage>): ProviderUsage {
 		...over,
 	};
 }
+
+describe('formatPercent', () => {
+	it('floors, so the label agrees with the colour at the thresholds', () => {
+		expect(formatPercent(89.9)).toBe('89%');
+		expect(levelOf(89.9)).toBe('warn');
+		expect(formatPercent(69.99)).toBe('69%');
+		expect(formatPercent(90)).toBe('90%');
+		expect(formatPercent(0)).toBe('0%');
+	});
+
+	it('clamps to 0..100 and reads NaN as 0', () => {
+		expect(formatPercent(150)).toBe('100%');
+		expect(formatPercent(-3)).toBe('0%');
+		expect(formatPercent(Number.NaN)).toBe('0%');
+	});
+});
 
 describe('levelOf', () => {
 	it('is neutral below 70, amber from 70, red from 90', () => {
