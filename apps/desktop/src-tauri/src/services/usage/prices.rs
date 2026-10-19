@@ -3,7 +3,8 @@
 //! USD per million tokens, standard (non-batch, non-fast) short-context rates.
 //! Sources, read on 2026-10-19:
 //! - Anthropic: https://docs.claude.com/en/docs/about-claude/pricing
-//!   (`cache_write` is the 5-minute write price; Haiku 5.5 is the up-to-100k
+//!   (`cache_write` is the 5-minute write price — a 1-hour write is twice the
+//!   input price, applied in `session_cost`; Haiku 5.5 is the up-to-100k
 //!   prompt tier).
 //! - OpenAI: https://platform.openai.com/docs/pricing (`cache_read` is the
 //!   "Cached input" column). The page lists no cache-write price for
