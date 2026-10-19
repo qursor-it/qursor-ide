@@ -45,6 +45,7 @@ fn main() {
 	let path = out.join("factorai.manifest");
 	std::fs::write(&path, MANIFEST).expect("write the app manifest");
 	println!("cargo:rerun-if-changed=build.rs");
+	// `rustc-link-arg` also reaches the cdylib; a manifest in a DLL is inert, so harmless.
 	println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
 	// No UAC section: the linker would otherwise add one tauri-build's lacks.
 	println!("cargo:rustc-link-arg=/MANIFESTUAC:NO");

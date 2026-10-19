@@ -36,7 +36,7 @@ use windows_sys::Win32::UI::HiDpi::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
 	CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowExW, FindWindowW,
 	GetClientRect, GetMessageW, GetParent, GetWindowLongPtrW, GetWindowRect,
-	GetWindowThreadProcessId, IsChild, IsWindowVisible, KillTimer, PeekMessageW,
+	GetWindowThreadProcessId, IsChild, IsWindowVisible, KillTimer, PeekMessageW, PostQuitMessage,
 	PostThreadMessageW, RegisterClassExW, RegisterWindowMessageW, SetParent, SetTimer,
 	SetWindowLongPtrW, SetWindowPos, TranslateMessage, UpdateLayeredWindow,
 	EVENT_OBJECT_LOCATIONCHANGE, GWL_EXSTYLE, GWL_STYLE, HWND_TOP, MA_NOACTIVATE, MSG,
@@ -55,7 +55,7 @@ use crate::services::usage::store::apply_resets;
 /// Theme re-read, stale/reset ageing, and re-embed after an Explorer restart.
 const TICK_TIMER: usize = 1;
 const TICK_MS: u32 = 60_000;
-/// Coalesces a burst of taskbar location changes into one reposition.
+/// Throttles taskbar location changes: one reposition per 50 ms at most.
 const REPOSITION_TIMER: usize = 2;
 const REPOSITION_MS: u32 = 50;
 /// The check that the widget really is under the taskbar and visible.
@@ -106,7 +106,9 @@ impl Shared {
 /// message queue, which happens before it touches Explorer.
 pub(super) fn spawn(host: Host, initial: Vec<ProviderUsage>) -> Option<(Sender<Msg>, Arc<Shared>)> {
 	let (tx, rx) = mpsc::channel();
-	let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+	// Rendezvous: the send completes only into a waiting `recv`, so a thread
+	// whose starter already gave up knows it and never embeds.
+	let (ready_tx, ready_rx) = mpsc::sync_channel(0);
 	let spawned = std::thread::Builder::new().name("taskbar-widget".into()).spawn(move || {
 		let mut msg = MSG::default();
 		// SAFETY: plain calls on this thread. The peek creates the message
@@ -117,7 +119,9 @@ pub(super) fn spawn(host: Host, initial: Vec<ProviderUsage>) -> Option<(Sender<M
 			GetCurrentThreadId()
 		};
 		let shared = Arc::new(Shared::new(thread_id));
-		let _ = ready_tx.send(shared.clone());
+		if ready_tx.send(shared.clone()).is_err() {
+			return;
+		}
 		run(host, rx, shared, initial);
 	});
 	if let Err(e) = spawned {
@@ -153,6 +157,9 @@ struct Widget {
 	drawn: Option<(Vec<WidgetRow>, u32, bool)>,
 	size: (i32, i32),
 	tray: Option<TrayFallback>,
+	/// The reposition timer is armed: a throttle, so a steady stream of
+	/// location events cannot keep pushing it back.
+	reposition_pending: bool,
 }
 
 thread_local! {
@@ -173,10 +180,9 @@ fn with_widget(f: impl FnOnce(&mut Widget)) {
 }
 
 fn run(host: Host, rx: Receiver<Msg>, shared: Arc<Shared>, initial: Vec<ProviderUsage>) {
-	let Some(listener) = create_listener() else {
-		warn!("taskbar widget: could not create its window");
-		return;
-	};
+	// Without the listener there are no timers and no `TaskbarCreated`, so no
+	// embedding; the tray, which is the contract, still works.
+	let listener = create_listener().unwrap_or(null_mut());
 	let mut w = Widget {
 		host,
 		rx,
@@ -192,15 +198,20 @@ fn run(host: Host, rx: Receiver<Msg>, shared: Arc<Shared>, initial: Vec<Provider
 		drawn: None,
 		size: (0, 0),
 		tray: None,
+		reposition_pending: false,
 	};
-	// SAFETY: our own window, on its own thread.
-	unsafe { SetTimer(listener, TICK_TIMER, TICK_MS, None) };
-	if w.font.is_none() {
+	if listener.is_null() {
+		w.fall_back("could not create the widget's window");
+	} else if w.font.is_none() {
 		w.fall_back("no system font");
 	} else if std::env::var_os(FORCE_TRAY_ENV).is_some() {
 		w.fall_back(&format!("{FORCE_TRAY_ENV} is set"));
 	} else if let Err(why) = w.embed() {
 		w.fall_back(why);
+	}
+	if !listener.is_null() {
+		// SAFETY: our own window, on its own thread.
+		unsafe { SetTimer(listener, TICK_TIMER, TICK_MS, None) };
 	}
 	WIDGET.with(|cell| *cell.borrow_mut() = Some(w));
 
@@ -335,6 +346,7 @@ impl Widget {
 		}
 		self.hook = null_mut();
 		self.surface = null_mut();
+		self.reposition_pending = false;
 		self.drawn = None;
 		self.shared.surface.store(0, Ordering::Release);
 	}
@@ -415,6 +427,12 @@ impl Widget {
 	fn on_timer(&mut self, id: usize) {
 		match id {
 			TICK_TIMER => {
+				// A wake-up lost to a race still lands within a minute.
+				if !self.drain() {
+					// SAFETY: ends this thread's message loop.
+					unsafe { PostQuitMessage(0) };
+					return;
+				}
 				self.light = light_theme();
 				// Explorer restarted and `TaskbarCreated` never reached us.
 				// SAFETY: a lookup by class name.
@@ -429,6 +447,7 @@ impl Widget {
 			REPOSITION_TIMER => {
 				// SAFETY: our own timer.
 				unsafe { KillTimer(self.listener, REPOSITION_TIMER) };
+				self.reposition_pending = false;
 				self.refresh();
 			}
 			VERIFY_TIMER => {
@@ -461,9 +480,11 @@ impl Widget {
 	fn teardown(&mut self) {
 		self.unembed();
 		// SAFETY: our own window and timer.
-		unsafe {
-			KillTimer(self.listener, TICK_TIMER);
-			DestroyWindow(self.listener);
+		if !self.listener.is_null() {
+			unsafe {
+				KillTimer(self.listener, TICK_TIMER);
+				DestroyWindow(self.listener);
+			}
 		}
 		// Dropping the fallback removes the tray icon.
 		self.tray = None;
@@ -543,7 +564,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 	unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
-/// A move of the taskbar or anything in it: reposition, coalesced.
+/// A move of the taskbar or anything in it: reposition at most every 50 ms.
 unsafe extern "system" fn on_location_change(
 	_hook: HWINEVENTHOOK,
 	_event: u32,
@@ -562,8 +583,10 @@ unsafe extern "system" fn on_location_change(
 		}
 		// SAFETY: window-tree queries and our own timer.
 		unsafe {
-			if hwnd == w.taskbar || IsChild(w.taskbar, hwnd) != 0 {
+			let ours = hwnd == w.taskbar || IsChild(w.taskbar, hwnd) != 0;
+			if ours && !w.reposition_pending {
 				SetTimer(w.listener, REPOSITION_TIMER, REPOSITION_MS, None);
+				w.reposition_pending = true;
 			}
 		}
 	});

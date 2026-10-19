@@ -3,7 +3,7 @@
 //! screen. Text baselines and bar rects are snapped to whole device pixels so
 //! the widget stays crisp at 100/125/150% scaling.
 
-use fontdue::{Font, FontSettings};
+use fontdue::Font;
 use tiny_skia::{Color, Paint, Pixmap, Rect, Transform};
 
 use crate::models::ProviderUsage;
@@ -54,7 +54,7 @@ pub fn load_system_font() -> Option<Font> {
 		let windir = std::env::var_os("WINDIR")?;
 		let path = std::path::Path::new(&windir).join("Fonts").join("segoeui.ttf");
 		let bytes = std::fs::read(path).ok()?;
-		Font::from_bytes(bytes, FontSettings::default()).ok()
+		Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
 	}
 	#[cfg(not(windows))]
 	{
@@ -114,7 +114,7 @@ pub fn render(rows: &[WidgetRow], font: &Font, scale: f32, light_taskbar: bool) 
 }
 
 /// NaN reads as 0; everything else clamps to 0..=100.
-fn sane(p: f64) -> f64 {
+pub(crate) fn sane(p: f64) -> f64 {
 	if p.is_nan() {
 		0.0
 	} else {
@@ -242,6 +242,8 @@ fn draw_text(
 
 #[cfg(test)]
 mod tests {
+	use fontdue::FontSettings;
+
 	use super::*;
 	use crate::models::{UsageSource, UsageWindow};
 

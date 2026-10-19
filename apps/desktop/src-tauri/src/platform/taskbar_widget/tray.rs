@@ -11,6 +11,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::AppHandle;
 use tracing::warn;
 
+use super::render::sane;
 use super::{focus_main, render_icon, WidgetRow};
 
 const ID: &str = "usage-widget";
@@ -82,16 +83,9 @@ impl Drop for TrayFallback {
 	}
 }
 
-fn sane(p: f64) -> Option<f64> {
-	(!p.is_nan()).then(|| p.clamp(0.0, 100.0))
-}
-
 /// The highest percentage on show, which is what the icon draws.
 pub(super) fn critical(rows: &[WidgetRow]) -> Option<f64> {
-	rows.iter()
-		.flat_map(|r| [r.five_hour, r.weekly])
-		.filter_map(|p| p.and_then(sane))
-		.max_by(f64::total_cmp)
+	rows.iter().flat_map(|r| [r.five_hour, r.weekly]).flatten().map(sane).max_by(f64::total_cmp)
 }
 
 /// `Claude 5h 62% · wk 31%`, one line per agent.
@@ -99,7 +93,7 @@ pub(super) fn tooltip(rows: &[WidgetRow]) -> String {
 	if rows.is_empty() {
 		return "No usage data yet".into();
 	}
-	let pct = |p: Option<f64>| match p.and_then(sane) {
+	let pct = |p: Option<f64>| match p.map(sane) {
 		Some(p) => format!("{}%", p.round() as u32),
 		None => "--".into(),
 	};
@@ -130,6 +124,8 @@ mod tests {
 	fn tooltip_marks_missing_numbers() {
 		assert_eq!(tooltip(&[row('X', None, Some(5.0))]), "Codex 5h -- · wk 5%");
 		assert_eq!(tooltip(&[]), "No usage data yet");
+		// NaN reads as 0, as the widget's own `sane` has it.
+		assert_eq!(tooltip(&[row('C', Some(f64::NAN), None)]), "Claude 5h 0% · wk --");
 	}
 
 	#[test]
