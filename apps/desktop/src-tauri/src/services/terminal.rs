@@ -1602,9 +1602,13 @@ impl TerminalManager {
 					cwd_path,
 					cfg!(windows).then(crate::services::shell_path::child_path),
 				);
+				// The profile's directory rides along, so the reading is filed
+				// under this profile even when the session itself was given no
+				// `CLAUDE_CONFIG_DIR` (the default profile) and resolves another.
 				v.push(statusline::settings_arg(
 					&exe,
 					sink,
+					claude_dir,
 					user.as_ref().map(|u| &u.settings),
 					shell,
 				));
@@ -3680,6 +3684,8 @@ mod tests {
 		let settings: serde_json::Value = serde_json::from_str(&argv[at + 1]).expect("valid json");
 		let command = settings["statusLine"]["command"].as_str().expect("a command");
 		assert!(command.contains("--usage-statusline"), "{command}");
+		// The profile's config directory is the helper's last argument.
+		assert!(command.ends_with(&format!("{NO_STORE}'")), "{command}");
 		assert_eq!(settings["statusLine"]["type"], "command");
 	}
 

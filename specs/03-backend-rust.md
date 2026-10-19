@@ -1639,9 +1639,14 @@ binary that spawns sessions perfectly well, which is the same class of mistake a
   persisted to `<data_dir>/usage.json` (temp file and rename, serialised). A
   reading older than the stored one is dropped; a missing window keeps the stored
   one. `snapshot(now)` shows a window whose reset time has passed as 0%.
-  `add_on_change` subscribers run after every change with no lock held: `lib.rs`
-  adds two, the `usage:changed` emit and `TaskbarWidget::update`.
-- **The poller** is one named thread on a 60 s tick: status-line sink files,
+  `add_on_change` subscribers run after every change, under the persist lock
+  (not the entries lock), so they hear snapshots in the order they were made;
+  they must only post or emit, never call back into the store. `lib.rs` adds
+  two, the `usage:changed` emit and `TaskbarWidget::update`.
+  `sync_profiles` rewrites stored profile names and default flags (and drops
+  deleted profiles) at the top of every poller tick, notifying only on change.
+- **The poller** is one named thread on a 60 s tick (each step wrapped in
+  `catch_unwind`, a panic logged): status-line sink files,
   Codex rollouts, `codex app-server` every 5 minutes (15 s timeout, process tree
   killed through `child_guard`), and the opt-in Claude endpoint at most every
   5 minutes per profile.

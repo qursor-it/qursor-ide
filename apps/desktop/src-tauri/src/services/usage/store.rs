@@ -19,7 +19,8 @@ pub struct UsageStore {
 	entries: Mutex<HashMap<(String, String), ProviderUsage>>,
 	/// Everyone told about a change: the renderer's event and the taskbar widget.
 	on_change: Mutex<Vec<OnChange>>,
-	/// Serialises `persist`: two source threads share one temp file.
+	/// Serialises writing and notifying: two source threads share one temp
+	/// file, and subscribers must hear changes in the order they were made.
 	persist_lock: Mutex<()>,
 }
 
@@ -48,7 +49,7 @@ impl UsageStore {
 	/// Merge one reading in. Returns whether anything changed.
 	pub fn record(&self, agent: &str, profile: &Profile, reading: UsageReading) -> bool {
 		let key = (agent.to_string(), profile.id.clone());
-		let list = {
+		{
 			let mut map = self.entries.lock();
 			let prev = map.get(&key);
 			if prev.is_some_and(|p| reading.observed_at < p.updated_at) {
@@ -73,16 +74,39 @@ impl UsageStore {
 				return false;
 			}
 			map.insert(key, merged);
-			sorted(map.values().cloned().collect())
-		};
-		self.persist();
-		// Cloned out so the callback runs with no lock held.
-		let subscribers = self.on_change.lock().clone();
-		let list = apply_resets(list, now_ms());
-		for cb in subscribers {
-			cb(list.clone());
 		}
+		self.persist_and_notify();
 		true
+	}
+
+	/// Bring the stored profile names and default flags in line with
+	/// `profiles`, and drop entries whose profile is gone, so a rename or a new
+	/// default shows at once rather than at that profile's next reading. An
+	/// empty list (a failed profile read) changes nothing. Returns whether
+	/// anything changed; subscribers hear only a change.
+	pub fn sync_profiles(&self, profiles: &[Profile]) -> bool {
+		if profiles.is_empty() {
+			return false;
+		}
+		let changed = {
+			let mut map = self.entries.lock();
+			let before = map.len();
+			map.retain(|(_, id), _| profiles.iter().any(|p| &p.id == id));
+			let mut changed = map.len() != before;
+			for u in map.values_mut() {
+				let Some(p) = profiles.iter().find(|p| p.id == u.profile_id) else { continue };
+				if u.profile_name != p.name || u.is_default != p.is_default {
+					u.profile_name = p.name.clone();
+					u.is_default = p.is_default;
+					changed = true;
+				}
+			}
+			changed
+		};
+		if changed {
+			self.persist_and_notify();
+		}
+		changed
 	}
 
 	/// Every entry, with a window whose reset time has passed shown as reset.
@@ -90,14 +114,25 @@ impl UsageStore {
 		apply_resets(sorted(self.entries.lock().values().cloned().collect()), now_ms)
 	}
 
-	/// Temp file then rename, so a crash mid-write leaves the old file whole.
-	/// The list is taken under the persist lock, so a slower writer can never
-	/// land an older snapshot over a newer one.
-	fn persist(&self) {
+	/// Write the store, then tell every subscriber. Both happen under the
+	/// persist lock with the list taken inside it, so a slower writer can never
+	/// land, or announce, an older snapshot after a newer one. The callbacks
+	/// only post or emit and never call back into the store.
+	fn persist_and_notify(&self) {
 		let _guard = self.persist_lock.lock();
 		let list = sorted(self.entries.lock().values().cloned().collect());
+		self.write(&list);
+		let subscribers = self.on_change.lock().clone();
+		let list = apply_resets(list, now_ms());
+		for cb in subscribers {
+			cb(list.clone());
+		}
+	}
+
+	/// Temp file then rename, so a crash mid-write leaves the old file whole.
+	fn write(&self, list: &[ProviderUsage]) {
 		let tmp = self.path.with_extension("json.tmp");
-		let result = serde_json::to_vec(&list)
+		let result = serde_json::to_vec(list)
 			.map_err(std::io::Error::other)
 			.and_then(|b| std::fs::write(&tmp, b))
 			.and_then(|_| std::fs::rename(&tmp, &self.path));
@@ -273,5 +308,95 @@ mod tests {
 		}
 		s.record("claude", &profile(), reading(Some(win(62.0, None)), None, 100));
 		assert_eq!(n.load(Ordering::SeqCst), 2);
+	}
+
+	/// Two writer threads: subscribers must never hear an older snapshot after
+	/// a newer one, or the bar would sit on stale numbers until the next change.
+	#[test]
+	fn subscribers_hear_snapshots_in_order() {
+		let (_d, _p, s) = store();
+		let s = Arc::new(s);
+		let heard: Arc<parking_lot::Mutex<Vec<Vec<ProviderUsage>>>> = Arc::default();
+		{
+			let heard = heard.clone();
+			s.add_on_change(Arc::new(move |list| heard.lock().push(list)));
+		}
+		let writers: Vec<_> = ["a", "b"]
+			.into_iter()
+			.map(|id| {
+				let s = s.clone();
+				std::thread::spawn(move || {
+					let p = Profile { id: id.into(), ..profile() };
+					for at in 1..=200 {
+						s.record("codex", &p, reading(Some(win(at as f64 / 4.0, None)), None, at));
+					}
+				})
+			})
+			.collect();
+		for w in writers {
+			w.join().unwrap();
+		}
+		let heard = heard.lock();
+		assert_eq!(heard.len(), 400);
+		let at = |list: &[ProviderUsage], id: &str| {
+			list.iter().find(|u| u.profile_id == id).map_or(0, |u| u.updated_at)
+		};
+		for pair in heard.windows(2) {
+			for id in ["a", "b"] {
+				assert!(
+					at(&pair[0], id) <= at(&pair[1], id),
+					"an older snapshot came after a newer one"
+				);
+			}
+		}
+		assert_eq!(heard.last().map(|l| (at(l, "a"), at(l, "b"))), Some((200, 200)));
+	}
+
+	fn named(id: &str, name: &str, is_default: bool) -> Profile {
+		Profile { id: id.into(), name: name.into(), is_default, ..profile() }
+	}
+
+	#[test]
+	fn sync_profiles_follows_renames_and_the_default() {
+		let (_d, path, s) = store();
+		let n = Arc::new(AtomicUsize::new(0));
+		let n2 = n.clone();
+		s.add_on_change(Arc::new(move |_| {
+			n2.fetch_add(1, Ordering::SeqCst);
+		}));
+		s.record("claude", &named("p1", "Main", true), reading(Some(win(1.0, None)), None, 1));
+		s.record("claude", &named("p2", "Work", false), reading(Some(win(2.0, None)), None, 1));
+		assert_eq!(n.load(Ordering::SeqCst), 2);
+
+		// Nothing differs: no emit.
+		assert!(!s.sync_profiles(&[named("p1", "Main", true), named("p2", "Work", false)]));
+		assert_eq!(n.load(Ordering::SeqCst), 2);
+
+		// Renamed, and the default moved.
+		assert!(s.sync_profiles(&[named("p1", "Home", false), named("p2", "Work", true)]));
+		assert_eq!(n.load(Ordering::SeqCst), 3);
+		let snap = s.snapshot(0);
+		let get = |id: &str| snap.iter().find(|u| u.profile_id == id).unwrap().clone();
+		assert_eq!((get("p1").profile_name.as_str(), get("p1").is_default), ("Home", false));
+		assert_eq!((get("p2").profile_name.as_str(), get("p2").is_default), ("Work", true));
+		// The readings themselves are untouched, and the change is persisted.
+		assert_eq!(get("p1").five_hour.unwrap().used_percent, 1.0);
+		assert_eq!(UsageStore::load(path).snapshot(0), snap);
+	}
+
+	#[test]
+	fn sync_profiles_drops_deleted_profiles_but_not_on_an_empty_list() {
+		let (_d, _p, s) = store();
+		s.record("claude", &named("p1", "Main", true), reading(Some(win(1.0, None)), None, 1));
+		s.record("claude", &named("p2", "Work", false), reading(Some(win(2.0, None)), None, 1));
+
+		// A failed profile read is an empty list: keep everything.
+		assert!(!s.sync_profiles(&[]));
+		assert_eq!(s.snapshot(0).len(), 2);
+
+		assert!(s.sync_profiles(&[named("p1", "Main", true)]));
+		let snap = s.snapshot(0);
+		assert_eq!(snap.len(), 1);
+		assert_eq!(snap[0].profile_id, "p1");
 	}
 }
