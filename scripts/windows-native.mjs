@@ -25,6 +25,10 @@ export function windowsConfigProblems(config, appConfig) {
 	if (updater?.pubkey !== '') {
 		problems.push('plugins.updater.pubkey must be empty');
 	}
+	if (bundle?.windows?.nsis?.installerHooks !== './windows/hooks.nsh') {
+		// The hook removes the pre-rename factorai install (ADR-0085).
+		problems.push('bundle.windows.nsis.installerHooks must be "./windows/hooks.nsh"');
+	}
 	if (config?.productName !== undefined && config.productName !== 'qursor-ide') {
 		problems.push('Windows productName override must be "qursor-ide"');
 	}
