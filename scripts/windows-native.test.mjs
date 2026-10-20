@@ -64,3 +64,11 @@ test('Windows native configuration fails closed if a non-NSIS target or updater 
 		'bundle.createUpdaterArtifacts must be false',
 	]);
 });
+
+test('Windows installer keeps the hook that removes the pre-rename factorai install', () => {
+	const config = structuredClone(windowsConfig);
+	delete config.bundle.windows;
+	assert.deepEqual(windowsConfigProblems(config, appConfig), [
+		'bundle.windows.nsis.installerHooks must be "./windows/hooks.nsh"',
+	]);
+});
