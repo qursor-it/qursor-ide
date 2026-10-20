@@ -7747,17 +7747,27 @@ time has passed reads 0%. Commands `get_usage`, `session_usage`; event
 ### Status bar
 
 `StatusBar` (`components/layout/`), 24 px, full width: per installed agent the
-default profile's 5h bar, percentage and reset time, and weekly bar and
-percentage; on the right the active session's tokens and `~$` cost. A click opens
+default profile's 5h bar, percentage and countdown to its reset, and weekly bar,
+percentage and countdown; on the right the active session's tokens and `~$` cost. A click opens
 `UsagePopover` with every profile, both windows with exact reset times,
 per-model limits, the source and "updated N min ago", and the session
 breakdown. Hidden by the renderer pref `showStatusBar` (`04-frontend.md`).
 
+A countdown is `<1m`, `45m`, `2h 14m` (minutes always shown under a day) or
+`3d 4h`, whole minutes floored from `resetsAt - now`, refreshed every minute.
+Hovering it gives the exact moment (`resets at 18:06` for the 5h window,
+`resets at Oct 24, 00:06` for the weekly one); the popover reads
+`resets Oct 24, 00:06 · in 3d 7h`. A window with no reset, or one already past,
+shows no countdown. The widget and the tray tooltip use the same format.
+
 ### Taskbar widget (Windows)
 
-Two rows, `C ▮▮▮▯ 62%  w 31%` and `X ▮▯▯▯ 18%  w 16%`, transparent, white or
-black text following `SystemUsesLightTheme` (re-read every 60 s), 8 px left of
+Two rows, `C ▮▮▮▯ 62% 2h 14m  w 31% 3d 4h` and
+`X ▮▯▯▯ 18% 45m  w 16% 6d 23h`, 244×36 logical px at 100%, transparent, white
+or black text following `SystemUsesLightTheme` (re-read every 60 s), 8 px left of
 the notification area on the primary taskbar, re-rendered at the taskbar's DPI.
+The countdowns are the same text colour at 70% of the row's alpha, and tick down
+on the widget's 60 s timer.
 A click brings factorai's window to the front. It exists only while factorai
 runs; it comes back by itself after Explorer restarts (`TaskbarCreated`).
 
@@ -7765,7 +7775,8 @@ When it cannot sit in the taskbar — no `Shell_TrayWnd`, `SetParent` or the
 first draw fails, no Segoe UI, or 2 s later it is not a visible child of the
 taskbar — it logs one warning and becomes a **notification-area icon** with the
 most critical percentage in its band colour and
-`Claude 5h 62% · wk 31%` / `Codex 5h 18% · wk 16%` in the tooltip.
+`Claude 5h 62% · resets in 2h 14m · wk 31% · resets in 3d 4h` (a window without
+a reset drops its `· resets in …`) / `Codex 5h 18% · wk 16%` in the tooltip.
 `FACTORAI_TASKBAR_WIDGET_FORCE_TRAY=1` forces the icon.
 
 ### Settings (Settings → Usage)
