@@ -16,7 +16,12 @@
 		"targets": [
 			"nsis"
 		],
-		"createUpdaterArtifacts": false
+		"createUpdaterArtifacts": false,
+		"windows": {
+			"nsis": {
+				"installerHooks": "./windows/hooks.nsh"
+			}
+		}
 	},
 	"plugins": {
 		"updater": {
