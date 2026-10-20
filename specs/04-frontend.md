@@ -21,8 +21,8 @@ apps/desktop/src/
 │   │   ├── Sidebar.tsx      # projects, search input, status dots, new-session +
 │   │   ├── PanelResizer.tsx # drag handle for the right panel
 │   │   ├── PanelEmpty.tsx   # the one line a panel tab shows instead of a list
-│   │   ├── StatusBar.tsx    # bottom edge: plan limits per agent, active session's tokens + cost; hideable (showStatusBar)
-│   │   └── UsagePopover.tsx # the status bar's detail: every profile, both windows, per-model, source, session breakdown
+│   │   ├── StatusBar.tsx    # bottom edge: plan limits and reset countdowns per agent, active session's tokens + cost; hideable (showStatusBar)
+│   │   └── UsagePopover.tsx # the status bar's detail: every profile, both windows with reset and countdown, per-model, source, session breakdown
 │   ├── sessions/
 │   │   ├── SessionList.tsx
 │   │   ├── SessionRow.tsx

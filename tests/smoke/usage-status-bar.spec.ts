@@ -22,6 +22,16 @@ test.describe('usage status bar', () => {
 		await expect(page.getByTestId('usage-group-claude')).toContainText('31%');
 		await expect(page.getByTestId('usage-group-codex')).toContainText('92%');
 
+		// Both windows of a provider count down to their reset. The fixture sets
+		// the resets relative to now (2h and 80h), so the figure is a regex:
+		// the clock has moved a little by the time it renders.
+		await expect(page.getByTestId('usage-reset-claude-5h')).toHaveText(/^· (1h \d+m|2h 0m)$/);
+		await expect(page.getByTestId('usage-reset-claude-wk')).toHaveText(/^· 3d [78]h$/);
+		await expect(page.getByTestId('usage-reset-codex-5h')).toHaveText(/^· (\d+m|1h 0m)$/);
+		await expect(page.getByTestId('usage-reset-codex-wk')).toHaveText(/^· (4d 23h|5d 0h)$/);
+		// The exact moment is the hover title.
+		await expect(page.getByTestId('usage-reset-claude-5h')).toHaveAttribute('title', /^resets at /);
+
 		// Neutral below 70, red from 90.
 		await expect(page.getByTestId('usage-fill-claude-5h')).toHaveClass(/bg-muted-foreground/);
 		await expect(page.getByTestId('usage-fill-codex-5h')).toHaveClass(/bg-destructive/);

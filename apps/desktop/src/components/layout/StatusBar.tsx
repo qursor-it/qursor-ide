@@ -5,12 +5,14 @@ import { useEffect, useState } from 'react';
 import { useInstalledAgents } from '@hooks/useInstalledAgents';
 import { agentName } from '@lib/agents';
 import { formatClock } from '@lib/cron';
+import { formatReset } from '@lib/format';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import {
 	type BarRow,
 	barRows,
 	formatCost,
+	formatCountdown,
 	formatPercent,
 	formatTokens,
 	isStale,
@@ -88,7 +90,7 @@ function StatusBarRow() {
 			<PopoverContent
 				side="top"
 				align="start"
-				className="max-h-(--radix-popover-content-available-height) w-96 overflow-y-auto"
+				className="max-h-(--radix-popover-content-available-height) w-[28rem] overflow-y-auto"
 			>
 				<UsagePopover
 					usage={usage}
@@ -126,9 +128,18 @@ function ProviderGroup({ agent, usage, clock24, now }: BarRow & { clock24: boole
 				label="5h"
 				window={fiveHour}
 				testId={`usage-fill-${agent}-5h`}
-				reset={fiveHour?.resetsAt != null ? resetClock(fiveHour.resetsAt, clock24) : null}
+				resetTestId={`usage-reset-${agent}-5h`}
+				now={now}
+				resetTitle={(ms) => resetClock(ms, clock24)}
 			/>
-			<WindowCell label="wk" window={weekly} testId={`usage-fill-${agent}-wk`} reset={null} />
+			<WindowCell
+				label="wk"
+				window={weekly}
+				testId={`usage-fill-${agent}-wk`}
+				resetTestId={`usage-reset-${agent}-wk`}
+				now={now}
+				resetTitle={(ms) => formatReset(ms, clock24)}
+			/>
 		</span>
 	);
 }
@@ -137,12 +148,17 @@ function WindowCell({
 	label,
 	window,
 	testId,
-	reset,
+	resetTestId,
+	now,
+	resetTitle,
 }: {
 	label: string;
 	window: UsageWindow | null;
 	testId: string;
-	reset: string | null;
+	resetTestId: string;
+	now: number;
+	/** The exact reset moment, in the words the window needs (clock or day). */
+	resetTitle: (resetsAt: number) => string;
 }) {
 	return (
 		<span className="ml-1 flex items-center gap-1.5">
@@ -153,7 +169,15 @@ function WindowCell({
 					<span className={`tabular-nums ${inkOf(window.usedPercent)}`}>
 						{formatPercent(window.usedPercent)}
 					</span>
-					{reset && <span className="tabular-nums">· {reset}</span>}
+					{window.resetsAt != null && (
+						<span
+							data-testid={resetTestId}
+							title={`resets at ${resetTitle(window.resetsAt)}`}
+							className="tabular-nums"
+						>
+							· {formatCountdown(window.resetsAt, now)}
+						</span>
+					)}
 				</>
 			) : (
 				<span>—</span>

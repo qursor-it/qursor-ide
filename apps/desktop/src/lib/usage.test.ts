@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	barRows,
 	formatCost,
+	formatCountdown,
 	formatPercent,
 	formatTokens,
 	isStale,
@@ -71,6 +72,36 @@ describe('windowAt', () => {
 			resetsAt: null,
 		});
 		expect(windowAt(null, 0)).toBeNull();
+	});
+});
+
+describe('formatCountdown', () => {
+	const now = 1_000_000_000_000;
+	const min = 60_000;
+	const at = (ms: number) => formatCountdown(now + ms, now);
+
+	it('reads under a minute as <1m', () => {
+		expect(at(0)).toBe('<1m');
+		expect(at(59_000)).toBe('<1m');
+	});
+	it('shows minutes under an hour', () => {
+		expect(at(min)).toBe('1m');
+		expect(at(45 * min)).toBe('45m');
+		expect(at(59 * min)).toBe('59m');
+	});
+	it('shows hours and always the minutes under a day', () => {
+		expect(at(60 * min)).toBe('1h 0m');
+		expect(at(3 * 60 * min)).toBe('3h 0m');
+		expect(at(134 * min)).toBe('2h 14m');
+		expect(at((23 * 60 + 59) * min)).toBe('23h 59m');
+	});
+	it('shows days and hours from 24h up', () => {
+		expect(at(24 * 60 * min)).toBe('1d 0h');
+		expect(at((3 * 24 + 4) * 60 * min)).toBe('3d 4h');
+		expect(at(((6 * 24 + 23) * 60 + 59) * min)).toBe('6d 23h');
+	});
+	it('clamps a past reset to <1m', () => {
+		expect(at(-5 * min)).toBe('<1m');
 	});
 });
 
