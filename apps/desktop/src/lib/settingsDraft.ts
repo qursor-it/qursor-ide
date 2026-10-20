@@ -34,6 +34,8 @@ export const SETTINGS_SECTIONS = [
 	'editor',
 	'confirmations',
 	'sessions',
+	// After Sessions: plan limits and the status bar, set once like the rest.
+	'usage',
 	'routines',
 	// Pull requests (F31) are daily use like routines, so before the set-once
 	// Advanced.
@@ -88,6 +90,11 @@ export interface SettingsValues extends Prefs {
 	/** Desktop notifications for a session that wants you (F32). SQLite for the
 	 *  same reason as the channel: Rust sends them and reads it there. */
 	desktopNotifications: boolean;
+	/** The usage monitor's three Rust-read switches. The endpoint is opt-in;
+	 *  the taskbar widget and the status-line forwarding are on by default. */
+	usageClaudeEndpoint: boolean;
+	usageTaskbarWidget: boolean;
+	usageStatusLine: boolean;
 }
 
 /** A stored channel as a channel: anything but `alpha` is stable, the rule
@@ -100,6 +107,27 @@ export function channelOf(value: string | null | undefined): UpdateChannel {
  *  that switches back leaves the table as it was before it ever switched. */
 export function channelSetting(channel: UpdateChannel): string | null {
 	return channel === 'alpha' ? 'alpha' : null;
+}
+
+/** An opt-out usage row as a switch: anything but `off` is on, like
+ *  `desktopNotificationsOf`. */
+export function usageOnByDefault(value: string | null | undefined): boolean {
+	return value !== 'off';
+}
+
+/** The row to write for an opt-out usage switch: on is the absence of one. */
+export function usageOffSetting(on: boolean): string | null {
+	return on ? null : 'off';
+}
+
+/** The opt-in Claude endpoint row as a switch: only `on` is on. */
+export function usageEndpointOf(value: string | null | undefined): boolean {
+	return value === 'on';
+}
+
+/** The row to write for the endpoint: off is the absence of one. */
+export function usageEndpointSetting(on: boolean): string | null {
+	return on ? 'on' : null;
 }
 
 /** **`profiles` holds no value in `SettingsValues`, deliberately.** It is the one
@@ -125,6 +153,10 @@ export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	updateChannel: 'advanced',
 	clock24: 'appearance',
 	theme: 'appearance',
+	showStatusBar: 'usage',
+	usageClaudeEndpoint: 'usage',
+	usageTaskbarWidget: 'usage',
+	usageStatusLine: 'usage',
 	terminalFont: 'terminal',
 	terminalFontSize: 'terminal',
 	terminalLineHeight: 'terminal',

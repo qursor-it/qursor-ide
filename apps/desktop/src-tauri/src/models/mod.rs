@@ -875,6 +875,15 @@ pub enum SettingKey {
 	/// window is in the background (F32, ADR-0081). Unset → on; `off` → off.
 	/// Rust reads it because Rust sends the notification.
 	DesktopNotifications,
+	/// Whether the usage monitor may ask Anthropic's (unofficial) usage endpoint
+	/// for a Claude profile's limits. `on` → on; unset → off (opt-in).
+	UsageClaudeEndpoint,
+	/// Whether the usage monitor draws its taskbar widget. Unset → on; `off` → off.
+	UsageTaskbarWidget,
+	/// Whether Claude sessions get factorai's `statusLine` injected, which hides
+	/// Claude Code's footer hints for users with no status line of their own.
+	/// Unset → on; `off` → off.
+	UsageStatusLine,
 }
 
 impl SettingKey {
@@ -893,6 +902,9 @@ impl SettingKey {
 			SettingKey::RoutinesMaxConcurrent => "routines.max_concurrent",
 			SettingKey::UpdateChannel => "updates.channel",
 			SettingKey::DesktopNotifications => "notifications.desktop",
+			SettingKey::UsageClaudeEndpoint => "usage.claude_endpoint",
+			SettingKey::UsageTaskbarWidget => "usage.taskbar_widget",
+			SettingKey::UsageStatusLine => "usage.statusline",
 		}
 	}
 }
@@ -1330,4 +1342,76 @@ pub struct PrCheckoutPlan {
 	pub head_owner: Option<String>,
 	/// The pull request's head commit now.
 	pub head_oid: String,
+}
+
+/// One rate-limit window. Mirrors `@factorai/types` `UsageWindow`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageWindow {
+	pub used_percent: f64,
+	/// Epoch milliseconds; `None` when unknown.
+	pub resets_at: Option<i64>,
+}
+
+/// A per-model limit. Mirrors `@factorai/types` `ModelLimit`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelLimit {
+	pub label: String,
+	pub window: UsageWindow,
+}
+
+/// Where a usage reading came from. Mirrors `@factorai/types` `UsageSource`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageSource {
+	StatusLine,
+	CodexLog,
+	CodexAppServer,
+	ClaudeApi,
+}
+
+/// The latest known limits for one profile. Mirrors `@factorai/types`
+/// `ProviderUsage`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUsage {
+	pub agent: String,
+	pub profile_id: String,
+	pub profile_name: String,
+	pub is_default: bool,
+	pub five_hour: Option<UsageWindow>,
+	pub weekly: Option<UsageWindow>,
+	pub per_model: Vec<ModelLimit>,
+	pub source: UsageSource,
+	pub updated_at: i64,
+}
+
+/// What a usage source hands the store: limits with no profile attached.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageReading {
+	pub five_hour: Option<UsageWindow>,
+	pub weekly: Option<UsageWindow>,
+	pub per_model: Vec<ModelLimit>,
+	pub source: UsageSource,
+	/// Epoch milliseconds the source observed these values.
+	pub observed_at: i64,
+}
+
+/// Tokens and estimated list-price cost of one session. Mirrors
+/// `@factorai/types` `SessionUsage`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUsage {
+	pub session_id: String,
+	pub model: Option<String>,
+	pub input_tokens: u64,
+	pub output_tokens: u64,
+	pub cache_read_tokens: u64,
+	pub cache_write_tokens: u64,
+	/// Already counted inside `output_tokens` (Codex reports it separately).
+	pub reasoning_tokens: u64,
+	pub total_tokens: u64,
+	/// `None` when a model in the session has no known price.
+	pub cost_usd: Option<f64>,
 }

@@ -1,0 +1,2 @@
+{"timestamp":"2026-09-22T14:11:39.137Z","ordinal":1,"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":12.0,"window_minutes":300,"resets_at":1790000000},"secondary":{"used_percent":40.0,"window_minutes":10080,"resets_at":1790600000}}}}
+{"timestamp":"2026-09-22T14:20:00.000Z","ordinal":2,"type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","primary":{"used_percent":55.5,"window_minutes":10080,"resets_at":1790690583},"secondary":null}}}

@@ -38,6 +38,8 @@ commands/
   updates.rs          # check_update — the channel's manifest (F14, ADR-0064)
   webview.rs          # webview_crash_notice — why this renderer is a fresh one
                       #   (F17, ADR-0059)
+  usage.rs            # get_usage, session_usage — plan limits and the active
+                      #   session's tokens and cost (F33, ADR-0084)
 agents/
   mod.rs              # Discovered, display_name_for_path — the store-agnostic bits
   claude.rs           # Claude's directory encoding, transcript paths, discovery
@@ -85,11 +87,21 @@ services/
     server.rs         # a streamable-HTTP endpoint per session
     tools.rs          # listRoutines, createRoutine, updateRoutine,
                       #   setRoutineEnabled — reaching the agent as mcp__factorai__*
+  usage/              # plan limits and session cost (F33, ADR-0084):
+                      #   store (usage.json, on-change subscribers), poller (one
+                      #   thread, every source), statusline (the --settings
+                      #   status line and its helper mode), codex_log,
+                      #   codex_app_server, claude_api (opt-in), child_guard,
+                      #   session_cost, prices
   ide/                # the bridge (F20, ADR-0017) — the tools the CLI calls
     mod.rs
     lockfile.rs       # ~/.claude/ide/<port>.lock — the one thing we write there
     protocol.rs       # initialize, tools/list, tools/call, two notifications
     scope.rs          # resolve_within — the boundary that matters (ADR-0017 § 3)
+platform/
+  taskbar_widget/     # the usage widget in the Windows taskbar (ADR-0084):
+                      #   render (pure pixmap), windows (the embed, its own
+                      #   thread), tray (the fallback icon); no-op elsewhere
 db/
   mod.rs              # open(), migrate(), Pool wrapper
   migrations/
@@ -454,6 +466,7 @@ read_plan(path: String) -> String
 // settings (F11). The key is a mirrored union, not a free string; the value is
 // a String, and `None` means unset.
 get_setting(key: SettingKey) -> Option<String>
+// Saving `usageTaskbarWidget` also starts or stops the taskbar widget.
 set_setting(key: SettingKey, value: Option<String>) -> ()
 // Probe one path as if it were the binary override, without saving it — what
 // the settings page's override field validates with on blur.
@@ -463,6 +476,13 @@ validate_claude_binary(path: String) -> ClaudeCliStatus
 // and hands back the plugin's own `Update` resource id, so download and install
 // stay the plugin's commands. `update` is None when nothing is newer.
 check_update() -> UpdateCheck { channel: "stable" | "alpha", update: Option<UpdateMetadata> }
+
+// usage (F33, ADR-0084). Every profile's latest limits, a window past its reset
+// already shown as reset; `usage:changed` pushes the same list on every change.
+get_usage() -> Vec<ProviderUsage>
+// Tokens and estimated list-price cost of one session, from its transcript, off
+// the main thread. None for an unknown session or a transcript that is gone.
+session_usage(session_id: String) -> Option<SessionUsage>
 ```
 
 ## Tauri events (Rust → JS only)
@@ -479,6 +499,7 @@ check_update() -> UpdateCheck { channel: "stable" | "alpha", update: Option<Upda
 | `routine:fire`         | `{ routineId, routineName, projectId, sessionId, prompt, cwd }` | RoutineRunner (F22) |
 | `routines:changed`     | `{ projectId }`                      | routines service (F22 slice 3) |
 | `file:changed`         | `{ path }`                           | FileWatch (F7)      |
+| `usage:changed`        | `ProviderUsage[]` (every profile)    | usage store (F33)   |
 
 `session:worktree` is the one event whose source is the IDE bridge rather than a
 service, and it fires **after** the write to `session_worktrees`, never before:
@@ -1569,6 +1590,9 @@ Keys, as of F11:
 | `routinesMaxConcurrent` | `routines.max_concurrent` | `RoutineRunner` | How many routine sessions may start at once; the rest queue |
 | `updateChannel` | `updates.channel` | `check_update` | `alpha`, or unset for stable (F14, ADR-0064). Anything else reads as stable |
 | `desktopNotifications` | `notifications.desktop` | `AttentionNotifier` (`TauriSink`) | `off`, or unset for on (F32, ADR-0081) |
+| `usageClaudeEndpoint` | `usage.claude_endpoint` | usage poller (`claude_api`) | `on`, or unset for off: the opt-in endpoint (F33, ADR-0084) |
+| `usageTaskbarWidget` | `usage.taskbar_widget` | `TaskbarWidget`, at boot and live from `set_setting` | `off`, or unset for on (Windows only) |
+| `usageStatusLine` | `usage.statusline` | `TerminalManager` (per Claude spawn) | `off`, or unset for on: the injected status line |
 
 **The serde name and the row key differ on purpose.** The dotted namespace is
 what this table was created with and what an operator sees in `sqlite3`; the
@@ -1606,6 +1630,39 @@ it as such. Folding it into `installed: false` would let a version probe veto a
 binary that spawns sessions perfectly well, which is the same class of mistake as
 `check_cli` ignoring the override.
 
+### Usage monitor
+
+**Shipped 2026-10-19 with F33; decisions in
+[ADR-0084](adr/0084-usage-monitor.md).** `services/usage/`.
+
+- **`UsageStore`** keeps the latest `ProviderUsage` per `(agent, profile)`,
+  persisted to `<data_dir>/usage.json` (temp file and rename, serialised). A
+  reading older than the stored one is dropped; a missing window keeps the stored
+  one. `snapshot(now)` shows a window whose reset time has passed as 0%.
+  `add_on_change` subscribers run after every change, under the persist lock
+  (not the entries lock), so they hear snapshots in the order they were made;
+  they must only post or emit, never call back into the store. `lib.rs` adds
+  two, the `usage:changed` emit and `TaskbarWidget::update`.
+  `sync_profiles` rewrites stored profile names and default flags (and drops
+  deleted profiles) at the top of every poller tick, notifying only on change.
+- **The poller** is one named thread on a 60 s tick (each step wrapped in
+  `catch_unwind`, a panic logged in debug builds; release builds abort on panic): status-line sink files,
+  Codex rollouts, `codex app-server` every 5 minutes (15 s timeout, process tree
+  killed through `child_guard`), and the opt-in Claude endpoint at most every
+  5 minutes per profile.
+- **`TaskbarWidget`** (`platform/taskbar_widget`) is started from `setup()`
+  unless `usage.taskbar_widget` is `off`, started or stopped by `set_setting`
+  for that key, and stopped on the quit paths (`CloseRequested` when the close
+  goes ahead, `app_quit_confirmed`). Its `update` and `stop` only queue on a
+  channel and post a thread message: the widget thread's input queue is
+  attached to Explorer's, so **nothing may `SendMessage` it or wait on it**. Its
+  lock guards only the handle and is never taken by the widget thread.
+- **Windows build.** The `tray-icon` Tauri feature is enabled for Windows only;
+  it is a Cargo feature, not a plugin, and needs no capability (the renderer
+  never touches the tray). `build.rs` embeds the app manifest through the
+  linker on MSVC — Common-Controls v6 plus a Windows 8+ `compatibility`
+  section — so the layered child window works and test binaries load.
+
 ## State management
 
 `tauri::State<AppState>` exposes:
@@ -1622,6 +1679,8 @@ struct AppState {
   watch: Arc<watcher::Control>,
   file_watch: Arc<FileWatch>,
   attention: Arc<AttentionNotifier>,  // F32: notifies when a session wants you
+  usage: Arc<UsageStore>,             // F33: plan limits per (agent, profile)
+  taskbar_widget: Arc<TaskbarWidget>, // F33: the Windows taskbar widget, if running
 }
 ```
 

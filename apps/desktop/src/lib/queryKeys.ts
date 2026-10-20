@@ -106,4 +106,7 @@ export const queryKeys = {
 	/** Where an agent's binary is and what version it reports (F11, F30).
 	 *  Invalidated when its override is saved, since the answer depends on it. */
 	agentCli: (agent: AgentId) => ['agent-cli', agent] as const,
+	/** One session's tokens and estimated cost (usage monitor), for the status
+	 *  bar. Polled while that session is in front. */
+	sessionUsage: (sessionId: string) => ['sessionUsage', sessionId] as const,
 };

@@ -2428,7 +2428,8 @@ Advanced section.
 `get_setting` / `set_setting`, keyed by a **mirrored `SettingKey` union** — see
 [`03-backend-rust.md`](./03-backend-rust.md) § `settings`. The keys: the claude
 and codex binary paths, the default agent, F22's `routines.catchup_hours` and
-`routines.max_concurrent`, F14's `updates.channel` (ADR-0064), and F32's `notifications.desktop`.
+`routines.max_concurrent`, F14's `updates.channel` (ADR-0064), F32's `notifications.desktop`, and F33's
+`usage.claude_endpoint`, `usage.taskbar_widget` and `usage.statusline` (ADR-0084).
 
 The override is read by **`find_claude_binary(override)`** rather than
 `TerminalManager`'s existing `binary_override` field. That field is documented for
@@ -7718,3 +7719,68 @@ notification and the taskbar request, not the dot.
 Telling "finished" from "needs permission" (it would take hooks, superseding
 ADR-0015), opening the notified session on click, and the never-opened axis of
 roadmap item 34.
+
+## F33 — Usage monitor: plan limits and session cost
+
+**Shipped 2026-10-19; decisions in [ADR-0084](adr/0084-usage-monitor.md),
+design in `docs/superpowers/specs/2026-10-19-usage-monitor-design.md`.** For
+each agent (Claude, Codex) the 5-hour and weekly windows with their reset
+times, and for the session in front of you its tokens and an estimated
+list-price cost — in a status bar at the bottom of the window and, on Windows,
+in a widget beside the system tray. Colour is the only alert: neutral below
+70%, Usage Amber 70–89%, `destructive` from 90%. No notifications.
+
+### Sources
+
+| Agent | Source | When | Notes |
+|---|---|---|---|
+| Claude | the `statusLine` JSON, through a status line factorai injects with `--settings` | while a Claude session in factorai is talking | runs the user's own `statusLine` and prints its output; off with `usage.statusline` |
+| Claude | `GET api.anthropic.com/api/oauth/usage` | every ≥ 5 min per profile, opt-in | reads `.credentials.json` read-only, never refreshes; honours `Retry-After` |
+| Codex | the newest `token_count` with limits in the rollouts | every poll | classified by window length, not by slot |
+| Codex | `codex app-server`, `account/rateLimits/read` | at startup, then every 5 min, if `codex` is found | per profile `CODEX_HOME`, read-only, 15 s timeout |
+
+Snapshots are kept per `(agent, profile)` in `<data_dir>/usage.json` and survive
+a restart. A value older than 15 minutes is shown stale; a window whose reset
+time has passed reads 0%. Commands `get_usage`, `session_usage`; event
+`usage:changed` (`03-backend-rust.md` § Usage monitor).
+
+### Status bar
+
+`StatusBar` (`components/layout/`), 24 px, full width: per installed agent the
+default profile's 5h bar, percentage and reset time, and weekly bar and
+percentage; on the right the active session's tokens and `~$` cost. A click opens
+`UsagePopover` with every profile, both windows with exact reset times,
+per-model limits, the source and "updated N min ago", and the session
+breakdown. Hidden by the renderer pref `showStatusBar` (`04-frontend.md`).
+
+### Taskbar widget (Windows)
+
+Two rows, `C ▮▮▮▯ 62%  w 31%` and `X ▮▯▯▯ 18%  w 16%`, transparent, white or
+black text following `SystemUsesLightTheme` (re-read every 60 s), 8 px left of
+the notification area on the primary taskbar, re-rendered at the taskbar's DPI.
+A click brings factorai's window to the front. It exists only while factorai
+runs; it comes back by itself after Explorer restarts (`TaskbarCreated`).
+
+When it cannot sit in the taskbar — no `Shell_TrayWnd`, `SetParent` or the
+first draw fails, no Segoe UI, or 2 s later it is not a visible child of the
+taskbar — it logs one warning and becomes a **notification-area icon** with the
+most critical percentage in its band colour and
+`Claude 5h 62% · wk 31%` / `Codex 5h 18% · wk 16%` in the tooltip.
+`FACTORAI_TASKBAR_WIDGET_FORCE_TRAY=1` forces the icon.
+
+### Settings (Settings → Usage)
+
+- **Show the status bar** — pref `showStatusBar`, on.
+- **Forward Claude limits through the status line** — `usage.statusline`, on;
+  `off` gives back Claude Code's footer hints to a user with no status line of
+  their own. Applies to sessions started after the change.
+- **Show usage in the Windows taskbar** — `usage.taskbar_widget`, on; Windows
+  only; applied at once.
+- **Read Claude limits from Anthropic's usage endpoint** — `usage.claude_endpoint`,
+  off, with the terms warning.
+
+### Not built
+
+macOS and Linux taskbar or menu-bar widgets, secondary monitors' taskbars,
+anything while factorai is closed, notifications or sounds near a limit, and
+daily or per-block cost reports.

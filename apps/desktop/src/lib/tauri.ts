@@ -29,6 +29,7 @@ import type {
 	ProfileInput,
 	ProfilesChangedEvent,
 	Project,
+	ProviderUsage,
 	QuitRequestedEvent,
 	ReviewSubmission,
 	Routine,
@@ -39,6 +40,7 @@ import type {
 	SearchHit,
 	SessionPage,
 	SessionSummary,
+	SessionUsage,
 	SessionWorktreeEvent,
 	SessionsChangedEvent,
 	SettingKey,
@@ -343,6 +345,9 @@ export const cmd = {
 	 *  beside a path that does not work. */
 	validateAgentBinary: (agent: AgentId, path: string) =>
 		invoke<ClaudeCliStatus>('validate_agent_binary', { agent, path }),
+	/** The latest known rate-limit windows per profile. */
+	getUsage: () => invoke<ProviderUsage[]>('get_usage'),
+	sessionUsage: (sessionId: string) => invoke<SessionUsage | null>('session_usage', { sessionId }),
 	/** Every Claude profile, default first (F25). */
 	listProfiles: () => invoke<Profile[]>('list_profiles'),
 	/** Create one, making its config directory if it is missing and leaving it
@@ -688,6 +693,9 @@ export const events = {
 		isTauri()
 			? getCurrentWebview().onDragDropEvent((e) => cb(e.payload))
 			: mockListen<DragDropEvent>('drag-drop', cb),
+	/** The usage snapshot changed; the payload is the whole list. */
+	onUsageChanged: (cb: (p: ProviderUsage[]) => void) =>
+		listen<ProviderUsage[]>('usage:changed', cb),
 	/** A session took its agent's id (F30, ADR-0062). */
 	onSessionAdopted: (cb: (p: SessionAdoptedEvent) => void) =>
 		listen<SessionAdoptedEvent>('session:adopted', cb),
@@ -857,6 +865,10 @@ interface TestFixture {
 	/** Blob text keyed by `<sha>:<relPath>`; absent answers null (no such file at
 	 *  that commit). */
 	ghBlobs?: Record<string, string>;
+	/** What `get_usage` answers (usage monitor). Absent means no readings yet. */
+	usage?: ProviderUsage[];
+	/** `session_usage` keyed by session id. Absent answers null. */
+	sessionUsage?: Record<string, SessionUsage>;
 }
 
 /** One mocked command call, recorded in order while a fixture is installed. */
@@ -1541,6 +1553,10 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		}
 		case 'resolve_project_path':
 			return null as unknown as T;
+		case 'get_usage':
+			return (fx?.usage ?? []) as unknown as T;
+		case 'session_usage':
+			return (fx?.sessionUsage?.[String(args?.sessionId ?? '')] ?? null) as unknown as T;
 		case 'list_profiles':
 			return (fx?.profiles ?? [seededDefaultProfile()]) as unknown as T;
 		case 'create_profile': {

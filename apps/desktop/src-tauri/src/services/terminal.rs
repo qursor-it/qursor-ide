@@ -57,6 +57,7 @@ use crate::services::ide::scope;
 use crate::services::ide::server::IdeServer;
 use crate::services::ide::ui_state::UiState;
 use crate::services::osc_title::TitleScanner;
+use crate::services::usage::statusline;
 
 pub type TerminalId = String;
 
@@ -769,6 +770,12 @@ pub struct TerminalManager {
 	/// `None` leaves the tools advertised but answering that they are
 	/// unavailable — see [`RoutineStore`].
 	routine_store: Option<RoutineStore>,
+	/// Where a Claude session's status-line helper drops its rate limits.
+	/// `None` — every test that does not wire it — adds no `--settings`.
+	usage_sink_dir: Option<PathBuf>,
+	/// Whether the status-line injection is switched on, read at **spawn time**.
+	/// `None` — every test that does not wire it — means on.
+	usage_statusline_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 	on_worktree: WorktreeCb,
 	/// What the renderer has on screen, for the bridge's answers (F20).
 	ui: Arc<UiState>,
@@ -817,6 +824,8 @@ impl TerminalManager {
 			profile_dir: None,
 			worktree_store: None,
 			routine_store: None,
+			usage_sink_dir: None,
+			usage_statusline_enabled: None,
 			on_worktree: Arc::new(move |e| {
 				let _ = app_worktree.emit("session:worktree", e);
 			}),
@@ -844,6 +853,8 @@ impl TerminalManager {
 			profile_dir: None,
 			worktree_store: None,
 			routine_store: None,
+			usage_sink_dir: None,
+			usage_statusline_enabled: None,
 			on_worktree: Arc::new(|_| {}),
 			ui: Arc::new(UiState::default()),
 			on_ide_open: Arc::new(|_| {}),
@@ -916,6 +927,24 @@ impl TerminalManager {
 	/// Wired to the `routines` table in `lib.rs`.
 	pub fn with_routine_store(mut self, store: RoutineStore) -> Self {
 		self.routine_store = Some(store);
+		self
+	}
+
+	/// Where a Claude session's status line forwards its rate limits
+	/// (`services::usage::statusline`). Wired to `<data_dir>/usage/statusline`
+	/// in `lib.rs`.
+	pub fn with_usage_sink_dir(mut self, dir: PathBuf) -> Self {
+		self.usage_sink_dir = Some(dir);
+		self
+	}
+
+	/// Whether a Claude session gets factorai's status line, per spawn
+	/// (`SettingKey::UsageStatusLine`). Wired to the `settings` table in `lib.rs`.
+	pub fn with_usage_statusline_enabled(
+		mut self,
+		cb: Arc<dyn Fn() -> bool + Send + Sync>,
+	) -> Self {
+		self.usage_statusline_enabled = Some(cb);
 		self
 	}
 
@@ -1556,6 +1585,34 @@ impl TerminalManager {
 		if let Some(tools) = tools {
 			v.push("--mcp-config".into());
 			v.push(tools.mcp_config_arg());
+		}
+		// **Claude's limits ride on the status line** (usage monitor): ours runs
+		// the factorai binary as a helper that forwards `rate_limits` and then
+		// runs the user's own `statusLine`, whose other fields are kept here.
+		let statusline_on = self.usage_statusline_enabled.as_ref().is_none_or(|cb| cb());
+		if let Some(sink) = self.usage_sink_dir.as_ref().filter(|_| statusline_on) {
+			if let Ok(exe) = std::env::current_exe() {
+				let user = statusline::user_statusline(claude_dir, cwd_path);
+				v.push("--settings".into());
+				// Written for the shell Claude Code will run it in: Git Bash, or
+				// PowerShell on a Windows machine without it — judged with the
+				// session's settings and the `PATH` the session is given.
+				let shell = statusline::status_shell_for(
+					claude_dir,
+					cwd_path,
+					cfg!(windows).then(crate::services::shell_path::child_path),
+				);
+				// The profile's directory rides along, so the reading is filed
+				// under this profile even when the session itself was given no
+				// `CLAUDE_CONFIG_DIR` (the default profile) and resolves another.
+				v.push(statusline::settings_arg(
+					&exe,
+					sink,
+					claude_dir,
+					user.as_ref().map(|u| &u.settings),
+					shell,
+				));
+			}
 		}
 		v.push(session_flag(claude_dir, cwd_path, session_id).into());
 		v.push(session_id.to_string());
@@ -3611,6 +3668,65 @@ mod tests {
 	}
 
 	#[test]
+	fn claude_argv_carries_the_usage_statusline_when_a_sink_is_set() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _data, _exit) = make_manager();
+		let mut mgr = mgr.with_usage_sink_dir(tmp.path().join("sink"));
+		mgr.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+
+		let argv = mgr
+			.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		let at = argv.iter().position(|a| a == "--settings").expect("--settings is passed");
+		let session_at = argv.iter().position(|a| a == &o.session_id).expect("session id");
+		assert!(at < session_at, "{argv:?}");
+		let settings: serde_json::Value = serde_json::from_str(&argv[at + 1]).expect("valid json");
+		let command = settings["statusLine"]["command"].as_str().expect("a command");
+		assert!(command.contains("--usage-statusline"), "{command}");
+		// The profile's config directory is the helper's last argument.
+		assert!(command.ends_with(&format!("{NO_STORE}'")), "{command}");
+		assert_eq!(settings["statusLine"]["type"], "command");
+	}
+
+	#[test]
+	fn usage_statusline_switch_is_read_per_spawn() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let o = opts(80, 24);
+		for on in [false, true] {
+			let (mgr, _data, _exit) = make_manager();
+			let mut mgr = mgr
+				.with_usage_sink_dir(tmp.path().join("sink"))
+				.with_usage_statusline_enabled(Arc::new(move || on));
+			mgr.set_binary(PathBuf::from("/bin/echo"));
+			let argv = mgr
+				.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+				.expect("argv");
+			assert_eq!(argv.iter().any(|a| a == "--settings"), on, "{argv:?}");
+		}
+	}
+
+	#[test]
+	fn no_settings_flag_without_a_sink_or_for_codex() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mut plain, _data, _exit) = make_manager();
+		plain.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+		let argv = plain
+			.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		assert!(!argv.iter().any(|a| a == "--settings"), "{argv:?}");
+
+		let (mgr, _data, _exit) = make_manager();
+		let mut sunk = mgr.with_usage_sink_dir(tmp.path().join("sink"));
+		sunk.set_binary(PathBuf::from("/bin/echo"));
+		let argv = sunk
+			.argv_for(codex_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		assert!(!argv.iter().any(|a| a == "--settings"), "{argv:?}");
+	}
+
+	#[test]
 	fn session_flag_claims_an_id_with_no_transcript() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		// Nothing on disk: this session does not exist yet, so the id is ours to
@@ -3967,6 +4083,7 @@ mod windows_tests {
 
 	#[test]
 	fn powershell_runs_in_conpty_and_streams_output() {
+		let _spawn = crate::test_support::spawn_lock();
 		let temp = tempfile::Builder::new()
 			.prefix("factorai ConPTY ü ")
 			.tempdir()
@@ -3988,6 +4105,7 @@ mod windows_tests {
 
 	#[test]
 	fn killing_a_conpty_terminates_a_real_child_process() {
+		let _spawn = crate::test_support::spawn_lock();
 		let temp = tempfile::TempDir::new().expect("temporary directory");
 		let (manager, _data) = make_manager(temp.path());
 		let powershell = crate::services::shell_path::user_shell();

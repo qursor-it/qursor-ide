@@ -395,7 +395,10 @@ export type SettingKey =
 	| 'routinesCatchupHours'
 	| 'routinesMaxConcurrent'
 	| 'updateChannel'
-	| 'desktopNotifications';
+	| 'desktopNotifications'
+	| 'usageClaudeEndpoint'
+	| 'usageTaskbarWidget'
+	| 'usageStatusLine';
 
 /**
  * The update channel an install follows (F14, ADR-0064). Stored under
@@ -1100,6 +1103,53 @@ export interface ProfileInput {
  *  re-reads profiles off it, which is what makes a new profile's sessions appear
  *  at all. */
 export type ProfilesChangedEvent = Record<string, never>;
+
+// ── Usage limits (usage monitor) ────────────────────────────────────────────
+
+/** One rate-limit window. `resetsAt` is epoch ms, or null when unknown (or the
+ *  window already reset and nothing newer has been seen). */
+export interface UsageWindow {
+	usedPercent: number;
+	resetsAt: number | null;
+}
+
+/** A per-model limit, e.g. a weekly Opus cap. */
+export interface ModelLimit {
+	label: string;
+	window: UsageWindow;
+}
+
+/** Where a reading came from. */
+export type UsageSource = 'statusLine' | 'codexLog' | 'codexAppServer' | 'claudeApi';
+
+/** The latest known limits for one profile. `usage:changed` carries the whole
+ *  list, and `get_usage` returns the same. */
+export interface ProviderUsage {
+	agent: string;
+	profileId: string;
+	profileName: string;
+	isDefault: boolean;
+	fiveHour: UsageWindow | null;
+	weekly: UsageWindow | null;
+	perModel: ModelLimit[];
+	source: UsageSource;
+	updatedAt: number;
+}
+
+/** Tokens and estimated list-price cost of one session. `costUsd` is null when
+ *  a model in the session has no known price. */
+export interface SessionUsage {
+	sessionId: string;
+	model: string | null;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheWriteTokens: number;
+	/** Already counted inside `outputTokens`. */
+	reasoningTokens: number;
+	totalTokens: number;
+	costUsd: number | null;
+}
 
 // ── Pull requests, read through the user's `gh` (F31, ADR-0077) ────────────
 

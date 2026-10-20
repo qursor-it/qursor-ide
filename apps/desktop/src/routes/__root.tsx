@@ -10,6 +10,7 @@ import { useNativeContextMenu } from '@hooks/useNativeContextMenu';
 import { useRoutineFires } from '@hooks/useRoutineFires';
 import { useRoutinesChanged } from '@hooks/useRoutinesChanged';
 import { useSessionsSync } from '@hooks/useSessionsSync';
+import { useUsageSync } from '@hooks/useUsageSync';
 import { useWatchedOpenFile } from '@hooks/useWatchedOpenFile';
 import { useSettingsModal } from '@hooks/useSettingsModal';
 import { useViewerStore } from '@store/viewerStore';
@@ -47,6 +48,10 @@ function RootLayout() {
 	// `sessions:changed` → refetch the session lists, app-wide. See the hook for
 	// why this can't live on a route.
 	useSessionsSync();
+
+	// `usage:changed` → the status bar's plan limits. App-wide so the bar can be
+	// hidden and shown again without missing a reading.
+	useUsageSync();
 
 	// `routine:fire` → start the session a routine came due for (F22). Here for
 	// the same reason: a routine fires for a project no route is showing.

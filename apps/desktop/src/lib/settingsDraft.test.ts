@@ -12,6 +12,10 @@ import {
 	SECTION_FOR,
 	SETTINGS_SECTIONS,
 	type SettingsValues,
+	usageEndpointOf,
+	usageEndpointSetting,
+	usageOffSetting,
+	usageOnByDefault,
 } from './settingsDraft';
 
 const SAVED: SettingsValues = {
@@ -34,6 +38,10 @@ const SAVED: SettingsValues = {
 	terminalFontSize: 13,
 	terminalLineHeight: 1,
 	terminalCursor: 'bar',
+	showStatusBar: true,
+	usageClaudeEndpoint: false,
+	usageTaskbarWidget: true,
+	usageStatusLine: true,
 };
 
 describe('isSettingsSection', () => {
@@ -83,6 +91,31 @@ describe('dirtySections', () => {
 	it('puts the desktop notifications switch in Sessions', () => {
 		const draft: SettingsValues = { ...SAVED, desktopNotifications: false };
 		expect(dirtySections(SAVED, draft)).toEqual(['sessions']);
+	});
+
+	it('marks usage dirty for each of its four switches', () => {
+		for (const key of [
+			'showStatusBar',
+			'usageClaudeEndpoint',
+			'usageTaskbarWidget',
+			'usageStatusLine',
+		] as const) {
+			const draft: SettingsValues = { ...SAVED, [key]: !SAVED[key] };
+			expect(dirtySections(SAVED, draft)).toEqual(['usage']);
+		}
+	});
+
+	it('reads and writes the usage rows the way Rust does', () => {
+		// Opt-out rows: anything but `off` is on, and on is the absence of a row.
+		expect(usageOnByDefault(null)).toBe(true);
+		expect(usageOnByDefault('off')).toBe(false);
+		expect(usageOffSetting(true)).toBeNull();
+		expect(usageOffSetting(false)).toBe('off');
+		// The endpoint is opt-in: only `on` is on.
+		expect(usageEndpointOf(null)).toBe(false);
+		expect(usageEndpointOf('on')).toBe(true);
+		expect(usageEndpointSetting(true)).toBe('on');
+		expect(usageEndpointSetting(false)).toBeNull();
 	});
 
 	it('reports nothing for an untouched draft', () => {

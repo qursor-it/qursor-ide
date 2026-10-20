@@ -81,10 +81,17 @@
           "oklch(92% 0.08 300)"
         ]
       },
+      "usage-warn": {
+        "role": "tertiary",
+        "displayName": "Usage Amber",
+        "canonical": "oklch(78% 0.15 75)",
+        "notes": "One job: a plan limit is getting close (70-89%) in the status bar. Below 70% the bar is muted-foreground; from 90% it is destructive. Light theme: oklch(55% 0.13 70)."
+      },
       "destructive": {
         "role": "tertiary",
         "displayName": "Destructive Red",
         "canonical": "oklch(58% 0.22 25)",
+        "notes": "Destruction, and a second job: a plan limit is nearly out (90% and over) in the status bar.",
         "tonalRamp": [
           "oklch(22% 0.09 25)",
           "oklch(30% 0.13 25)",

@@ -75,6 +75,14 @@ trash = { version = "5.2.6", default-features = false }
 # directory, `persist`ed over it. Doing this by hand means inventing a unique
 # name, cleaning it up on every early return, and getting the rename right.
 tempfile = "3"
+# The opt-in Anthropic usage endpoint (usage monitor): one blocking GET on the
+# poller thread. Default features (rustls); the body is parsed with serde_json,
+# so no `json` feature.
+ureq = "2"
+# Taskbar widget renderer (usage monitor): a CPU pixmap + glyph rasteriser, no GPU,
+# no PNG codec in release builds.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+fontdue = "0.9"
 
 # WebKitGTK's `web-process-terminated`, which is the only warning we get that
 # the renderer has died (ADR-0059). The same version wry already builds — the
@@ -88,8 +96,14 @@ webkit2gtk = "2.0.2"
 [target.'cfg(windows)'.dependencies]
 dunce = "1"
 trash = { version = "5.2.6", default-features = false, features = ["coinit_multithreaded"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Environment"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_Accessibility", "Win32_UI_HiDpi"] }
+# The usage widget's fallback when it cannot embed in the taskbar (ADR-0084): a
+# Cargo feature of Tauri itself, not a plugin, and Windows only so Linux builds
+# do not take on the appindicator dependency for an icon they never show.
+tauri = { version = "2", features = ["tray-icon"] }
 
 [dev-dependencies]
+# Only the tests write preview PNGs.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
 regex = "1.13.1"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

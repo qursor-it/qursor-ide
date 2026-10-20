@@ -3,6 +3,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod models;
+pub mod platform;
 pub mod services;
 pub mod state;
 
@@ -40,6 +41,14 @@ fn claude_dir() -> PathBuf {
 		}
 	}
 	dirs::home_dir().expect("no home dir").join(".claude")
+}
+
+/// `factorai --usage-statusline <sink dir>`: the status line a factorai Claude
+/// session runs (`services::usage::statusline`). Returns whether this process
+/// was that helper — it has then done its work and must exit before any Tauri
+/// code runs.
+pub fn run_usage_statusline_helper() -> bool {
+	services::usage::statusline::helper_main(std::env::args_os().skip(1))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -145,8 +154,25 @@ pub fn run() {
 				services::attention::SETTLE,
 			));
 			let attention_tap = attention.clone();
+			let statusline_dir = data_dir.join("usage").join("statusline");
 			let terminals = TerminalManager::for_app(app.handle().clone(), cd.clone(), ui.clone())
 				.with_status_tap(move |e| attention_tap.on_status(e))
+				// Claude's limits, forwarded by each session's status line.
+				.with_usage_sink_dir(statusline_dir.clone())
+				// Switchable: our status line hides Claude Code's footer hints for
+				// a user with none of their own. Unset = on.
+				.with_usage_statusline_enabled({
+					let db = db.clone();
+					Arc::new(move || {
+						let value = db
+							.with(|conn| {
+								services::settings::get(conn, models::SettingKey::UsageStatusLine)
+							})
+							.ok()
+							.flatten();
+						value.as_deref() != Some("off")
+					})
+				})
 				.with_user_binary(Arc::new(move |agent| {
 					services::settings::binary_override(&settings_db, agent)
 				}))
@@ -298,6 +324,28 @@ pub fn run() {
 				});
 			}
 
+			// The usage snapshot persists beside the database and tells the
+			// renderer whenever a source changes it.
+			let usage =
+				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
+			{
+				let handle = app.handle().clone();
+				usage.add_on_change(Arc::new(move |list| {
+					let _ = handle.emit("usage:changed", list);
+				}));
+			}
+			// The taskbar widget (ADR-0084) hears the same changes. `update` only
+			// posts to the widget thread, so a hung Explorer cannot hold a source.
+			let taskbar_widget = Arc::new(platform::taskbar_widget::TaskbarWidget::default());
+			{
+				let widget = taskbar_widget.clone();
+				usage.add_on_change(Arc::new(move |list| widget.update(list)));
+			}
+			let widget_setting =
+				db.with(|c| services::settings::get(c, models::SettingKey::UsageTaskbarWidget));
+
+			let usage_db = db.clone();
+			let usage_poll_store = usage.clone();
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),
@@ -311,8 +359,22 @@ pub fn run() {
 				media: Arc::new(std::sync::OnceLock::new()),
 				webview_health,
 				attention,
+				usage: usage.clone(),
+				taskbar_widget: taskbar_widget.clone(),
 			});
+			// On unless the setting says `off`; a no-op off Windows.
+			taskbar_widget.set_enabled(
+				app.handle(),
+				platform::taskbar_widget::enabled(widget_setting.ok().flatten().as_deref()),
+				|| usage.snapshot(services::usage::now_ms()),
+			);
 
+			services::usage::poller::spawn(
+				app.handle().clone(),
+				usage_poll_store,
+				usage_db,
+				statusline_dir,
+			);
 			spawn_initial_scan(indexer.clone());
 			watcher::spawn(indexer, watch.clone());
 			// Ticking starts with the window, because a routine is scheduled work
@@ -380,6 +442,10 @@ pub fn run() {
 						// returns: `kill_all`'s 500ms SIGTERM grace has to finish
 						// before the process goes or the grace period is a no-op.
 						state.terminals.kill_all();
+					}
+					// The close goes ahead: the widget goes with it.
+					if working == 0 {
+						state.taskbar_widget.stop();
 					}
 				}
 			}
@@ -467,6 +533,8 @@ pub fn run() {
 			commands::terminal::shell_name,
 			commands::terminal::app_quit_confirmed,
 			commands::webview::webview_crash_notice,
+			commands::usage::get_usage,
+			commands::usage::session_usage,
 		])
 		.run(tauri::generate_context!())
 		.expect("error while running factorai");
@@ -484,4 +552,19 @@ pub(crate) fn epoch_ms() -> i64 {
 		.duration_since(std::time::UNIX_EPOCH)
 		.map(|d| d.as_millis() as i64)
 		.unwrap_or(0)
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+	use parking_lot::{Mutex, MutexGuard};
+
+	static SPAWN: Mutex<()> = Mutex::new(());
+
+	/// Held by every test that starts a shell (PowerShell, Git Bash, cmd, a
+	/// ConPTY child, the fake `codex`). Their start-up is CPU-bound and their
+	/// assertions are timed, so they run one at a time while the rest of the
+	/// suite stays parallel.
+	pub(crate) fn spawn_lock() -> MutexGuard<'static, ()> {
+		SPAWN.lock()
+	}
 }

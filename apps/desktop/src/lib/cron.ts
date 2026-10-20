@@ -99,7 +99,7 @@ export function presetFromCron(cron: string): Preset {
  *  Passed in rather than read from the store here, so this file stays a pure
  *  module its tests can drive without a store — the same rule `lib/` follows
  *  for `sessionGroups`. */
-function formatClock(hour: number, minute: number, clock24 = true): string {
+export function formatClock(hour: number, minute: number, clock24 = true): string {
 	const mm = String(minute).padStart(2, '0');
 	if (clock24) return `${hour}:${mm}`;
 	const suffix = hour < 12 ? 'AM' : 'PM';
