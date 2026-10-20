@@ -6,10 +6,12 @@
 use fontdue::Font;
 use tiny_skia::{Color, Paint, Pixmap, Rect, Transform};
 
-use crate::models::ProviderUsage;
+use crate::models::{ProviderUsage, UsageWindow};
 use crate::services::usage::{CRITICAL, STALE_MS, WARN};
 
-const WIDTH: f32 = 150.0;
+/// Logical width: the worst case row, `100%  23h 59m  w 100%  6d 23h`, with
+/// about 6 px between columns and `LETTER_X` of margin at the right edge.
+const WIDTH: f32 = 244.0;
 const ROW_H: f32 = 18.0;
 const ROWS: usize = 2;
 const LETTER_X: f32 = 4.0;
@@ -17,9 +19,14 @@ const BAR_X: f32 = 18.0;
 const BAR_W: f32 = 52.0;
 const BAR_H: f32 = 6.0;
 const PCT_X: f32 = 76.0;
-const WEEK_X: f32 = 106.0;
+const RESET_5H_X: f32 = 111.0;
+const WEEK_X: f32 = 160.0;
+const RESET_WK_X: f32 = 206.0;
 const FONT_PX: f32 = 11.0;
 const STALE_ALPHA: f32 = 0.6;
+/// Countdowns sit back from the percentages: the same colour at this share of
+/// the row's alpha.
+const COUNTDOWN_ALPHA: f32 = 0.7;
 const MAX_SCALE: f32 = 4.0;
 
 /// One line of the widget.
@@ -28,6 +35,9 @@ pub struct WidgetRow {
 	pub letter: char,
 	pub five_hour: Option<f64>,
 	pub weekly: Option<f64>,
+	/// Whole minutes until each window resets; `None` without a future reset.
+	pub five_hour_reset_min: Option<i64>,
+	pub weekly_reset_min: Option<i64>,
 	pub stale: bool,
 }
 
@@ -37,10 +47,16 @@ pub fn rows_from(usage: &[ProviderUsage], now_ms: i64) -> Vec<WidgetRow> {
 		.iter()
 		.filter_map(|(agent, letter)| {
 			let u = usage.iter().find(|u| u.agent == *agent && u.is_default)?;
+			let reset_min = |w: &Option<UsageWindow>| {
+				let left = w.as_ref()?.resets_at? - now_ms;
+				(left > 0).then_some(left / 60_000)
+			};
 			Some(WidgetRow {
 				letter: *letter,
 				five_hour: u.five_hour.as_ref().map(|w| w.used_percent),
 				weekly: u.weekly.as_ref().map(|w| w.used_percent),
+				five_hour_reset_min: reset_min(&u.five_hour),
+				weekly_reset_min: reset_min(&u.weekly),
 				stale: now_ms - u.updated_at > STALE_MS,
 			})
 		})
@@ -62,7 +78,7 @@ pub fn load_system_font() -> Option<Font> {
 	}
 }
 
-/// Draw the rows into a transparent `150x36` (logical) pixmap.
+/// Draw the rows into a transparent `244x36` (logical) pixmap.
 pub fn render(rows: &[WidgetRow], font: &Font, scale: f32, light_taskbar: bool) -> Pixmap {
 	let scale = if scale.is_finite() { scale.clamp(0.5, MAX_SCALE) } else { 1.0 };
 	let w = (WIDTH * scale).round().max(1.0) as u32;
@@ -77,6 +93,7 @@ pub fn render(rows: &[WidgetRow], font: &Font, scale: f32, light_taskbar: bool) 
 		let alpha = if row.stale { STALE_ALPHA } else { 1.0 };
 		let px = FONT_PX * scale;
 		let baseline = top + (row_h / 2.0 + px * 0.36).round();
+		let dim = alpha * COUNTDOWN_ALPHA;
 
 		draw_text(
 			&mut pm,
@@ -99,6 +116,10 @@ pub fn render(rows: &[WidgetRow], font: &Font, scale: f32, light_taskbar: bool) 
 			text,
 			alpha,
 		);
+		if let Some(min) = row.five_hour_reset_min {
+			let x = (RESET_5H_X * scale).round();
+			draw_text(&mut pm, font, px, &countdown(min), x, baseline, text, dim);
+		}
 		draw_text(
 			&mut pm,
 			font,
@@ -109,6 +130,10 @@ pub fn render(rows: &[WidgetRow], font: &Font, scale: f32, light_taskbar: bool) 
 			text,
 			alpha,
 		);
+		if let Some(min) = row.weekly_reset_min {
+			let x = (RESET_WK_X * scale).round();
+			draw_text(&mut pm, font, px, &countdown(min), x, baseline, text, dim);
+		}
 	}
 	pm
 }
@@ -126,6 +151,21 @@ pub(crate) fn sane(p: f64) -> f64 {
 /// threshold (70, 90) before the colour does — 89.9 reads "89%" in amber.
 pub(crate) fn whole_pct(p: f64) -> u32 {
 	sane(p).floor() as u32
+}
+
+/// Time until a reset: `<1m`, `45m`, `2h 14m`, `3d 4h`. The same words as the
+/// status bar's `formatCountdown`.
+pub(crate) fn countdown(min: i64) -> String {
+	let min = min.max(0);
+	if min < 1 {
+		"<1m".into()
+	} else if min < 60 {
+		format!("{min}m")
+	} else if min < 24 * 60 {
+		format!("{}h {}m", min / 60, min % 60)
+	} else {
+		format!("{}d {}h", min / (24 * 60), min / 60 % 24)
+	}
 }
 
 fn pct_label(v: Option<f64>, prefix: &str) -> String {
@@ -251,7 +291,7 @@ mod tests {
 	use fontdue::FontSettings;
 
 	use super::*;
-	use crate::models::{UsageSource, UsageWindow};
+	use crate::models::UsageSource;
 
 	fn font() -> Font {
 		let p = concat!(
@@ -287,9 +327,61 @@ mod tests {
 
 	fn sample() -> Vec<WidgetRow> {
 		vec![
-			WidgetRow { letter: 'C', five_hour: Some(62.0), weekly: Some(31.0), stale: false },
-			WidgetRow { letter: 'X', five_hour: Some(92.0), weekly: Some(16.0), stale: false },
+			WidgetRow {
+				five_hour_reset_min: Some(134),
+				weekly_reset_min: Some(3 * 24 * 60 + 4 * 60),
+				..row('C', Some(62.0), Some(31.0))
+			},
+			WidgetRow {
+				five_hour_reset_min: Some(45),
+				weekly_reset_min: Some(6 * 24 * 60 + 23 * 60),
+				..row('X', Some(92.0), Some(16.0))
+			},
 		]
+	}
+
+	fn row(letter: char, five_hour: Option<f64>, weekly: Option<f64>) -> WidgetRow {
+		WidgetRow {
+			letter,
+			five_hour,
+			weekly,
+			five_hour_reset_min: None,
+			weekly_reset_min: None,
+			stale: false,
+		}
+	}
+
+	#[test]
+	fn countdown_boundaries() {
+		assert_eq!(countdown(-3), "<1m");
+		assert_eq!(countdown(0), "<1m");
+		assert_eq!(countdown(1), "1m");
+		assert_eq!(countdown(45), "45m");
+		assert_eq!(countdown(59), "59m");
+		assert_eq!(countdown(60), "1h 0m");
+		assert_eq!(countdown(180), "3h 0m");
+		assert_eq!(countdown(134), "2h 14m");
+		assert_eq!(countdown(23 * 60 + 59), "23h 59m");
+		assert_eq!(countdown(24 * 60), "1d 0h");
+		assert_eq!(countdown(3 * 24 * 60 + 4 * 60 + 30), "3d 4h");
+		assert_eq!(countdown(6 * 24 * 60 + 23 * 60 + 59), "6d 23h");
+	}
+
+	#[test]
+	fn rows_from_counts_down_to_future_resets_only() {
+		let now = 10_000_000;
+		let mut u = usage("claude", "main", true, 62.0, 31.0, now);
+		let at = |ms: i64| Some(UsageWindow { used_percent: 1.0, resets_at: Some(now + ms) });
+		u.five_hour = at(134 * 60_000 + 59_999);
+		u.weekly = at(30_000);
+		let rows = rows_from(&[u.clone()], now);
+		assert_eq!((rows[0].five_hour_reset_min, rows[0].weekly_reset_min), (Some(134), Some(0)));
+		u.five_hour = at(0);
+		u.weekly = at(-60_000);
+		let rows = rows_from(&[u.clone()], now);
+		assert_eq!((rows[0].five_hour_reset_min, rows[0].weekly_reset_min), (None, None));
+		u.five_hour = None;
+		assert_eq!(rows_from(&[u], now)[0].five_hour_reset_min, None);
 	}
 
 	#[test]
@@ -309,9 +401,9 @@ mod tests {
 	#[test]
 	fn render_has_scaled_size() {
 		let pm = render(&sample(), &font(), 1.5, false);
-		assert_eq!((pm.width(), pm.height()), (225, 54));
+		assert_eq!((pm.width(), pm.height()), (366, 54));
 		let pm = render(&sample(), &font(), 1.0, false);
-		assert_eq!((pm.width(), pm.height()), (150, 36));
+		assert_eq!((pm.width(), pm.height()), (244, 36));
 	}
 
 	#[test]
@@ -330,7 +422,7 @@ mod tests {
 
 	/// Pixel in the middle of the first row's bar, at `fraction` of its width.
 	fn bar_px(pct: f64, stale: bool, light: bool) -> [u8; 4] {
-		let row = WidgetRow { letter: 'C', five_hour: Some(pct), weekly: None, stale };
+		let row = WidgetRow { stale, ..row('C', Some(pct), None) };
 		let pm = render(&[row], &font(), 1.0, light);
 		let p = pm.pixel(19, 9).unwrap();
 		[p.red(), p.green(), p.blue(), p.alpha()]
@@ -372,31 +464,26 @@ mod tests {
 	#[test]
 	fn more_than_two_rows_are_truncated() {
 		let mut rows = sample();
-		rows.push(WidgetRow {
-			letter: 'Z',
-			five_hour: Some(95.0),
-			weekly: Some(95.0),
-			stale: false,
-		});
+		rows.push(row('Z', Some(95.0), Some(95.0)));
 		let a = render(&rows, &font(), 1.0, false);
 		let b = render(&rows[..2], &font(), 1.0, false);
-		assert_eq!((a.width(), a.height()), (150, 36));
+		assert_eq!((a.width(), a.height()), (244, 36));
 		assert_eq!(a.data(), b.data());
 	}
 
 	#[test]
 	fn out_of_range_and_nan_inputs_clamp_without_panicking() {
 		for v in [f64::NAN, -5.0, 150.0, f64::INFINITY] {
-			let row = WidgetRow { letter: 'C', five_hour: Some(v), weekly: Some(v), stale: false };
+			let row = row('C', Some(v), Some(v));
 			let pm = render(&[row], &font(), 1.0, false);
-			assert_eq!(pm.width(), 150);
+			assert_eq!(pm.width(), 244);
 		}
 		assert_eq!(bar_px(150.0, false, false), [0xE5, 0x48, 0x4D, 255]);
 		// -5 and NaN fill nothing: the pixel is the track (25% alpha).
 		assert!(near(bar_px(-5.0, false, false), [64, 64, 64, 64]));
 		assert!(near(bar_px(f64::NAN, false, false), [64, 64, 64, 64]));
 		let huge = render(&sample(), &font(), 1000.0, false);
-		assert_eq!(huge.width(), 600);
+		assert_eq!(huge.width(), 976);
 	}
 
 	#[test]
@@ -404,6 +491,92 @@ mod tests {
 		let pm = render(&sample(), &font(), 1.0, false);
 		let ink = (76..100).any(|x| (0..18).any(|y| pm.pixel(x, y).unwrap().alpha() > 0));
 		assert!(ink);
+	}
+
+	fn advance(f: &Font, text: &str, px: f32) -> f32 {
+		text.chars().map(|c| f.metrics(c, px).advance_width).sum()
+	}
+
+	/// Worst case: `100%`, `23h 59m`, `w 100%`, `6d 23h`.
+	fn widest() -> WidgetRow {
+		WidgetRow {
+			five_hour_reset_min: Some(23 * 60 + 59),
+			weekly_reset_min: Some(6 * 24 * 60 + 23 * 60),
+			..row('C', Some(100.0), Some(100.0))
+		}
+	}
+
+	/// Does any pixel of `pm` in columns `x0..x1` carry ink?
+	fn ink_in(pm: &Pixmap, x0: u32, x1: u32) -> bool {
+		(x0..x1.min(pm.width()))
+			.any(|x| (0..pm.height()).any(|y| pm.pixel(x, y).unwrap().alpha() > 0))
+	}
+
+	#[test]
+	fn the_widest_row_fits_its_columns_with_a_gap() {
+		let f = font();
+		let columns = [
+			(PCT_X, "100%", RESET_5H_X),
+			(RESET_5H_X, "23h 59m", WEEK_X),
+			(WEEK_X, "w 100%", RESET_WK_X),
+			(RESET_WK_X, "6d 23h", WIDTH + 5.0 - LETTER_X),
+		];
+		for (x, text, next) in columns {
+			let end = x + advance(&f, text, FONT_PX);
+			assert!(end + 5.0 <= next, "{text:?} ends at {end}, next column at {next}");
+		}
+		const { assert!(BAR_X + BAR_W + 5.0 <= PCT_X) };
+		assert!(LETTER_X + advance(&f, "C", FONT_PX) + 5.0 <= BAR_X);
+	}
+
+	#[test]
+	fn the_widest_row_is_neither_clipped_nor_overlapping_at_any_scale() {
+		for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+			let pm = render(&[widest(), widest()], &font(), scale, false);
+			let col = |x: f32| (x * scale).round() as u32;
+			// Nothing touches the last two columns: the right edge is not clipped.
+			assert!(!ink_in(&pm, pm.width() - 2, pm.width()), "ink at the edge, scale {scale}");
+			// Each gap between a text and the next column is clear of ink.
+			let f = font();
+			for (x, text, next) in [
+				(PCT_X, "100%", RESET_5H_X),
+				(RESET_5H_X, "23h 59m", WEEK_X),
+				(WEEK_X, "w 100%", RESET_WK_X),
+			] {
+				let end = col(x) + advance(&f, text, FONT_PX * scale).ceil() as u32;
+				assert!(end < col(next), "{text:?} reaches {end} at scale {scale}");
+				assert!(!ink_in(&pm, end + 1, col(next)), "{text:?} bleeds right, scale {scale}");
+			}
+			// The last countdown does draw, and inside the pixmap.
+			assert!(ink_in(&pm, col(RESET_WK_X), col(WIDTH - LETTER_X)));
+		}
+	}
+
+	#[test]
+	fn countdowns_are_drawn_at_70_percent_of_the_row_alpha() {
+		let top_alpha = |stale: bool| {
+			let row = WidgetRow { stale, ..widest() };
+			let pm = render(&[row], &font(), 1.0, false);
+			let x0 = RESET_5H_X as u32;
+			let xs = x0..WEEK_X as u32;
+			xs.flat_map(|x| (0..18).map(move |y| (x, y)))
+				.map(|(x, y)| pm.pixel(x, y).unwrap().alpha())
+				.max()
+				.unwrap()
+		};
+		// Never above 0.7 * 255 = 178.5, and the strongest pixel of a 11 px
+		// glyph is close to full coverage.
+		let (fresh, stale) = (top_alpha(false), top_alpha(true));
+		assert!((140..=179).contains(&fresh), "{fresh}");
+		// Stale multiplies by 0.6.
+		assert!((stale as f32 - fresh as f32 * 0.6).abs() <= 2.0, "{fresh} -> {stale}");
+	}
+
+	#[test]
+	fn rows_without_a_reset_draw_no_countdown() {
+		let pm = render(&[row('C', Some(62.0), Some(31.0))], &font(), 1.0, false);
+		assert!(!ink_in(&pm, RESET_5H_X as u32, WEEK_X as u32));
+		assert!(!ink_in(&pm, RESET_WK_X as u32, pm.width()));
 	}
 
 	fn max_ink(pm: &Pixmap) -> [u8; 4] {

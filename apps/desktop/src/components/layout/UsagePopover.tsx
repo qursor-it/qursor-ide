@@ -3,6 +3,7 @@ import { agentName } from '@lib/agents';
 import { formatRelative, formatReset } from '@lib/format';
 import {
 	formatCost,
+	formatCountdown,
 	formatPercent,
 	formatTokens,
 	isStale,
@@ -119,14 +120,20 @@ function ProfileBlock({
 					updated {formatRelative(usage.updatedAt, now)}
 				</span>
 			</div>
-			<WindowRow label="5-hour" window={windowAt(usage.fiveHour, now)} clock24={clock24} />
-			<WindowRow label="Weekly" window={windowAt(usage.weekly, now)} clock24={clock24} />
+			<WindowRow
+				label="5-hour"
+				window={windowAt(usage.fiveHour, now)}
+				clock24={clock24}
+				now={now}
+			/>
+			<WindowRow label="Weekly" window={windowAt(usage.weekly, now)} clock24={clock24} now={now} />
 			{usage.perModel.map((m) => (
 				<WindowRow
 					key={m.label}
 					label={m.label}
 					window={windowAt(m.window, now)}
 					clock24={clock24}
+					now={now}
 				/>
 			))}
 			<span className="text-muted-foreground">{sourceLabel(usage.source)}</span>
@@ -138,10 +145,12 @@ function WindowRow({
 	label,
 	window,
 	clock24,
+	now,
 }: {
 	label: string;
 	window: UsageWindow | null;
 	clock24: boolean;
+	now: number;
 }) {
 	return (
 		<div className="grid grid-cols-[4.5rem_4rem_2.5rem_1fr] items-center gap-2 text-secondary-foreground">
@@ -152,8 +161,10 @@ function WindowRow({
 					<span className={`text-right tabular-nums ${inkOf(window.usedPercent)}`}>
 						{formatPercent(window.usedPercent)}
 					</span>
-					<span className="truncate text-muted-foreground">
-						{window.resetsAt !== null ? `resets ${formatReset(window.resetsAt, clock24)}` : ''}
+					<span className="text-muted-foreground">
+						{window.resetsAt !== null
+							? `resets ${formatReset(window.resetsAt, clock24)} · in ${formatCountdown(window.resetsAt, now)}`
+							: ''}
 					</span>
 				</>
 			) : (

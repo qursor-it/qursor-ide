@@ -11,7 +11,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::AppHandle;
 use tracing::warn;
 
-use super::render::{sane, whole_pct};
+use super::render::{countdown, sane, whole_pct};
 use super::{focus_main, render_icon, WidgetRow};
 
 const ID: &str = "usage-widget";
@@ -88,7 +88,8 @@ pub(super) fn critical(rows: &[WidgetRow]) -> Option<f64> {
 	rows.iter().flat_map(|r| [r.five_hour, r.weekly]).flatten().map(sane).max_by(f64::total_cmp)
 }
 
-/// `Claude 5h 62% · wk 31%`, one line per agent.
+/// `Claude 5h 62% · resets in 2h 14m · wk 31% · resets in 3d 4h`, one line per
+/// agent. A window with no reset to count down to drops its `resets in`.
 pub(super) fn tooltip(rows: &[WidgetRow]) -> String {
 	if rows.is_empty() {
 		return "No usage data yet".into();
@@ -97,10 +98,18 @@ pub(super) fn tooltip(rows: &[WidgetRow]) -> String {
 		Some(p) => format!("{}%", whole_pct(p)),
 		None => "--".into(),
 	};
+	let resets =
+		|min: Option<i64>| min.map_or(String::new(), |m| format!(" · resets in {}", countdown(m)));
 	rows.iter()
 		.map(|r| {
 			let name = if r.letter == 'C' { "Claude" } else { "Codex" };
-			format!("{name} 5h {} · wk {}", pct(r.five_hour), pct(r.weekly))
+			format!(
+				"{name} 5h {}{} · wk {}{}",
+				pct(r.five_hour),
+				resets(r.five_hour_reset_min),
+				pct(r.weekly),
+				resets(r.weekly_reset_min),
+			)
 		})
 		.collect::<Vec<_>>()
 		.join("\n")
@@ -111,13 +120,36 @@ mod tests {
 	use super::*;
 
 	fn row(letter: char, five: Option<f64>, week: Option<f64>) -> WidgetRow {
-		WidgetRow { letter, five_hour: five, weekly: week, stale: false }
+		WidgetRow {
+			letter,
+			five_hour: five,
+			weekly: week,
+			five_hour_reset_min: None,
+			weekly_reset_min: None,
+			stale: false,
+		}
 	}
 
 	#[test]
 	fn tooltip_lists_both_windows_per_agent() {
 		let rows = [row('C', Some(62.0), Some(31.4)), row('X', Some(18.0), Some(16.0))];
 		assert_eq!(tooltip(&rows), "Claude 5h 62% · wk 31%\nCodex 5h 18% · wk 16%");
+	}
+
+	#[test]
+	fn tooltip_counts_down_to_each_reset() {
+		let c = WidgetRow {
+			five_hour_reset_min: Some(134),
+			weekly_reset_min: Some(3 * 24 * 60 + 4 * 60),
+			..row('C', Some(62.0), Some(31.4))
+		};
+		assert_eq!(
+			tooltip(std::slice::from_ref(&c)),
+			"Claude 5h 62% · resets in 2h 14m · wk 31% · resets in 3d 4h"
+		);
+		// A window with no future reset leaves its clause out.
+		let x = WidgetRow { five_hour_reset_min: None, ..c };
+		assert_eq!(tooltip(&[x]), "Claude 5h 62% · wk 31% · resets in 3d 4h");
 	}
 
 	#[test]

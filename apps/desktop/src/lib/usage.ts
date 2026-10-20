@@ -41,6 +41,18 @@ export function windowAt(window: UsageWindow | null, now: number): UsageWindow |
 	return window;
 }
 
+/** Time until a reset: `<1m`, `45m`, `2h 14m`, `3d 4h`. Whole minutes, floored,
+ *  so the figure never promises more time than there is; a reset already past
+ *  clamps to `<1m`. The widget and its tooltip format the same way in Rust. */
+export function formatCountdown(resetsAt: number, now: number): string {
+	const min = Math.max(0, Math.floor((resetsAt - now) / 60_000));
+	if (min < 1) return '<1m';
+	if (min < 60) return `${min}m`;
+	const hours = Math.floor(min / 60);
+	if (hours < 24) return `${hours}h ${min % 60}m`;
+	return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
 /** `950`, `12.3k`, `1.8M`. */
 export function formatTokens(n: number): string {
 	if (n < 1000) return String(Math.round(n));
