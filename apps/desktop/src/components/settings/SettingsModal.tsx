@@ -25,6 +25,7 @@ import {
 	type BinaryProbe,
 	SETTING_KEY,
 } from '@components/settings/AgentsSection';
+import { IntelligenceSection } from '@components/settings/IntelligenceSection';
 import { KeyboardSection } from '@components/settings/KeyboardSection';
 import { ProfilesSection } from '@components/settings/ProfilesSection';
 import { desktopNotificationsOf, desktopNotificationsSetting } from '@lib/attention';
@@ -69,6 +70,7 @@ const SECTION_LABELS: Record<SettingsSection, string> = {
 	sessions: 'Sessions',
 	routines: 'Routines',
 	pulls: 'Pull requests',
+	intelligence: 'Intelligence',
 	advanced: 'Advanced',
 	about: 'About',
 };
@@ -365,6 +367,11 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 					{/* The other section with no draft — this one writes nothing at all
 					    (F29). */}
 					{section === 'about' && <AboutSection />}
+
+					{/* A switch that writes as you click, for the reason the section
+						    gives (F33): turning it off cancels runs, and a draft cannot
+						    be cancelled out of. */}
+					{section === 'intelligence' && <IntelligenceSection />}
 
 					{section === 'editor' && (
 						<div className="divide-y divide-border">
