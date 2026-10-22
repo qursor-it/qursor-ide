@@ -1,4 +1,6 @@
 import type {
+	AnalysisPreview,
+	AnalysisRequest,
 	AppError,
 	ClaudeCliStatus,
 	DirListing,
@@ -14,7 +16,15 @@ import type {
 	ImportCandidate,
 	IdeOpenFileEvent,
 	IdeStatusEvent,
+	ImprovementCandidate,
 	IndexerProgressEvent,
+	ImprovementEvent,
+	IntelligenceChangedEvent,
+	IntelligenceProgressEvent,
+	IntelligenceProviderInfo,
+	IntelligenceRunDetail,
+	IntelligenceRunFinishedEvent,
+	IntelligenceStatus,
 	MediaProbe,
 	Mention,
 	PathKind,
@@ -23,6 +33,7 @@ import type {
 	PrComment,
 	PrDetail,
 	PrFiles,
+	PreparedChange,
 	PrStateFilter,
 	PrSummary,
 	Profile,
@@ -45,6 +56,7 @@ import type {
 	ShellSpawnOpts,
 	SopsStatus,
 	SpawnOpts,
+	StartedRun,
 	TerminalDataEvent,
 	TerminalExitEvent,
 	UpdateCheck,
@@ -58,6 +70,7 @@ import type {
 	SessionAdoptedEvent,
 	Spawned,
 	SubmittedReview,
+	VerificationInput,
 } from '@factorai/types';
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { type UnlistenFn, listen as tauriListen } from '@tauri-apps/api/event';
@@ -424,6 +437,64 @@ export const cmd = {
 	 *  is what almost every boot gets. Asked once on mount; the backend clears it
 	 *  as it answers, so asking again is safe and says nothing. */
 	webviewCrashNotice: () => invoke<string | null>('webview_crash_notice'),
+
+	// ── Project Intelligence (F33, ADR-0084) ──
+	// Off until the `projectIntelligence` setting is `on`. Every command below
+	// rejects with an `Intelligence` error whose code is `disabled` until then,
+	// except `getIntelligenceStatus` and `cancelAnalysis`. Nothing here writes a
+	// project file: `prepare*` return text and a diff for the viewer, and
+	// `record*` verify the person's Save on disk.
+
+	/** The switch and, while it is on, whether the provider can run. Starts
+	 *  nothing while off. */
+	getIntelligenceStatus: () => invoke<IntelligenceStatus>('get_intelligence_status'),
+	/** What an analysis would read and send, with each signal's redacted excerpt
+	 *  so it can be excluded. Starts nothing. */
+	previewAnalysis: (projectId: string, sessionLimit?: number) =>
+		invoke<AnalysisPreview>('preview_analysis', { projectId, sessionLimit }),
+	/** Begin an analysis. Progress and the end arrive as `intelligence:*` events.
+	 *  `consentRemote: false` runs offline: signals only, nothing started. */
+	startAnalysis: (request: AnalysisRequest) => invoke<StartedRun>('start_analysis', { request }),
+	/** Stop a run and its process. Idempotent; allowed while off. */
+	cancelAnalysis: (runId: string) => invoke<void>('cancel_analysis', { runId }),
+	getIntelligenceRun: (runId: string) =>
+		invoke<IntelligenceRunDetail>('get_intelligence_run', { runId }),
+	/** The project's most recent run with its signals, or null if it never ran. */
+	latestIntelligenceRun: (projectId: string) =>
+		invoke<IntelligenceRunDetail | null>('latest_intelligence_run', { projectId }),
+	/** Every candidate of the project, any status, with evidence and timeline. */
+	listImprovements: (projectId: string) =>
+		invoke<ImprovementCandidate[]>('list_improvements', { projectId }),
+	dismissImprovement: (candidateId: string, reason?: string) =>
+		invoke<ImprovementCandidate>('dismiss_improvement', { candidateId, reason }),
+	/** Flag (or unflag) a candidate to come back to: the whole of acting on a
+	 *  test or script suggestion, which are consult-only. */
+	markFollowUp: (candidateId: string, followUp: boolean, note?: string) =>
+		invoke<ImprovementCandidate>('mark_follow_up', { candidateId, followUp, note }),
+	/** The patch for an `instruction` candidate. Writes nothing.
+	 *  `allowDuplicate` asks for it even when the file already says it. */
+	prepareInstructionChange: (candidateId: string, allowDuplicate?: boolean) =>
+		invoke<PreparedChange>('prepare_instruction_change', { candidateId, allowDuplicate }),
+	/** After the person saved the prepared change with the viewer's Save: verify
+	 *  it on disk, then mark the candidate `implemented`. */
+	recordImplementation: (candidateId: string, targetPath: string, expectedHash: string) =>
+		invoke<ImprovementCandidate>('record_implementation', {
+			candidateId,
+			targetPath,
+			expectedHash,
+		}),
+	/** A person's verification. The candidate keeps its status. */
+	recordVerification: (input: VerificationInput) =>
+		invoke<ImprovementCandidate>('record_verification', { input }),
+	markRetained: (candidateId: string, reason?: string) =>
+		invoke<ImprovementCandidate>('mark_retained', { candidateId, reason }),
+	/** The inverse patch, or `status: "conflict"` with manual instructions when
+	 *  the file is no longer as the Save left it. Writes nothing. */
+	prepareRevert: (candidateId: string) => invoke<PreparedChange>('prepare_revert', { candidateId }),
+	/** After the person saved the revert: verify the instruction is gone, then
+	 *  mark the candidate `reverted`. */
+	recordRevert: (candidateId: string, targetPath: string, expectedHash: string) =>
+		invoke<ImprovementCandidate>('record_revert', { candidateId, targetPath, expectedHash }),
 };
 
 /**
@@ -691,6 +762,16 @@ export const events = {
 	/** A session took its agent's id (F30, ADR-0062). */
 	onSessionAdopted: (cb: (p: SessionAdoptedEvent) => void) =>
 		listen<SessionAdoptedEvent>('session:adopted', cb),
+	/** An analysis moved to its next phase (F33). Arrives before `startAnalysis`
+	 *  resolves can; match on `projectId` as well as `runId`. */
+	onIntelligenceProgress: (cb: (p: IntelligenceProgressEvent) => void) =>
+		listen<IntelligenceProgressEvent>('intelligence:progress', cb),
+	/** An analysis ended, once per run, after its row is final (F33). */
+	onIntelligenceRunFinished: (cb: (p: IntelligenceRunFinishedEvent) => void) =>
+		listen<IntelligenceRunFinishedEvent>('intelligence:run-finished', cb),
+	/** A project's candidates or timeline changed: refetch `listImprovements` (F33). */
+	onIntelligenceChanged: (cb: (p: IntelligenceChangedEvent) => void) =>
+		listen<IntelligenceChangedEvent>('intelligence:changed', cb),
 };
 
 // ── Mocks for browser-only dev (pnpm vite:dev without tauri) ───────────────
@@ -857,6 +938,36 @@ interface TestFixture {
 	/** Blob text keyed by `<sha>:<relPath>`; absent answers null (no such file at
 	 *  that commit). */
 	ghBlobs?: Record<string, string>;
+	/** Project Intelligence (F33). The switch is `settings.projectIntelligence`,
+	 *  as in the real app; this is what the commands answer once it is `on`. */
+	intelligence?: IntelligenceFixture;
+}
+
+/**
+ * What the mocked Project Intelligence commands answer. Everything is optional
+ * and absent means empty, so a fixture states only what its test is about.
+ * The candidate commands change the fixture's own objects, the way the real
+ * ones change the table, so a refetch shows what a click did.
+ */
+interface IntelligenceFixture {
+	/** Default: the Claude CLI, available, remote. */
+	provider?: IntelligenceProviderInfo;
+	/** Merged over an empty preview (no sessions, no signals). */
+	preview?: Partial<AnalysisPreview>;
+	/** The id `start_analysis` hands back. */
+	runId?: string;
+	/** `get_intelligence_run` by run id. */
+	runs?: Record<string, IntelligenceRunDetail>;
+	/** `latest_intelligence_run` by project id. */
+	latestRuns?: Record<string, IntelligenceRunDetail>;
+	/** `list_improvements` by project id. */
+	improvements?: Record<string, ImprovementCandidate[]>;
+	/** `prepare_instruction_change` by candidate id. */
+	prepared?: Record<string, PreparedChange>;
+	/** `prepare_revert` by candidate id. */
+	revertPrepared?: Record<string, PreparedChange>;
+	/** Makes every candidate-changing command and `start_analysis` reject. */
+	fails?: AppError;
 }
 
 /** One mocked command call, recorded in order while a fixture is installed. */
@@ -951,6 +1062,121 @@ function mockCheckoutPlan(
 		headOid: detail.headRefOid,
 		...fx?.ghPrCheckoutPlans?.[`${projectPath}#${number}`],
 	} satisfies PrCheckoutPlan;
+}
+
+/** Project Intelligence is on when the fixture's `projectIntelligence` setting is
+ *  `on` - the same row the real switch is. */
+function mockIntelligenceOn(fx: TestFixture | undefined): boolean {
+	return fx?.settings?.projectIntelligence === 'on';
+}
+
+function mockIntelligenceProvider(fx: TestFixture | undefined): IntelligenceProviderInfo {
+	return (
+		fx?.intelligence?.provider ?? {
+			id: 'claude_cli',
+			displayName: 'Claude Code CLI',
+			remote: true,
+			available: true,
+			version: null,
+			binaryPath: null,
+			reason: null,
+			detail: null,
+		}
+	);
+}
+
+/** What the real commands reject with: `Intelligence`, `<code>: <detail>`. */
+function mockIntelligenceError(code: string, detail: string): AppError {
+	return { kind: 'Intelligence', message: `${code}: ${detail}` };
+}
+
+function mockIntelligenceRequire(fx: TestFixture | undefined): void {
+	if (!mockIntelligenceOn(fx)) {
+		throw mockIntelligenceError(
+			'disabled',
+			'Project Intelligence is off. Turn it on in Settings to analyse sessions.',
+		);
+	}
+}
+
+let mockImprovementEventId = 0;
+
+/** The candidate commands, applied to the fixture's own candidate objects. */
+function mockImprovementChange(
+	fx: TestFixture | undefined,
+	name: string,
+	args: Record<string, unknown> | undefined,
+): ImprovementCandidate {
+	mockIntelligenceRequire(fx);
+	if (fx?.intelligence?.fails) throw fx.intelligence.fails;
+	const input = args?.input as { candidateId?: string } | undefined;
+	const id = String(args?.candidateId ?? input?.candidateId ?? '');
+	const candidate = Object.values(fx?.intelligence?.improvements ?? {})
+		.flat()
+		.find((c) => c.id === id);
+	if (!candidate) throw mockIntelligenceError('candidate_not_found', `no improvement ${id}`);
+	const now = Date.now();
+	const event = (partial: Partial<ImprovementEvent> & Pick<ImprovementEvent, 'eventType'>) =>
+		candidate.events.push({
+			id: ++mockImprovementEventId,
+			outcome: null,
+			method: null,
+			note: null,
+			artifactPath: null,
+			beforeHash: null,
+			afterHash: null,
+			createdAt: now,
+			...partial,
+		});
+	switch (name) {
+		case 'dismiss_improvement':
+			candidate.status = 'dismissed';
+			event({ eventType: 'dismissed', note: (args?.reason as string | undefined) ?? null });
+			break;
+		case 'mark_follow_up':
+			candidate.followUp = Boolean(args?.followUp);
+			event({ eventType: 'follow_up', outcome: candidate.followUp ? 'on' : 'off' });
+			break;
+		case 'record_implementation': {
+			const prepared = fx?.intelligence?.prepared?.[id];
+			candidate.status = 'implemented';
+			candidate.implementation = {
+				targetPath: String(args?.targetPath ?? prepared?.targetPath ?? ''),
+				relativePath: prepared?.relativePath ?? '',
+				beforeHash: prepared?.baseHash ?? null,
+				afterHash: String(args?.expectedHash ?? ''),
+				createdFile: prepared?.createdFile ?? false,
+				implementedAt: now,
+			};
+			event({
+				eventType: 'implemented',
+				artifactPath: prepared?.relativePath ?? null,
+				beforeHash: prepared?.baseHash ?? null,
+				afterHash: String(args?.expectedHash ?? ''),
+			});
+			break;
+		}
+		case 'record_verification': {
+			const v = input as { method?: string; outcome?: string; note?: string | null } | undefined;
+			event({
+				eventType: 'verification',
+				method: v?.method ?? null,
+				outcome: v?.outcome ?? null,
+				note: v?.note ?? null,
+			});
+			break;
+		}
+		case 'mark_retained':
+			candidate.status = 'retained';
+			event({ eventType: 'retained', note: (args?.reason as string | undefined) ?? null });
+			break;
+		case 'record_revert':
+			candidate.status = 'reverted';
+			event({ eventType: 'reverted', afterHash: String(args?.expectedHash ?? '') });
+			break;
+	}
+	candidate.updatedAt = now;
+	return candidate;
 }
 
 async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Promise<T> {
@@ -1751,6 +1977,74 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			}
 			return undefined as unknown as T;
 		}
+		// ── Project Intelligence (F33) ──
+		case 'get_intelligence_status': {
+			const enabled = mockIntelligenceOn(fx);
+			return {
+				enabled,
+				provider: enabled ? mockIntelligenceProvider(fx) : null,
+			} satisfies IntelligenceStatus as unknown as T;
+		}
+		case 'preview_analysis': {
+			mockIntelligenceRequire(fx);
+			return {
+				projectId: String(args?.projectId ?? ''),
+				sessionLimit: 20,
+				sessionCount: 0,
+				byAgent: [],
+				excludedRunning: 0,
+				excludedSubagents: 0,
+				unreadable: 0,
+				signals: [],
+				signalsCapped: false,
+				estimatedPayloadBytes: 0,
+				instructionFile: null,
+				provider: mockIntelligenceProvider(fx),
+				previewHash: 'mock-preview-hash',
+				...fx?.intelligence?.preview,
+			} satisfies AnalysisPreview as unknown as T;
+		}
+		case 'start_analysis':
+			mockIntelligenceRequire(fx);
+			if (fx?.intelligence?.fails) throw fx.intelligence.fails;
+			return { runId: fx?.intelligence?.runId ?? 'mock-run' } satisfies StartedRun as unknown as T;
+		case 'cancel_analysis':
+			return undefined as unknown as T;
+		case 'get_intelligence_run': {
+			mockIntelligenceRequire(fx);
+			const run = fx?.intelligence?.runs?.[String(args?.runId ?? '')];
+			if (!run) throw mockIntelligenceError('run_not_found', 'no such analysis in the fixture');
+			return run as unknown as T;
+		}
+		case 'latest_intelligence_run':
+			mockIntelligenceRequire(fx);
+			return (fx?.intelligence?.latestRuns?.[String(args?.projectId ?? '')] ??
+				null) as unknown as T;
+		case 'list_improvements':
+			mockIntelligenceRequire(fx);
+			return (fx?.intelligence?.improvements?.[String(args?.projectId ?? '')] ??
+				[]) as unknown as T;
+		case 'prepare_instruction_change': {
+			mockIntelligenceRequire(fx);
+			const prepared = fx?.intelligence?.prepared?.[String(args?.candidateId ?? '')];
+			if (!prepared)
+				throw mockIntelligenceError('invalid_state', 'no prepared change in the fixture');
+			return prepared as unknown as T;
+		}
+		case 'prepare_revert': {
+			mockIntelligenceRequire(fx);
+			const prepared = fx?.intelligence?.revertPrepared?.[String(args?.candidateId ?? '')];
+			if (!prepared)
+				throw mockIntelligenceError('invalid_state', 'no prepared revert in the fixture');
+			return prepared as unknown as T;
+		}
+		case 'dismiss_improvement':
+		case 'mark_follow_up':
+		case 'record_implementation':
+		case 'record_verification':
+		case 'mark_retained':
+		case 'record_revert':
+			return mockImprovementChange(fx, name, args) as unknown as T;
 		case 'check_agent_cli': {
 			// Honours the override exactly as the real command does, so a fixture
 			// that sets one sees the settings page report it.

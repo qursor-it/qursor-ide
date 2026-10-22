@@ -395,7 +395,8 @@ export type SettingKey =
 	| 'routinesCatchupHours'
 	| 'routinesMaxConcurrent'
 	| 'updateChannel'
-	| 'desktopNotifications';
+	| 'desktopNotifications'
+	| 'projectIntelligence';
 
 /**
  * The update channel an install follows (F14, ADR-0064). Stored under
@@ -960,7 +961,11 @@ export type AppError =
 	| { kind: 'Unauthenticated'; message: string }
 	/** A request `gh` made to GitHub failed: rate limit, network, SAML, a 422.
 	 *  The remote's own words are in `message` (F31). */
-	| { kind: 'Remote'; message: string };
+	| { kind: 'Remote'; message: string }
+	/** A Project Intelligence command refused (F33, ADR-0084). `message` is
+	 *  `<code>: <detail>` with `code` one of {@link IntelligenceErrorCode}; use
+	 *  `intelligenceErrorCode` to split it. */
+	| { kind: 'Intelligence'; message: string };
 
 /**
  * A project's scheduled prompt (F22, ADR-0026). Mirrors the Rust `Routine`.
@@ -1333,4 +1338,386 @@ export interface PrCheckoutPlan {
 	headOwner: string | null;
 	/** The pull request's head commit now. */
 	headOid: string;
+}
+
+// ── Project Intelligence (F33, ADR-0084) ───────────────────────────────────
+//
+// Field names are camelCase; enum values are snake_case, the spelling the
+// analysis contract and the SQLite columns already use. Mirrors
+// `models/intelligence.rs`.
+
+/**
+ * The reasons an intelligence command refuses, as the `code` in an
+ * `AppError` of kind `Intelligence` (`message` is `"<code>: <detail>"`).
+ *
+ * Run-level codes (`timeout`, `invalid_output`, `provider_*`, ...) are not here:
+ * they arrive on {@link IntelligenceRun.errorCode}, not as a rejected command.
+ */
+export type IntelligenceErrorCode =
+	/** The switch is off. Nothing runs and nothing is read. */
+	| 'disabled'
+	| 'project_not_found'
+	/** The project's folder is not on disk. */
+	| 'project_missing'
+	| 'candidate_not_found'
+	| 'run_not_found'
+	/** An analysis of this project is already running. */
+	| 'run_in_progress'
+	/** No completed sessions to analyse. */
+	| 'no_data'
+	/** The sessions changed since the preview: preview again. */
+	| 'preview_stale'
+	/** The move is not allowed from the candidate's status. */
+	| 'invalid_state'
+	/** Only an `instruction` can be prepared as a file change. */
+	| 'not_instruction'
+	/** Prepare the change before recording a Save. */
+	| 'not_prepared'
+	/** The file on disk is not what was saved: it changed, or the hash differs. */
+	| 'file_conflict'
+	/** The file does not hold the change yet (or, for a revert, still does). */
+	| 'not_saved'
+	/** The target is outside the project, a broken link, or not UTF-8 text. */
+	| 'unsafe_target'
+	| 'target_too_large';
+
+/** Why a run did not complete, or why a completed one is degraded. */
+export type IntelligenceRunErrorCode =
+	| 'invalid_output'
+	| 'timeout'
+	| 'cancelled'
+	| 'disabled'
+	| 'interrupted'
+	| 'output_too_large'
+	| 'provider_failed'
+	| 'provider_unauthenticated'
+	/** On a failed run: the provider vanished mid-run. On a *completed*
+	 *  `signals_only` run: it was asked for and could not be used. */
+	| 'provider_unavailable'
+	| 'provider_unsafe'
+	| 'internal';
+
+export type ProblemKind =
+	| 'project_convention'
+	| 'recurring_correction'
+	| 'verification_gap'
+	| 'workflow_hint';
+
+export type ActionKind =
+	| 'instruction'
+	| 'test_suggestion'
+	| 'script_suggestion'
+	| 'manual_followup';
+
+export type SignalType =
+	| 'user_correction'
+	| 'tool_failure'
+	| 'retry_after_failure'
+	| 'repeated_instruction';
+
+/** `dismissed` and `reverted` are terminal. A verification is an event, never a
+ *  status. */
+export type CandidateStatus = 'proposed' | 'dismissed' | 'implemented' | 'retained' | 'reverted';
+
+export type IntelligenceRunState = 'running' | 'completed' | 'failed' | 'cancelled';
+
+/** `no_change` is a legitimate result ("nothing justified"), not a candidate.
+ *  `signals_only` means no model looked: the signals are *unreviewed*. */
+export type IntelligenceRunOutcome = 'candidates' | 'no_change' | 'signals_only';
+
+export type ImprovementEventType =
+	| 'proposed'
+	| 'evidence_added'
+	| 'dismissed'
+	| 'follow_up'
+	| 'implemented'
+	| 'verification'
+	| 'retained'
+	| 'reverted';
+
+export type VerificationOutcome = 'passed' | 'failed' | 'inconclusive';
+
+export type ChangeKind = 'instruction' | 'revert';
+
+/** `ready` carries a patch; `duplicate` and `conflict` carry the reason there is
+ *  none. */
+export type ChangeStatus = 'ready' | 'duplicate' | 'conflict';
+
+/** Where an observation sits in its transcript. */
+export interface EvidenceLocator {
+	/** 1-based physical line in the transcript file. */
+	line: number;
+	/** The agent's own ordinal for the line (Codex). */
+	ordinal: number | null;
+	/** The agent's own id for the event (Claude `uuid`, Codex `call_id`). */
+	eventId: string | null;
+}
+
+/** One observation that would be sent to the provider, shown in the preview so
+ *  it can be excluded by `evidenceId`. */
+export interface SignalPreview {
+	evidenceId: string;
+	sessionId: string;
+	sessionTitle: string | null;
+	sourceAgent: AgentId;
+	signalType: SignalType;
+	/** Redacted, at most 280 characters: exactly what would leave the machine. */
+	excerpt: string;
+	/** Redacted, at most 160 characters. */
+	context: string | null;
+	locator: EvidenceLocator;
+}
+
+export interface AgentSessionCount {
+	agent: AgentId;
+	sessions: number;
+}
+
+export interface InstructionFilePreview {
+	/** Relative to the project root. */
+	path: string;
+	bytes: number;
+	/** Bytes of it included in the payload (redacted). */
+	includedBytes: number;
+	truncated: boolean;
+}
+
+/** The analysis provider and whether it can run now. */
+export interface IntelligenceProviderInfo {
+	id: string;
+	displayName: string;
+	/** A local CLI is not local inference: `true` means excerpts leave the machine
+	 *  and a run needs `consentRemote`. */
+	remote: boolean;
+	available: boolean;
+	version: string | null;
+	binaryPath: string | null;
+	/** Why it is unavailable: `not_installed`, `missing_flag`, `probe_failed`. */
+	reason: 'not_installed' | 'missing_flag' | 'probe_failed' | null;
+	detail: string | null;
+}
+
+export interface AnalysisPreview {
+	projectId: string;
+	sessionLimit: number;
+	/** Sessions whose transcripts were read. */
+	sessionCount: number;
+	byAgent: AgentSessionCount[];
+	/** Newer sessions skipped because a terminal is still running them. */
+	excludedRunning: number;
+	/** Sub-agent transcripts: never independent evidence. */
+	excludedSubagents: number;
+	unreadable: number;
+	signals: SignalPreview[];
+	signalsCapped: boolean;
+	/** Size of the evidence part of the payload, in bytes. */
+	estimatedPayloadBytes: number;
+	instructionFile: InstructionFilePreview | null;
+	provider: IntelligenceProviderInfo;
+	/** Pins this exact set of signals; pass it to `start_analysis`. */
+	previewHash: string;
+}
+
+export interface AnalysisRequest {
+	projectId: string;
+	/** 1 to 50; default 20. */
+	sessionLimit?: number | null;
+	/** The person agreed that the previewed excerpts may be processed by the
+	 *  provider. `false` runs offline: signals only, no process started. */
+	consentRemote: boolean;
+	/** Signals removed from the preview. */
+	excludedEvidenceIds?: string[];
+	previewHash: string;
+	/** Send the existing instruction file (bounded, redacted) too. */
+	includeInstructionFile?: boolean;
+}
+
+export interface StartedRun {
+	runId: string;
+}
+
+export interface IntelligenceRun {
+	id: string;
+	projectId: string;
+	state: IntelligenceRunState;
+	/** `null` until the run completes. */
+	outcome: IntelligenceRunOutcome | null;
+	/** The provider that analysed it; `null` for a signals-only run. */
+	provider: string | null;
+	sessionCount: number;
+	signalCount: number;
+	candidateCount: number;
+	/** Candidates the model proposed that validation rejected. */
+	droppedCount: number;
+	payloadBytes: number;
+	startedAt: number;
+	endedAt: number | null;
+	errorCode: IntelligenceRunErrorCode | null;
+	errorMessage: string | null;
+}
+
+export interface IntelligenceRunDetail {
+	run: IntelligenceRun;
+	/** For a `signals_only` run these are *unreviewed* observations and must not
+	 *  be presented as insights. */
+	signals: EvidenceView[];
+}
+
+/** The switch, and (only while it is on) the provider's availability. */
+export interface IntelligenceStatus {
+	enabled: boolean;
+	provider: IntelligenceProviderInfo | null;
+}
+
+export interface EvidenceView {
+	evidenceId: string;
+	sessionId: string;
+	sessionTitle: string | null;
+	/** The session is still in the index. When `false`, `excerpt` and `context`
+	 *  are `null`: the words were removed with the session. */
+	sessionAvailable: boolean;
+	sourceAgent: AgentId;
+	signalType: SignalType;
+	excerpt: string | null;
+	context: string | null;
+	locator: EvidenceLocator;
+	fingerprint: string;
+	observedAt: number;
+}
+
+/** A line already in the instruction file that says what a candidate would add. */
+export interface DuplicateHint {
+	/** Relative to the project root. */
+	path: string;
+	line: number;
+	text: string;
+}
+
+export interface ImprovementEvent {
+	/** Increasing: the order things happened in. */
+	id: number;
+	eventType: ImprovementEventType;
+	/** `passed` / `failed` / `inconclusive` for a verification; `on` / `off` for a
+	 *  follow-up flag. */
+	outcome: string | null;
+	method: string | null;
+	note: string | null;
+	artifactPath: string | null;
+	beforeHash: string | null;
+	afterHash: string | null;
+	createdAt: number;
+}
+
+/** What was recorded when the change was saved. */
+export interface ImplementationRecord {
+	/** Absolute, canonical. */
+	targetPath: string;
+	relativePath: string;
+	beforeHash: string | null;
+	afterHash: string;
+	createdFile: boolean;
+	implementedAt: number;
+}
+
+export interface ImprovementCandidate {
+	id: string;
+	projectId: string;
+	latestRunId: string | null;
+	problemKind: ProblemKind;
+	actionKind: ActionKind;
+	title: string;
+	problem: string;
+	recommendation: string;
+	rationale: string;
+	limitations: string | null;
+	status: CandidateStatus;
+	/** Fewer than two independent sessions: a hypothesis, not a pattern. */
+	hypothesis: boolean;
+	/** Set when the backend weakened what the model claimed, and why. */
+	downgradeNote: string | null;
+	followUp: boolean;
+	/** Distinct sessions among the evidence, computed by the backend. */
+	independentSessions: number;
+	/** An instruction already covering this was found. */
+	duplicate: DuplicateHint | null;
+	evidence: EvidenceView[];
+	/** Oldest first. */
+	events: ImprovementEvent[];
+	implementation: ImplementationRecord | null;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface VerificationInput {
+	candidateId: string;
+	/** 1 to 200 characters: how it was checked. */
+	method: string;
+	outcome: VerificationOutcome;
+	note?: string | null;
+}
+
+export interface ChangeConflict {
+	reason: string;
+	currentHash: string | null;
+	recordedHash: string | null;
+	/** What to do by hand. */
+	manualInstructions: string;
+}
+
+/**
+ * A change the person may review and save. **Preparing it wrote nothing.**
+ *
+ * Open `targetPath` in the viewer with `proposedContent` as the draft; when the
+ * person presses Save (the existing `write_file`), call `record_implementation`
+ * (or `record_revert`) with `targetPath` and `proposedHash`.
+ */
+export interface PreparedChange {
+	candidateId: string;
+	kind: ChangeKind;
+	status: ChangeStatus;
+	/** Absolute and canonical, inside the project root. */
+	targetPath: string;
+	relativePath: string;
+	/** `false`: saving creates the file (the viewer cannot open it yet). */
+	exists: boolean;
+	createdFile: boolean;
+	/** sha256 of the file now; `null` when it does not exist. */
+	baseHash: string | null;
+	proposedContent: string | null;
+	/** sha256 of `proposedContent`. */
+	proposedHash: string | null;
+	/** The exact text added (instruction) or removed (revert). */
+	appendedBlock: string | null;
+	/** Unified diff from the current file to `proposedContent`. */
+	diff: string | null;
+	note: string | null;
+	duplicateOf: DuplicateHint | null;
+	conflict: ChangeConflict | null;
+}
+
+/** `intelligence:progress` */
+export interface IntelligenceProgressEvent {
+	runId: string;
+	projectId: string;
+	phase: 'analyzing' | 'validating' | 'saving';
+	sessionsDone: number;
+	sessionsTotal: number;
+	signals: number;
+}
+
+/** `intelligence:run-finished`: once per run, after its row is final. */
+export interface IntelligenceRunFinishedEvent {
+	runId: string;
+	projectId: string;
+	state: IntelligenceRunState;
+	outcome: IntelligenceRunOutcome | null;
+	errorCode: IntelligenceRunErrorCode | null;
+	candidateCount: number;
+	signalCount: number;
+}
+
+/** `intelligence:changed`: refetch `list_improvements` for the project. */
+export interface IntelligenceChangedEvent {
+	projectId: string;
+	candidateId: string | null;
 }
