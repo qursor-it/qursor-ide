@@ -1127,7 +1127,12 @@ function mockImprovementChange(
 	const now = Date.now();
 	const event = (partial: Partial<ImprovementEvent> & Pick<ImprovementEvent, 'eventType'>) =>
 		candidate.events.push({
-			id: ++mockImprovementEventId,
+			// Past any id the fixture gave its own events: the timeline is keyed by
+			// it, and the real ones only ever increase.
+			id: (mockImprovementEventId = Math.max(
+				mockImprovementEventId + 1,
+				...candidate.events.map((e) => e.id + 1),
+			)),
 			outcome: null,
 			method: null,
 			note: null,
