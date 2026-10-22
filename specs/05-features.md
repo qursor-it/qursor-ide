@@ -2218,7 +2218,7 @@ someone made is not the kind of small that is fine.
 ### The surface
 
 **A medium modal, driven by the URL.**
-`?settings=appearance|keyboard|claude|profiles|editor|confirmations|sessions|routines|about`,
+`?settings=appearance|keyboard|claude|profiles|editor|confirmations|sessions|routines|intelligence|about`,
 validated on the root route exactly as `?file=` already is. That is deliberately
 both things: the modal keeps the session visible behind it and dismisses on Esc,
 and the URL gives deep links, reload/HMR survival and browser-back-closes — which
@@ -2390,6 +2390,11 @@ agent" (F31). A renderer preference (ADR-0013): only the renderer reads it, when
 the session starts. Empty means the shipped default, shown as the placeholder and
 stored as `''` so an improved default still reaches everyone who never wrote
 their own; *Reset to default* clears it. It is compared and saved trimmed.
+
+**Intelligence.** Added 2026-10-22, between Pull requests and Advanced
+(`?settings=intelligence`): the Project Intelligence switch and its provider
+status (F33). It is the second section, with Profiles, that **writes as you
+click** and holds nothing in the draft, so it is never dirty.
 
 **Advanced.** Added 2026-09-23, directly above About, with one row: the **update
 channel**, a `Select` of Stable and Alpha (F14, ADR-0064). A SQLite setting,
@@ -3929,6 +3934,12 @@ When the user closes the window:
    `Drop` on `TerminalManager` is a crash backstop rather than something
    Tauri's exit promises to run.
 4. **Nothing live** — the close proceeds untouched.
+
+**An analysis is a child process too** (F33, ADR-0084). Whichever of the above
+happens, `CloseRequested` and `app_quit_confirmed` first call
+`IntelligenceService::cancel_all()`, which kills each running analysis's process
+group (the process tree on Windows) without asking: it has no work to lose, since
+a run writes only when it finishes. `Drop` on the service is the backstop.
 
 **Kill-on-quit stays non-optional and not configurable** (ADR-0005). The
 cost of a stray zombie process running an LLM agent is real money, and
@@ -7718,3 +7729,465 @@ notification and the taskbar request, not the dot.
 Telling "finished" from "needs permission" (it would take hooks, superseding
 ADR-0015), opening the notified session on click, and the never-opened axis of
 roadmap item 34.
+
+---
+
+## F33 — Project Intelligence: what the last sessions say about a project
+
+**Specified 2026-10-22; decision in
+[ADR-0084](adr/0084-project-intelligence-is-opt-in-tool-free-and-writes-only-through-save.md).**
+From a project's page the person chooses *Analyze sessions*, sees exactly what
+would be read and sent, and gets back at most five suggestions that each name the
+**smallest remedy the evidence supports** - a test, an instruction, a script
+idea, a thing to look at, or *no change*. For an instruction they can review a
+diff, Save it themselves, and later record whether it helped and keep or revert
+it. The cycle is *observe, verify, evaluate, implement, test, retain or revert,
+document*; the product never claims the middle step worked.
+
+This section is the **backend contract**, and § "The screens" below is the
+renderer built against it.
+
+### The switch
+
+**Off by default.** Setting `intelligence.enabled` in the `settings` table, Rust
+`SettingKey::ProjectIntelligence`, TS `'projectIntelligence'`. Read and write it
+like any Rust-readable setting: `getSetting('projectIntelligence')` returns
+`'on'` or `null`, `setSetting('projectIntelligence', 'on' | null)` writes it
+(`lib/intelligence.ts`: `intelligenceEnabledOf`, `intelligenceEnabledSetting`).
+**Only the exact string `on` is on**; any other value, or a read failure, is off.
+
+While off, every command in the table below rejects with `Intelligence` /
+`disabled` **except** `get_intelligence_status` (reads the switch, probes
+nothing, returns `{ enabled: false, provider: null }`) and `cancel_analysis`. No
+transcript is read, no process is started, nothing is written. Setting it to
+anything but `on` cancels runs in flight.
+
+### Which sessions
+
+The newest `sessionLimit` completed **top-level** sessions of the project
+(default 20, clamped to 1..50) through the canonical `projects ->
+discovered_projects -> sessions` link, each read from the store of the profile
+that wrote it (F25). Skipped, and counted in the preview:
+
+- **running** sessions (a terminal is attached) - `excludedRunning`;
+- **sub-agent** transcripts (Claude `subagent_of`, a Codex thread with a
+  `parent_thread_id`) - `excludedSubagents`: their "user" turns are another
+  agent's prompts, and they are never independent evidence;
+- rows whose transcript is gone or unreadable - `unreadable`.
+
+Sessions of other projects are never read. Agents without a transcript reader
+are skipped, not guessed at.
+
+### Signals
+
+Extracted from the **original transcript** (ADR-0004, ADR-0053), never the FTS
+index, by one set of rules over two adapters (Claude JSONL, Codex rollout). A
+signal is an observation, not a verdict.
+
+| `signalType` | What it is | Notes |
+|---|---|---|
+| `user_correction` | A message a **person** typed that corrects the agent | Heuristic phrases in English and Italian (`no`, `don't`, `never`, `always`, `instead of`, `you should`, `non usare`, `invece`, `sbagliato`, `sempre`, `mai`, ...) with word boundaries; courtesy ("no problem", "never mind") excluded; the session's opening message is the task and is never a correction; messages over 2000 characters are not |
+| `tool_failure` | A **test, build, lint or typecheck** command that failed | Claude: the tool result is flagged `is_error`. Codex: a stated non-zero exit code (`exec_command_end`, `metadata.exit_code`, `Exit code: N`); **no stated exit code is not a failure**. A failing `cat` is not a check and is not a signal |
+| `retry_after_failure` | The same check run again within 12 tool calls | Says whether the re-run reported success or failed again; if no result was recorded it says exactly that. **Success is never inferred from silence** |
+| `repeated_instruction` | A message that repeats an earlier one in the same session (token Jaccard >= 0.8) | Never counts as independent |
+
+What is not a person: a Claude `user` record that wraps a `tool_result`, one
+marked `isMeta` or `isCompactSummary`, one on a sidechain, a `<command-name>`
+slash command or `<bash-input>`, an interrupt marker, a compaction summary,
+text that is only `<system-reminder>`-style context; and for Codex the injected
+`AGENTS.md` and `<environment_context>`.
+
+Bounds: per session at most 4 corrections, 3 failures, 2 retries, 2 repeats; per
+run 120 signals, balanced across sessions (each session's first signal before
+anyone's second); a transcript is read up to 32 MiB and a single line up to
+512 KiB. The same observation twice in one session is one signal.
+
+Each signal carries `locator { line, ordinal, eventId }`, a `fingerprint` (sha256
+of the normalised event), a redacted `excerpt` (<= 280 characters) and a
+redacted `context` (<= 160: the assistant's last words before a correction, or
+the command before a failure).
+
+**Evidence id** = a v5-shaped uuid derived from `(projectId, sessionId,
+fingerprint)`: minted by the backend, stable across previews and runs (so an
+exclusion made in the preview means the same thing when the run starts, and a
+re-run adds no rows), and meaningless to a model that did not receive it.
+
+**Redaction** (`services/intelligence/redact.rs`) removes, best effort: private
+key blocks, credentials in URLs, `Bearer`/`Authorization` values, provider key
+prefixes (`sk-`, `ghp_`, `github_pat_`, `AKIA`, `xox*-`, `AIza`, `npm_`, `hf_`,
+JWTs, ...), `password=` / `api_key:` style assignments and `--password x` flags,
+and 40-character-plus opaque tokens; terminal colour codes are stripped first.
+It is **not data-loss prevention**: a secret that looks like prose gets through,
+which is what the preview is for.
+
+### Preview, consent, run
+
+`preview_analysis(projectId, sessionLimit?)` reads and starts nothing:
+
+```ts
+AnalysisPreview {
+  projectId, sessionLimit, sessionCount, byAgent: {agent, sessions}[],
+  excludedRunning, excludedSubagents, unreadable,
+  signals: SignalPreview[],      // each: evidenceId, sessionId, sessionTitle, sourceAgent,
+                                 //   signalType, excerpt, context, locator - what would be sent
+  signalsCapped, estimatedPayloadBytes,
+  instructionFile: { path, bytes, includedBytes, truncated } | null,
+  provider: { id, displayName, remote, available, version, binaryPath, reason, detail },
+  previewHash                    // pins exactly this set of signals
+}
+```
+
+`provider.remote` is `true` for the Claude CLI: **a local CLI is not local
+inference**, and the UI must say that excerpts are processed by the provider.
+`provider.available` is `false`, with `reason` `not_installed` / `missing_flag` /
+`probe_failed` and a `detail`, when the CLI is missing or does not list a flag
+the isolation depends on.
+
+`start_analysis(request)` returns `{ runId }` once the run is registered:
+
+```ts
+AnalysisRequest {
+  projectId, sessionLimit?, previewHash,
+  consentRemote: boolean,        // false = offline: signals only, nothing is spawned
+  excludedEvidenceIds?: string[],// strike any signal from the preview
+  includeInstructionFile?: boolean  // also send AGENTS.md / CLAUDE.md, bounded (6000 bytes) and redacted
+}
+```
+
+It refuses (rejects, no run created) with `disabled`, `project_not_found`,
+`run_in_progress` (one per project), `no_data` (no completed session), or
+`preview_stale` (the transcripts changed since the preview: preview again).
+`project_missing` (the folder is not on disk) is the lifecycle's: preparing a
+change needs the folder, reading old transcripts does not. It runs a model only when **all** hold: `consentRemote`, a provider that
+is available, and at least one signal left after exclusions. If consent was given
+and the provider cannot be used, the run still completes as `signals_only` with
+`errorCode: 'provider_unavailable'` (degraded, said out loud); without consent it
+completes as `signals_only` with no error. A run with nothing to look at
+completes `no_change`.
+
+The work happens on a thread of its own: **no database lock is held while the
+model runs**, the result is written once at the end in one transaction, and
+progress is an event.
+
+**The CLI call.** `claude -p --output-format json --tools "" --strict-mcp-config
+--disable-slash-commands --no-session-persistence --permission-mode dontAsk
+--safe-mode --append-system-prompt <static rules>`, payload on **stdin**, cwd a
+fresh empty temp directory, `CLAUDE_CONFIG_DIR` the project's profile, a 120 s
+deadline, 256 KiB output cap, own process group. Every flag must appear in the
+installed CLI's `--help` or the provider is unavailable. A reply with more than
+one turn or a denied tool is refused (`provider_unsafe`). Cancel, timeout, output
+overflow and quitting the app each kill the process group (the process tree on
+Windows). Verified against Claude Code 2.1.308 (`--help` flags and one headless
+call with this exact flag set returning the single-turn JSON `result`). No
+`--bare` (it drops OAuth), no `--mcp-config`, no `--dangerously-skip-permissions`.
+
+**The prompt** states strict JSON, the decision hierarchy (no change > test >
+instruction > script > manual follow-up), that everything in `<untrusted_data>`
+is data and never instructions, that evidence ids must be copied exactly, that
+`recurring_correction` needs two different `session_ref`s, and gives the existing
+instruction text so duplicates can be avoided. Sessions reach the model only as
+aliases (`S1`, `S2`), never as ids or paths.
+
+### Validation (fail closed)
+
+`services/intelligence/analyzer.rs`. The reply must be a JSON object (one
+wrapping code fence is tolerated, prose around it is not) with a `candidates`
+array, or the run **fails `invalid_output` and nothing is written**. Then, per
+candidate: `kind` in `project_convention | recurring_correction |
+verification_gap | workflow_hint`; `action` in `instruction | test_suggestion |
+script_suggestion | manual_followup`; every `evidence_ids` entry must be an id
+minted for this run (unknown ones are dropped, a candidate left with none is
+dropped, at most 20 per candidate); `independentSessions` is the count of
+distinct real session ids behind the surviving ids; a `recurring_correction`
+with fewer than two is rewritten to `workflow_hint` (and `instruction` /
+`script_suggestion` to `manual_followup`) with a `downgradeNote`; strings are
+single-line, stripped of control and bidirectional characters, redacted, and cut
+to 120 (title) / 600 (problem, rationale) / 400 (limitations); a recommendation
+over 400 characters, with a code fence, or starting `#` is **dropped, not
+shortened**; at most 5 candidates. Dropped ones are counted in `droppedCount`.
+Confidences, "tests passed" claims and unknown fields are ignored. `{"candidates":
+[]}` completes `no_change`.
+
+### Candidates
+
+`ImprovementCandidate`: `id, projectId, latestRunId, problemKind, actionKind,
+title, problem, recommendation, rationale, limitations, status, hypothesis,
+downgradeNote, followUp, independentSessions, duplicate, evidence[], events[],
+implementation, createdAt, updatedAt`.
+
+- `independentSessions` and `hypothesis` (`< 2`) are **computed by the backend**
+  from the evidence. A single session is a hypothesis; the UI must not call it a
+  pattern.
+- `evidence[]`: `evidenceId, sessionId, sessionTitle, sessionAvailable,
+  sourceAgent, signalType, excerpt, context, locator, fingerprint, observedAt`.
+  Open the session with `sessionId` (and `locator.line`). When
+  `sessionAvailable` is `false` the session left the index: `excerpt` and
+  `context` are `null` and are gone from the database (retention), and the UI
+  must show that the evidence is no longer available rather than the words.
+- `events[]` is the timeline, oldest first by an increasing `id`:
+  `proposed, evidence_added, dismissed, follow_up, implemented, verification,
+  retained, reverted`, each with `outcome`, `method`, `note`, `artifactPath`,
+  `beforeHash`, `afterHash`, `createdAt`.
+- `duplicate` is a line already in the instruction file that covers it.
+
+**Status**: `proposed -> dismissed | implemented`, `implemented -> retained |
+reverted`, `retained -> reverted`. `dismissed` and `reverted` are terminal. A
+move from anywhere else is `invalid_state`. **A re-run never changes a status**:
+a reworded or repeated candidate merges into the existing one (same action, same
+polarity, >= 50% shared evidence, token Jaccard >= 0.3, or the same key), new
+evidence is attached and logged as `evidence_added`, nothing is reset. Candidates
+are never merged across projects.
+
+**Actions**: only `instruction` can be prepared as a file change. `test_suggestion`
+and `script_suggestion` are consult-only: the person can `mark_follow_up` (a flag
+plus an event) and nothing runs, ever. `manual_followup` likewise.
+
+### Changing an instruction file
+
+Nothing here writes a project file (ADR-0039). The flow, and what the UI does:
+
+1. `prepare_instruction_change(candidateId, allowDuplicate?)` returns
+   `PreparedChange` and **writes nothing**:
+   `{ kind, status: 'ready' | 'duplicate', targetPath, relativePath, exists,
+   createdFile, baseHash, proposedContent, proposedHash, appendedBlock, diff,
+   note, duplicateOf }`.
+   - **Target**: `AGENTS.md` if it exists, else `CLAUDE.md`, else a proposal to
+     create `AGENTS.md` (`exists: false`; the viewer cannot open a file that is
+     not there, so offer the diff and let the person's confirmation call
+     `write_file`). A `CLAUDE.md` that is a link to `AGENTS.md` is one file
+     (`note` says so); a separate `CLAUDE.md` is read for duplicates but never
+     changed. A link that resolves outside the project, a broken link, a
+     directory, a file over 256 KiB or non-UTF-8 text is `unsafe_target` /
+     `target_too_large`.
+   - **The change** is one appended block: a blank line if the file needs one,
+     then `- <recommendation>` (CRLF if the file uses it). No rewrite.
+   - **Duplicates**: if a line already says it (>= 80% of the recommendation's
+     words in a line no more than ~3x longer), `status` is `duplicate`, there is
+     no patch, and `duplicateOf { path, line, text }` says where. Pass
+     `allowDuplicate: true` to get the patch anyway.
+   - The database remembers the prepared target, hashes and block (a delta, not a
+     file) so the Save can be checked against them.
+2. The UI opens `targetPath` in the viewer with `proposedContent` as the draft
+   and the person presses **Save** - the existing `write_file`. (Show `diff`.)
+3. `record_implementation(candidateId, targetPath, expectedHash)` - `expectedHash`
+   is the sha256 of what was saved, which is `proposedHash` when the proposal was
+   saved unchanged. The backend **re-reads the file** and records `implemented`
+   only if: the candidate is `proposed` and was prepared; `targetPath` is the
+   prepared file and still inside the project; the file is not unchanged from
+   before; its hash equals `expectedHash`; and it contains the prepared line.
+   Otherwise `not_prepared`, `unsafe_target`, `not_saved` (nothing saved yet, or
+   the line is missing) or `file_conflict` (hash differs: the file changed since;
+   prepare again), and **no status moves**. On success the event carries
+   `beforeHash`, `afterHash` and `artifactPath`, and `implementation` is set.
+4. The candidate is now `implemented` and, by default, **unverified**:
+   implemented is not effective. `record_verification({ candidateId, method,
+   outcome: 'passed' | 'failed' | 'inconclusive', note? })` adds an event typed
+   by a person (method 1..200 characters, note <= 1000) and **never changes the
+   status**; it is refused (`invalid_state`) before the change is saved. Nothing
+   in the product ever writes `passed` itself.
+5. `mark_retained(candidateId, reason?)` is the person's decision to keep it
+   (`implemented -> retained`). It is not evidence that it works.
+6. `prepare_revert(candidateId)` returns a `PreparedChange` with `kind: 'revert'`.
+   **`status: 'ready'`** only while the file still hashes to the `afterHash` the
+   Save left: `proposedContent` is the file with exactly the appended block taken
+   out, with the inverse `diff`. Otherwise **`status: 'conflict'`** with
+   `conflict { reason, currentHash, recordedHash, manualInstructions }`, no
+   `proposedContent`, and nothing overwritten: the person removes the line by hand.
+7. After the Save, `record_revert(candidateId, targetPath, expectedHash)` marks
+   `reverted` only if the file changed since the implementation, hashes to
+   `expectedHash`, and no longer contains the line (`not_saved` /
+   `file_conflict` otherwise). It does not require `prepare_revert` - removing
+   the line by hand is a revert too.
+
+### Commands
+
+All `AppResult<T>`; rejections are `AppError` `{ kind: 'Intelligence', message:
+'<code>: <detail>' }` (`intelligenceErrorCode`, `intelligenceErrorDetail`) except
+malformed input (`InvalidInput`).
+
+| Command | Args | Returns | Notes |
+|---|---|---|---|
+| `get_intelligence_status` | - | `IntelligenceStatus { enabled, provider }` | Works while off |
+| `preview_analysis` | `projectId, sessionLimit?` | `AnalysisPreview` | |
+| `start_analysis` | `request: AnalysisRequest` | `StartedRun { runId }` | |
+| `cancel_analysis` | `runId` | `void` | Idempotent; works while off |
+| `get_intelligence_run` | `runId` | `IntelligenceRunDetail { run, signals }` | `run_not_found` |
+| `latest_intelligence_run` | `projectId` | `IntelligenceRunDetail \| null` | UI state after reload |
+| `list_improvements` | `projectId` | `ImprovementCandidate[]` | Any status; `proposed` first |
+| `dismiss_improvement` | `candidateId, reason?` | `ImprovementCandidate` | `proposed` only |
+| `mark_follow_up` | `candidateId, followUp, note?` | `ImprovementCandidate` | Not on `dismissed` / `reverted` |
+| `prepare_instruction_change` | `candidateId, allowDuplicate?` | `PreparedChange` | `not_instruction`, `invalid_state` |
+| `record_implementation` | `candidateId, targetPath, expectedHash` | `ImprovementCandidate` | |
+| `record_verification` | `input: VerificationInput` | `ImprovementCandidate` | `implemented` / `retained` only |
+| `mark_retained` | `candidateId, reason?` | `ImprovementCandidate` | `implemented` only |
+| `prepare_revert` | `candidateId` | `PreparedChange` | `ready` or `conflict` |
+| `record_revert` | `candidateId, targetPath, expectedHash` | `ImprovementCandidate` | |
+
+Every command that takes a candidate id derives the project from the candidate
+and checks the target path against **that** project's root; an id or a path from
+another project is refused.
+
+Codes: `disabled`, `project_not_found`, `project_missing`, `candidate_not_found`,
+`run_not_found`, `run_in_progress`, `no_data`, `preview_stale`, `invalid_state`,
+`not_instruction`, `not_prepared`, `file_conflict`, `not_saved`, `unsafe_target`,
+`target_too_large`.
+
+### A run
+
+`IntelligenceRun`: `id, projectId, state, outcome, provider, sessionCount,
+signalCount, candidateCount, droppedCount, payloadBytes, startedAt, endedAt,
+errorCode, errorMessage`.
+
+- `state`: `running`, `completed`, `failed`, `cancelled`. A cancelled, failed or
+  timed-out run **never** becomes `completed` and leaves no evidence or
+  candidate; the cancel check is made once more immediately before the commit,
+  so a cancel arriving after the answer still wins.
+- `outcome` (only when `completed`): `candidates`, `no_change`, `signals_only`.
+  **`signals_only` signals are unreviewed observations and must not be presented
+  as insights.**
+- `errorCode` on a failed or cancelled run: `invalid_output`, `timeout`,
+  `cancelled`, `disabled`, `interrupted` (the app stopped mid-run; set at the
+  next start), `output_too_large`, `provider_failed`, `provider_unauthenticated`,
+  `provider_unavailable`, `provider_unsafe`, `internal`. On a *completed* run
+  only `provider_unavailable` (degraded to signals only).
+- At most one `running` run per project.
+
+### Events (Rust to JS)
+
+| Event | Payload | When |
+|---|---|---|
+| `intelligence:progress` | `{ runId, projectId, phase: 'analyzing' \| 'validating' \| 'saving', sessionsDone, sessionsTotal, signals }` | Phase changes of a run. May arrive before `start_analysis` resolves; match `projectId` as well |
+| `intelligence:run-finished` | `{ runId, projectId, state, outcome, errorCode, candidateCount, signalCount }` | Once per run, after its row is final |
+| `intelligence:changed` | `{ projectId, candidateId }` | Candidates or timeline changed (a run saved, any decision recorded): refetch `list_improvements` |
+
+Payloads never carry excerpts, hashes or file text.
+
+### Retention and deletion
+
+Evidence has **no foreign key to `sessions`**. When a session leaves the index
+(deleted, reaped with its transcript, dropped with its profile) its evidence rows
+stay as a record that something was observed and their `excerpt` / `context` are
+blanked (on every read and every start). Removing a project cascades every row
+derived from it. Nothing is shared between projects.
+
+### The screens
+
+**The switch is a row in Settings, in its own section.** `?settings=intelligence`,
+between Pull requests and Advanced, `settings-intelligence`. Unlike the rest of
+the modal it **writes as you click**, like Profiles: `setSetting
+('projectIntelligence', 'on' | null)` runs on the toggle and the modal's Save is
+not involved. A draft would put Save between the person and the two things the
+flip does at once (the provider is probed so its status can be shown, and turning
+it off cancels runs in flight), and a run that is cancelling is not something
+Cancel can take back. The section says what off means (nothing is read, nothing
+runs), that excerpts reach the provider only with consent given for each run,
+that an instruction file changes only by a Save the person presses, and, while it
+is on, the provider from `get_intelligence_status` - name, version, **remote**,
+`available` or the reason it is not. Turning it off drops the cached results of
+past runs.
+
+**The tab.** A third project tab, `?tab=intelligence`, **drawn only while the
+switch is on**. A URL that asks for it while it is off (a bookmark, a switch
+turned off elsewhere) shows the sessions, and waits for the switch's answer
+rather than flashing them first. On the tab the header has no action of its own:
+the way in is *Analyze sessions* inside it.
+
+| State | What it shows |
+|---|---|
+| Empty | One sentence of what it does and *Analyze sessions*. Nothing has been asked of a model |
+| Preview | Sessions read (by agent), what was skipped (still running, sub-agents, unreadable), the size of the excerpts, the provider with **remote** and `available`, the session limit (1 to 50, default 20, applied on blur or Enter), every signal with an include checkbox (stable ids, so a strike survives a new read), the optional instruction file, and the consent. *Analyze* sends `previewHash`, `excludedEvidenceIds` and `consentRemote`. Without consent the button reads **Analyze offline (signals only)** and says nothing is sent; with it, *Analyze*. Consent only counts where something could be sent: an unavailable provider or no excerpt selected hides it. `preview_stale` re-reads the preview and **withdraws the consent**, which was given for a set that no longer exists |
+| Running | The phase and sessions done of sessions read from `intelligence:progress` (matched on `projectId`; it may arrive before `start_analysis` resolves), a progress bar only once a total is known, *Cancel analysis*, and the line that no project file is written. A run that is `running` when the tab mounts shows the same, and a `run-finished` already heard wins over a row that has not caught up |
+| Results | The last run's counts, then the suggestions: **To review** (`proposed`, grouped Instruction, Test suggestion, Script suggestion, Manual follow-up, each group named and explained), **Saved changes** (`implemented`, `retained`) and **Closed** (`dismissed`, `reverted`, collapsed). A re-run never moves a decided candidate back, so earlier decisions stay below the new ones |
+| No actionable patterns | `no_change` is a result: it says so and that nothing was added. No candidate and no invented text |
+| Unreviewed signals | `signals_only`: the run's signals under *Unreviewed signals*, with the line that no model reviewed them, so they are not findings. If the provider was asked for and could not be used (`provider_unavailable` on a completed run) a neutral, not red, notice says that |
+| Failed or cancelled run | A cancelled run is one muted line. A failed one is a notice by `errorCode` (`invalid_output`, `timeout`, `provider_unauthenticated`, ... each in its own words, each saying nothing was saved) with *Try again*, which reopens the preview |
+
+**A suggestion** is collapsed to its action, problem kind, status, **independent
+sessions** (a single one reads `hypothesis · 1 independent session`) and title,
+and opens (a disclosure button, `aria-expanded`) to the problem, the suggestion,
+why this remedy, the limits, the downgrade note (*Weakened by the app*), a
+duplicate warning, the evidence and the timeline. **There is no score anywhere**:
+the honest quantities are the sessions and the hypothesis flag (ADR-0084). Blue
+is spent once, on `implemented · unverified`, because that is the person's move.
+
+**Evidence.** Each item is the signal's type, agent, `locator.line` and age, the
+session as a link to its route when `sessionAvailable`, and the redacted excerpt
+and context. When the session left the index it says **Evidence no longer
+available**, with no excerpt and no link.
+
+**Actions.** `proposed`: *Prepare change* (an `instruction` only), *Mark for
+follow-up* (a toggle), *Dismiss...* which **asks first** with an optional reason,
+because it is terminal. A test, script or manual suggestion has no *Prepare*:
+it says it is for consulting and that nothing is run or written for it.
+`implemented` and `retained`: *Document a check* (how, result, note; the **result
+starts empty**, so `passed` is never one click from a form), *Retain...* (with a
+reason, `implemented` only) and *Revert...*. The chip reads `implemented ·
+unverified` until a person records a check, then `implemented · check passed`
+(or `failed`, `inconclusive`): their word, never `works` or `effective`.
+
+**Preparing, and the two Saves.** *Prepare change* calls
+`prepare_instruction_change` and shows the target, the unified diff (`+` and `-`
+kept, colour is not the only cue) and **"Nothing has been written."** A
+`duplicate` shows where the file already says it, with *Prepare anyway*
+(`allowDuplicate`) and *I saved it earlier - record it*, which reads the file and
+reports its hash for a Save this window never heard (the app was closed before it
+was recorded); the backend decides from the file and the change it prepared. Then
+exactly two explicit ways to Save:
+
+1. **Open as draft in editor.** The proposal becomes the unsaved draft of
+   `targetPath` in `draftStore`, the viewer opens it on the first changed line
+   (`?file=&line=`), and the person presses the editor's Save. `useEditBuffer`
+   announces the write (`lib/fileSaved`), and `useIntelligenceSaveRecorder`,
+   mounted at the root because the Save can come from any route, reports it to
+   `record_implementation` with the hash of **what was saved**: `proposedHash`
+   when it is the proposal, `sha256` of the text (`crypto.subtle`) when the person
+   edited it first. It only reports a write that already happened. *I saved it -
+   check now* reads the file and reports its hash for a Save the app did not see.
+   Not offered when the file does not exist (the viewer cannot open it), when it
+   is the file the viewer already has open (a mounted editor reads its draft
+   once), or when the person already has unsaved edits to it; the panel says
+   which.
+2. **Save to AGENTS.md...** opens a confirm dialog whose *Save to <file>* calls
+   the existing `write_file` and then records it. The way for a file that does
+   not exist yet.
+
+`not_saved` and `file_conflict` are shown as what they are (the change is not in
+the file; the file is not what was saved) with *Check again* or *Prepare again*.
+A write that failed says the file is as it was and records nothing; a write that
+succeeded and could not be recorded says only the record is missing.
+
+**Revert** runs the same flow backwards with `prepare_revert`. `ready` is the
+inverse diff and the same two Saves, then `record_revert`. `conflict` shows the
+backend's reason and `manualInstructions` and **offers no Save**: nothing is
+overwritten. *I removed it - check* reads the file and calls `record_revert`,
+which the backend accepts for a line removed by hand.
+
+**Errors.** Every `IntelligenceErrorCode` has its own title and what it means for
+the person's data (`lib/intelligenceView.ts`), with the one action `next` names:
+refresh the preview, prepare again, check again, open Settings, or none.
+
+**A bug this slice found in F26.** A draft restored when a file is reopened was
+shown, marked dirty, and **saved as the file it was a draft of**: the "disk lands
+only when clean" effect ran before the draft had marked the buffer dirty and put
+disk in `bufferRef`. Disk is now adopted as the baseline only, and the
+intelligence smoke spec covers the draft being shown and saved.
+
+### Not built / not verified
+
+- **Codex as the analyser**: not built; `codex exec` flags were not verified.
+  Codex sessions are read as evidence.
+- **Codex tool results**: the shapes read (`function_call`, `local_shell_call`,
+  `function_call_output`, `exec_command_end`) follow how the CLI is documented to
+  write them and are exercised by a synthetic fixture only; the message shapes
+  are the ones F30 checked against a real rollout. If a shape is not recognised
+  the extractor finds fewer failures, never invents one.
+- **Windows**: the `.cmd` wrapper path passes `--tools ""` through PowerShell; an
+  empty argument was not verified there.
+- **No quantitative pilot metrics**, no automatic comparison before/after, no
+  causal claim: a change followed by fewer errors is not shown to have caused
+  them.
+- **No harness audit** (skills, hooks, MCP, plugins), no cross-project
+  patterns, no MCP tools, no periodic or background runs.
+- **A person who edits the proposal before saving** can still record it if the
+  prepared line survives and they report the hash of what they saved; if they
+  reword the line, the record is refused (`not_saved`) rather than guessed.

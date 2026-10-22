@@ -106,4 +106,29 @@ export const queryKeys = {
 	/** Where an agent's binary is and what version it reports (F11, F30).
 	 *  Invalidated when its override is saved, since the answer depends on it. */
 	agentCli: (agent: AgentId) => ['agent-cli', agent] as const,
+	/** Whether Project Intelligence is on, and whether its provider can run
+	 *  (F33). One per app: the switch is global. */
+	intelligenceStatus: () => ['intelligence-status'] as const,
+	/** A project's most recent analysis run with its signals (F33). Without a
+	 *  project it is the prefix, so turning the switch off drops every one. */
+	intelligenceRun: (projectId?: string) =>
+		projectId ? (['intelligence-run', projectId] as const) : (['intelligence-run'] as const),
+	/** A project's improvement candidates (F33). A prefix without a project, for
+	 *  the same reason. */
+	improvements: (projectId?: string) =>
+		projectId ? (['improvements', projectId] as const) : (['improvements'] as const),
+	/** What an analysis would read and send (F33). **Its own root**, and never
+	 *  under the two above: a refetch changes the signals and the hash a consent
+	 *  was given for, so no invalidation aimed at a project's results may sweep it
+	 *  up. It is refetched only by a person asking for a new preview. */
+	intelligencePreview: (projectId: string, sessionLimit: number) =>
+		['intelligence-preview', projectId, sessionLimit] as const,
+	/** A change prepared for review (F33): the diff and the text a Save would
+	 *  write. Its own root for the preview's reason - it describes the file *now*,
+	 *  so a candidate's invalidation must not swap it under a reader. */
+	intelligencePrepared: (
+		candidateId: string,
+		kind: 'instruction' | 'revert',
+		allowDuplicate: boolean,
+	) => ['intelligence-prepared', candidateId, kind, allowDuplicate] as const,
 };

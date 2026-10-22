@@ -8,6 +8,7 @@
  */
 
 import type {
+	AnalysisPreview,
 	AppError,
 	ClaudeCliStatus,
 	DirEntry,
@@ -22,9 +23,13 @@ import type {
 	GitStatus,
 	GitWorktree,
 	ImageContents,
+	ImprovementCandidate,
+	IntelligenceProviderInfo,
+	IntelligenceRunDetail,
 	MediaProbe,
 	ImportCandidate,
 	PdfContents,
+	PreparedChange,
 	PrCheckoutPlan,
 	PrComment,
 	PrDetail,
@@ -43,6 +48,7 @@ import type {
 	TerminalId,
 	SidebarRow,
 } from '@factorai/types';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
 
@@ -161,6 +167,25 @@ export interface TestFixture {
 	ghPrCheckoutPlans?: Record<string, Partial<PrCheckoutPlan>>;
 	/** Makes `gh_pr_checkout` reject with this error. */
 	ghPrCheckoutFails?: AppError;
+	/** What the Project Intelligence commands answer once
+	 *  `settings.projectIntelligence` is `on` (F33). Absent means empty. A spec
+	 *  changes it in the page (`window.__FACTORAI_TEST__.intelligence`) to move
+	 *  a run from running to finished. */
+	intelligence?: IntelligenceFixture;
+}
+
+/** The fixture shape `lib/tauri.ts` reads for F33. Everything is optional. */
+export interface IntelligenceFixture {
+	provider?: IntelligenceProviderInfo;
+	preview?: Partial<AnalysisPreview>;
+	runId?: string;
+	runs?: Record<string, IntelligenceRunDetail>;
+	latestRuns?: Record<string, IntelligenceRunDetail>;
+	improvements?: Record<string, ImprovementCandidate[]>;
+	prepared?: Record<string, PreparedChange>;
+	revertPrepared?: Record<string, PreparedChange>;
+	/** Makes `start_analysis` and every candidate-changing command reject. */
+	fails?: AppError;
 }
 
 declare global {
@@ -2053,6 +2078,240 @@ export function fixtureWithPullRequestsSignedOut(): TestFixture {
 		...base,
 		ghStatuses: {
 			[root]: { ...status, state: 'notAuthenticated', login: null, message: null },
+		},
+	};
+}
+
+// ---- Project Intelligence (F33) -----------------------------------------------
+
+/** The instruction file the intelligence specs prepare changes to. */
+export const INTEL_FILE = '/home/alice/code/foo/AGENTS.md';
+/** What it holds before a change, and what the prepared change would make it. */
+export const INTEL_BASE = '# Project\n\nBuild with `pnpm build`.\n';
+export const INTEL_PROPOSED = `${INTEL_BASE}\n- Use pnpm, not npm.\n`;
+export const INTEL_DIFF = [
+	'--- a/AGENTS.md',
+	'+++ b/AGENTS.md',
+	'@@ -1,3 +1,5 @@',
+	' # Project',
+	' ',
+	' Build with `pnpm build`.',
+	'+',
+	'+- Use pnpm, not npm.',
+	'',
+].join('\n');
+
+/** The sha256 the backend would report for a text, so a spec can assert that the
+ *  renderer reports the same one. */
+export function sha256(text: string): string {
+	return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+export const INTEL_SESSION_A = 'session-uuid-001';
+export const INTEL_SESSION_B = 'session-uuid-002';
+
+/** A stored observation, with the fields a spec cares about overridable. */
+export function evidenceFixture(
+	over: Partial<ImprovementCandidate['evidence'][number]> = {},
+): ImprovementCandidate['evidence'][number] {
+	return {
+		evidenceId: 'ev-1',
+		sessionId: INTEL_SESSION_A,
+		sessionTitle: 'Refactor the auth middleware',
+		sessionAvailable: true,
+		sourceAgent: 'claude',
+		signalType: 'user_correction',
+		excerpt: 'No, use pnpm here, never npm.',
+		context: 'I ran npm install to add the dependency.',
+		locator: { line: 12, ordinal: null, eventId: 'evt-12' },
+		fingerprint: 'f'.repeat(64),
+		observedAt: Date.now() - 3_600_000,
+		...over,
+	};
+}
+
+/** A suggestion, defaulting to an instruction backed by two sessions. */
+export function candidateFixture(over: Partial<ImprovementCandidate> = {}): ImprovementCandidate {
+	return {
+		id: 'cand-instruction',
+		projectId: FOO_ID,
+		latestRunId: 'run-1',
+		problemKind: 'recurring_correction',
+		actionKind: 'instruction',
+		title: 'Use pnpm, not npm',
+		problem: 'The agent ran npm in two sessions and was corrected both times.',
+		recommendation: 'Use pnpm, not npm.',
+		rationale: 'A one-line convention is cheaper than a hook, and the evidence is a stated rule.',
+		limitations: 'Only two sessions, both about dependency installs.',
+		status: 'proposed',
+		hypothesis: false,
+		downgradeNote: null,
+		followUp: false,
+		independentSessions: 2,
+		duplicate: null,
+		evidence: [
+			evidenceFixture(),
+			evidenceFixture({
+				evidenceId: 'ev-2',
+				sessionId: INTEL_SESSION_B,
+				sessionTitle: 'Wire the settings modal',
+				excerpt: 'again: pnpm only',
+				context: null,
+				locator: { line: 40, ordinal: null, eventId: null },
+			}),
+		],
+		events: [
+			{
+				id: 1,
+				eventType: 'proposed',
+				outcome: null,
+				method: null,
+				note: null,
+				artifactPath: null,
+				beforeHash: null,
+				afterHash: null,
+				createdAt: Date.now() - 600_000,
+			},
+		],
+		implementation: null,
+		createdAt: Date.now() - 600_000,
+		updatedAt: Date.now() - 600_000,
+		...over,
+	};
+}
+
+/** A test suggestion backed by one session: a hypothesis, and consult-only. */
+export function testSuggestionFixture(
+	over: Partial<ImprovementCandidate> = {},
+): ImprovementCandidate {
+	return candidateFixture({
+		id: 'cand-test',
+		problemKind: 'verification_gap',
+		actionKind: 'test_suggestion',
+		title: 'Add a check that lint passes before commit',
+		problem: 'The typecheck failed twice in one session and was fixed by hand.',
+		recommendation: 'Add a pre-commit typecheck step.',
+		rationale: 'A deterministic check catches this without a new prompt.',
+		limitations: null,
+		hypothesis: true,
+		independentSessions: 1,
+		downgradeNote:
+			'The provider called this a recurring pattern, but only one session supports it.',
+		evidence: [
+			evidenceFixture({
+				evidenceId: 'ev-3',
+				signalType: 'tool_failure',
+				excerpt: 'pnpm typecheck exited with code 2',
+				context: null,
+			}),
+		],
+		...over,
+	});
+}
+
+/** A finished run row. */
+export function runFixture(
+	over: Partial<IntelligenceRunDetail['run']> = {},
+): IntelligenceRunDetail['run'] {
+	return {
+		id: 'run-1',
+		projectId: FOO_ID,
+		state: 'completed',
+		outcome: 'candidates',
+		provider: 'claude_cli',
+		sessionCount: 2,
+		signalCount: 3,
+		candidateCount: 2,
+		droppedCount: 0,
+		payloadBytes: 480,
+		startedAt: Date.now() - 120_000,
+		endedAt: Date.now() - 60_000,
+		errorCode: null,
+		errorMessage: null,
+		...over,
+	};
+}
+
+/** A change the backend prepared for the instruction candidate. */
+export function preparedFixture(over: Partial<PreparedChange> = {}): PreparedChange {
+	return {
+		candidateId: 'cand-instruction',
+		kind: 'instruction',
+		status: 'ready',
+		targetPath: INTEL_FILE,
+		relativePath: 'AGENTS.md',
+		exists: true,
+		createdFile: false,
+		baseHash: sha256(INTEL_BASE),
+		proposedContent: INTEL_PROPOSED,
+		proposedHash: sha256(INTEL_PROPOSED),
+		appendedBlock: '\n- Use pnpm, not npm.\n',
+		diff: INTEL_DIFF,
+		note: null,
+		duplicateOf: null,
+		conflict: null,
+		...over,
+	};
+}
+
+/**
+ * One project with Project Intelligence **on**, an `AGENTS.md`, and a preview of
+ * three signals across two sessions (F33). The latest run and the suggestions
+ * are empty, so the tab opens on its empty state; specs add what they need.
+ */
+export function fixtureIntelligence(over: IntelligenceFixture = {}): TestFixture {
+	const base = fixtureTwoSessionsOneProject();
+	const signal = (id: string, sessionId: string, title: string, excerpt: string) => ({
+		evidenceId: id,
+		sessionId,
+		sessionTitle: title,
+		sourceAgent: 'claude' as const,
+		signalType: 'user_correction' as const,
+		excerpt,
+		context: null,
+		locator: { line: 1, ordinal: null, eventId: null },
+	});
+	return {
+		...base,
+		settings: { projectIntelligence: 'on' },
+		files: {
+			[INTEL_FILE]: {
+				path: INTEL_FILE,
+				contents: INTEL_BASE,
+				size: INTEL_BASE.length,
+				isBinary: false,
+				truncated: false,
+				lineCount: 3,
+				lossy: false,
+				sopsEncrypted: false,
+			},
+		},
+		intelligence: {
+			preview: {
+				sessionCount: 2,
+				byAgent: [{ agent: 'claude', sessions: 2 }],
+				excludedRunning: 1,
+				excludedSubagents: 0,
+				unreadable: 0,
+				signals: [
+					signal(
+						'ev-1',
+						INTEL_SESSION_A,
+						'Refactor the auth middleware',
+						'No, use pnpm here, never npm.',
+					),
+					signal('ev-2', INTEL_SESSION_B, 'Wire the settings modal', 'again: pnpm only'),
+					signal(
+						'ev-3',
+						INTEL_SESSION_B,
+						'Wire the settings modal',
+						'always run the typecheck first',
+					),
+				],
+				estimatedPayloadBytes: 1536,
+				previewHash: 'hash-1',
+			},
+			...over,
 		},
 	};
 }

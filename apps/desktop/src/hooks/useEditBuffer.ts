@@ -2,6 +2,7 @@ import type { FileContents } from '@factorai/types';
 import { useQueryClient } from '@tanstack/react-query';
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { errorText } from '@components/viewer/chrome';
+import { emitFileSaved } from '@lib/fileSaved';
 import { cmd } from '@lib/tauri';
 import { draftFor, useDraftStore } from '@store/draftStore';
 
@@ -167,9 +168,20 @@ export function useEditBuffer({
 	useEffect(() => {
 		if (!file || file.isBinary || dirty) return;
 		if (file.contents === baseline) return;
+		// **A draft this buffer was seeded from is an edit that has not been
+		// flagged yet.** `dirty` is set for it by the effect above, but not until
+		// the render after this one, so without this the first pass saw a clean
+		// buffer and put disk over the draft - the editor was created from the draft
+		// and `bufferRef` then held disk, so a reopened draft was shown, marked
+		// dirty, and saved as the file it was a draft of. Disk is still adopted as
+		// the baseline, which is what a later change on disk is measured against.
+		if (baseline === null && draftFor(path) !== undefined) {
+			setBaseline(file.contents);
+			return;
+		}
 		bufferRef.current = file.contents;
 		setBaseline(file.contents);
-	}, [file, dirty, baseline]);
+	}, [file, dirty, baseline, path]);
 
 	// The draft outlives the tab, not the app (ADR-0040 is the next slice).
 	// Written on the way out rather than per keystroke: nothing reads it while
@@ -206,6 +218,9 @@ export function useEditBuffer({
 			// recomputing the line count here would be a second definition of it.
 			queryClient.setQueryData(cacheKey, written);
 			adopt(text);
+			// After the buffer is clean and the cache is right, so a listener that
+			// reads either sees the saved state (F33 records an instruction's Save).
+			emitFileSaved({ path, contents: text });
 		} catch (e) {
 			// **The buffer stays dirty.** A failed write leaves the text the reader
 			// typed as the only copy of it, and discarding that to report an error

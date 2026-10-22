@@ -141,6 +141,7 @@ pub fn terminal_list(state: State<'_, AppState>) -> Vec<TerminalStatusDto> {
 #[tauri::command]
 pub fn app_quit_confirmed(app: AppHandle) -> AppResult<()> {
 	if let Some(state) = app.try_state::<AppState>() {
+		state.intelligence.cancel_all();
 		state.terminals.kill_all();
 	}
 	app.exit(0);

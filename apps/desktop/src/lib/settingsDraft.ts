@@ -38,6 +38,10 @@ export const SETTINGS_SECTIONS = [
 	// Pull requests (F31) are daily use like routines, so before the set-once
 	// Advanced.
 	'pulls',
+	// Project Intelligence (F33, ADR-0084): opt-in and used on demand, so after
+	// the sections about daily use. **It holds no value in `SettingsValues`**, like
+	// `profiles`: the switch writes as you click, so it can never be dirty.
+	'intelligence',
 	// After everything about daily use and before About: the update channel is
 	// set once, if ever, and About is where its effect is read.
 	'advanced',

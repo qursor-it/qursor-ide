@@ -24,7 +24,13 @@ pub fn set_setting(
 	key: SettingKey,
 	value: Option<String>,
 ) -> AppResult<()> {
-	state.db.with(|conn| settings::set(conn, key, value.as_deref()))
+	state.db.with(|conn| settings::set(conn, key, value.as_deref()))?;
+	// Switching Project Intelligence off ends any analysis that is running, so
+	// "off" means no process and not merely no new ones (F33).
+	if key == SettingKey::ProjectIntelligence && value.as_deref() != Some("on") {
+		state.intelligence.cancel_all();
+	}
+	Ok(())
 }
 
 /// Where an agent's binary is and what version it reports — **honouring the

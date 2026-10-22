@@ -71,6 +71,12 @@ croner = "3"
 # COM initialization below (ADR-0074). `chrono` is only used when listing trash
 # contents, whereas factorai only moves transcripts into it.
 trash = { version = "5.2.6", default-features = false }
+# Stable content hashes for Project Intelligence (F33, ADR-0084): a transcript
+# event's fingerprint, an evidence id, and the file hash an instruction change is
+# verified against. They are stored, so `DefaultHasher` (not stable across Rust
+# versions) is not an option. Already in the tree through Tauri; this makes the
+# existing transitive dependency explicit.
+sha2 = "0.10"
 # The atomic half of `write_file` (F26): a named temp file in the target's own
 # directory, `persist`ed over it. Doing this by hand means inventing a unique
 # name, cleaning it up on every early return, and getting the rename right.

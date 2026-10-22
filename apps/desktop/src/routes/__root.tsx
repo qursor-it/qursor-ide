@@ -7,6 +7,8 @@ import { SettingsModal } from '@components/settings/SettingsModal';
 import { FileViewerModal } from '@components/viewer/FileViewerModal';
 import { type DiffMode, isDiffMode, parsePosition, useFileViewer } from '@hooks/useFileViewer';
 import { useNativeContextMenu } from '@hooks/useNativeContextMenu';
+import { useIntelligenceChanged } from '@hooks/useIntelligenceChanged';
+import { useIntelligenceSaveRecorder } from '@hooks/useIntelligenceSaveRecorder';
 import { useRoutineFires } from '@hooks/useRoutineFires';
 import { useRoutinesChanged } from '@hooks/useRoutinesChanged';
 import { useSessionsSync } from '@hooks/useSessionsSync';
@@ -52,6 +54,12 @@ function RootLayout() {
 	// the same reason: a routine fires for a project no route is showing.
 	useRoutineFires();
 	useRoutinesChanged();
+
+	// Project Intelligence (F33): a run finished or a decision was recorded, and
+	// the viewer's Save of a proposed instruction is reported to the backend. Both
+	// are app-level for the reason above - neither happens on a route.
+	useIntelligenceChanged();
+	useIntelligenceSaveRecorder();
 
 	// `file:changed` → re-read whatever the viewer has open (F7). Here rather
 	// than in the viewer because this is where `?file=` lives, and the watch has

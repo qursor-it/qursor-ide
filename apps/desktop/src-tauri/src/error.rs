@@ -24,6 +24,12 @@ pub enum AppError {
 	/// The remote's own words ride along (F31).
 	#[error("remote: {0}")]
 	Remote(String),
+	/// A Project Intelligence command refused (F33, ADR-0084). The message is
+	/// `<code>: <detail>`, with the code one of the closed set in
+	/// `services::intelligence::ErrorCode`, so the renderer can branch on it
+	/// without the union growing a variant per reason.
+	#[error("intelligence: {0}")]
+	Intelligence(String),
 }
 
 impl From<std::io::Error> for AppError {

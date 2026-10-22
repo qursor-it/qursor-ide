@@ -522,7 +522,7 @@ fn process_descendants(root_pid: u32) -> std::io::Result<Vec<u32>> {
 }
 
 #[cfg(windows)]
-fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
+pub(crate) fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
 	let mut process_ids = process_descendants(root_pid).unwrap_or_default();
 	process_ids.push(root_pid);
 	process_ids.reverse();
@@ -1483,9 +1483,10 @@ impl TerminalManager {
 	/// keeps it out of every pass that would read it as a session (ADR-0031).
 	pub fn spawn_shell(&self, opts: ShellSpawnOpts) -> AppResult<TerminalId> {
 		let shell = crate::services::shell_path::user_shell();
-		let mut argv = vec![shell.to_string_lossy().into_owned()];
 		#[cfg(windows)]
-		argv.push("-NoLogo".into());
+		let argv = vec![shell.to_string_lossy().into_owned(), "-NoLogo".into()];
+		#[cfg(not(windows))]
+		let argv = vec![shell.to_string_lossy().into_owned()];
 		let id = self.spawn_inner(
 			PtyRequest {
 				session_id: None,
@@ -1818,8 +1819,13 @@ impl TerminalManager {
 				pixel_height: 0,
 			})
 			.map_err(|e| AppError::Process(format!("openpty: {e}")))?;
-		let mut child =
+		let spawned =
 			pair.slave.spawn_command(cmd).map_err(|e| AppError::Process(format!("spawn: {e}")))?;
+		// Only the Windows job-object path below waits on the child here.
+		#[cfg(windows)]
+		let mut child = spawned;
+		#[cfg(not(windows))]
+		let child = spawned;
 		// Clone a killer now, before the child is moved into the waiter thread.
 		// See `TerminalHandle::killer` for why the child isn't shared.
 		let killer = child.clone_killer();

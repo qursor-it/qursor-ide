@@ -489,7 +489,7 @@ nothing else — it exists so a migration runs once.
 
 | col   | type    | notes                                        |
 | ----- | ------- | -------------------------------------------- |
-| key   | TEXT PK | dotted namespace: `claude.binary`, `codex.binary`, `agent.default`, `routines.catchup_hours`, `routines.max_concurrent`, `notifications.desktop`. One `SettingKey` variant per key, never a parameterised one (F30 § "Storage") |
+| key   | TEXT PK | dotted namespace: `claude.binary`, `codex.binary`, `agent.default`, `routines.catchup_hours`, `routines.max_concurrent`, `notifications.desktop`, `intelligence.enabled`. One `SettingKey` variant per key, never a parameterised one (F30 § "Storage") |
 | value | TEXT    | the value itself; **no row means unset**     |
 
 For things that need ACID and queries — and, since F11, **specifically for the
@@ -770,6 +770,95 @@ keeps the plaintext in the open file's own component state, so there is nothing
 here to exclude and no way for a later change to this table to start persisting
 it by accident. The ciphertext is the only version of that file anything writes
 down.
+
+### Project Intelligence (F33, ADR-0084) - migration `9002`
+
+Six tables. **Every one hangs off `projects` with `ON DELETE CASCADE`**: removing
+a project removes everything derived from it, and nothing is shared between
+projects. **None references `sessions`**, for the reason `session_worktrees`
+(0007) does not: the indexer reaps a session row when its transcript goes, and
+evidence has to be able to outlive the row it points at so retention can blank
+its words instead of cascading the record away.
+
+**Nothing here holds a transcript or a file.** An excerpt is at most a few
+hundred redacted characters. The only file-derived data kept is the one block an
+instruction change appended (`improvement_events.details_json`) and the sha256
+hashes that show the file is still as it was left.
+
+```sql
+intelligence_runs (
+  id TEXT PK,                         -- uuid v4
+  project_id TEXT NOT NULL -> projects ON DELETE CASCADE,
+  state TEXT CHECK IN ('running','completed','failed','cancelled'),
+  outcome TEXT CHECK IN ('candidates','no_change','signals_only') OR NULL,
+  analysis_provider TEXT,             -- NULL: no model looked (signals only)
+  session_count, signal_count, candidate_count, dropped_count, payload_bytes INTEGER,
+  started_at INTEGER NOT NULL, ended_at INTEGER,
+  error_code TEXT, error_message TEXT -- short; never the payload or the model's output
+)
+improvement_candidates (
+  id TEXT PK,
+  project_id TEXT NOT NULL -> projects ON DELETE CASCADE,
+  latest_run_id TEXT -> intelligence_runs ON DELETE SET NULL,
+  dedupe_key TEXT NOT NULL,           -- UNIQUE (project_id, dedupe_key)
+  problem_kind TEXT CHECK IN ('project_convention','recurring_correction','verification_gap','workflow_hint'),
+  action_kind  TEXT CHECK IN ('instruction','test_suggestion','script_suggestion','manual_followup'),
+  title, problem, recommendation, rationale TEXT NOT NULL, limitations TEXT,
+  status TEXT NOT NULL DEFAULT 'proposed'
+    CHECK IN ('proposed','dismissed','implemented','retained','reverted'),
+  downgrade_note TEXT,                -- why the backend weakened the model's claim
+  follow_up INTEGER 0/1,
+  duplicate_json TEXT,                -- {path,line,text} of an instruction already covering it
+  prepared_json TEXT,                 -- the change last prepared, not yet recorded: a delta + hashes
+  created_at, updated_at INTEGER NOT NULL
+)
+improvement_evidence (
+  id TEXT PK,                         -- derived from (project, session, fingerprint)
+  project_id TEXT NOT NULL -> projects ON DELETE CASCADE,
+  session_id TEXT NOT NULL,           -- NO foreign key, on purpose
+  source_agent TEXT CHECK IN ('claude','codex'),
+  signal_type TEXT CHECK IN ('user_correction','tool_failure','retry_after_failure','repeated_instruction'),
+  locator_json TEXT NOT NULL,         -- {line, ordinal, eventId}
+  excerpt TEXT, context TEXT,         -- redacted; NULL once the session is gone
+  fingerprint TEXT NOT NULL, observed_at INTEGER NOT NULL,
+  UNIQUE (project_id, session_id, fingerprint)
+)
+intelligence_run_evidence (run_id -> runs CASCADE, evidence_id -> evidence CASCADE, PK both)
+improvement_candidate_evidence (candidate_id -> candidates CASCADE, evidence_id -> evidence CASCADE, PK both)
+improvement_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,   -- the timeline's order, whatever the clock did
+  candidate_id TEXT NOT NULL -> improvement_candidates ON DELETE CASCADE,
+  event_type TEXT CHECK IN ('proposed','evidence_added','dismissed','follow_up',
+                            'implemented','verification','retained','reverted'),
+  outcome TEXT, method TEXT,          -- a verification's passed/failed/inconclusive and how
+  details_json TEXT,                  -- {note, appendedBlock, appendedLine, createdFile, targetPath, ...}
+  artifact_path TEXT, before_hash TEXT, after_hash TEXT,
+  created_at INTEGER NOT NULL
+)
+```
+
+Indexes: `intelligence_runs(project_id, started_at DESC)`,
+`improvement_candidates(project_id, status, updated_at DESC)`,
+`improvement_evidence(session_id)`,
+`improvement_candidate_evidence(evidence_id)`,
+`improvement_events(candidate_id, id)`.
+
+**Why evidence is a table of its own and not a column of the candidate.** The
+backend mints evidence ids before any candidate exists, a signals-only run has
+evidence and no candidates, and one observation can support two candidates.
+`intelligence_run_evidence` is the set a model may cite for a run; the candidate
+link is what the independent-session count is a `COUNT(DISTINCT session_id)`
+over.
+
+**Written once per run, at the end.** A run inserts its row as `running`,
+nothing else until it finishes, and then evidence, links, candidates and the
+`completed` update in one transaction; a failed or cancelled run only updates
+its own row. A row left `running` by a crash is marked `failed` /
+`interrupted` at the next start.
+
+**Retention.** `prune_unavailable_evidence` sets `excerpt` and `context` to NULL
+for any evidence whose `session_id` is not in `sessions`, on every read and every
+run start. The evidence row, its fingerprint and its locator stay.
 
 ### Indexes
 

@@ -1,3 +1,5 @@
+pub mod intelligence;
+
 use serde::{Deserialize, Serialize};
 
 /// A folder in the workspace. Mirrors `@factorai/types` `Project`.
@@ -875,6 +877,11 @@ pub enum SettingKey {
 	/// window is in the background (F32, ADR-0081). Unset → on; `off` → off.
 	/// Rust reads it because Rust sends the notification.
 	DesktopNotifications,
+	/// Whether Project Intelligence (F33, ADR-0084) may analyse this workspace's
+	/// sessions. The string `on` enables it; unset, or anything else, is off —
+	/// and off means every intelligence command refuses and no analysis process
+	/// is ever started. Rust reads it because Rust enforces it.
+	ProjectIntelligence,
 }
 
 impl SettingKey {
@@ -893,6 +900,7 @@ impl SettingKey {
 			SettingKey::RoutinesMaxConcurrent => "routines.max_concurrent",
 			SettingKey::UpdateChannel => "updates.channel",
 			SettingKey::DesktopNotifications => "notifications.desktop",
+			SettingKey::ProjectIntelligence => "intelligence.enabled",
 		}
 	}
 }

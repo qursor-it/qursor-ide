@@ -245,7 +245,13 @@ pub async fn checkout(
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
-	match (dunce::canonicalize(a), dunce::canonicalize(b)) {
+	// `dunce` is a Windows-only dependency (it strips the `\\?\` prefix); elsewhere
+	// the standard library's answer is already the plain path.
+	#[cfg(windows)]
+	use dunce::canonicalize;
+	#[cfg(not(windows))]
+	use std::fs::canonicalize;
+	match (canonicalize(a), canonicalize(b)) {
 		(Ok(a), Ok(b)) => a == b,
 		_ => false,
 	}
