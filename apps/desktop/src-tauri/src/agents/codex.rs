@@ -463,7 +463,7 @@ const INJECTED_INSTRUCTIONS: &str = "# AGENTS.md instructions for ";
 /// the person typed: the injected AGENTS.md, and the `<environment_context>`
 /// block it opens every thread with. Neither titles a session nor belongs in
 /// search.
-fn is_injected_context(text: &str) -> bool {
+pub(crate) fn is_injected_context(text: &str) -> bool {
 	let t = text.trim_start();
 	t.starts_with(INJECTED_INSTRUCTIONS)
 		|| t.starts_with("<environment_context>")

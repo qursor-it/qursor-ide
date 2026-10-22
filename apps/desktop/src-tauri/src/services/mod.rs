@@ -8,6 +8,7 @@ pub mod gh;
 pub mod git;
 pub mod ide;
 pub mod indexer;
+pub mod intelligence;
 pub mod jsonl;
 pub mod mcp_wire;
 pub mod media_server;
