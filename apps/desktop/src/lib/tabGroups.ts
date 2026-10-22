@@ -43,7 +43,7 @@ export function projectIdOfGroupSortId(id: string): string | null {
 	return id.startsWith(GROUP_ID_PREFIX) ? id.slice(GROUP_ID_PREFIX.length) : null;
 }
 
-export interface TabLayout {
+interface TabLayout {
 	groupOrder: readonly string[];
 	itemOrder: readonly string[];
 	collapsed: readonly string[];
@@ -59,11 +59,11 @@ interface PrRef {
 	number: number;
 }
 
-export type TabItem<S extends SessionRef, P extends PrRef> =
+type TabItem<S extends SessionRef, P extends PrRef> =
 	| { kind: 'session'; key: string; projectId: string; tab: S }
 	| { kind: 'pr'; key: string; projectId: string; tab: P };
 
-export interface TabGroupModel<S extends SessionRef, P extends PrRef> {
+interface TabGroupModel<S extends SessionRef, P extends PrRef> {
 	projectId: string;
 	collapsed: boolean;
 	/** Every open tab of the project, in the order the user arranged. */
