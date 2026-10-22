@@ -1,4 +1,4 @@
-//! Migration 0023 (Project Intelligence, F33, ADR-0084) against a database that
+//! Migration 9002 (Project Intelligence, F33, ADR-0084) against a database that
 //! already has data in it, and the properties its schema exists to guarantee.
 //!
 //! The migration only adds tables, so there is no rebuild to get wrong. What is
@@ -99,13 +99,13 @@ fn upgrading_a_database_from_before_the_migration_keeps_its_data_and_adds_the_ta
 		let db = Db::open(&data).unwrap();
 		let id = project(&db, tmp.path(), "shop");
 		// Put the file back to the 0022 mark: the six tables gone, the ledger
-		// forgetting 0023. This is the file an install has before it updates.
+		// forgetting 9002. This is the file an install has before it updates.
 		db.with(|conn| {
 			for table in TABLES.iter().rev() {
 				conn.execute_batch(&format!("DROP TABLE {table};"))?;
 			}
 			conn.execute(
-				"DELETE FROM _meta WHERE key = 'migration:0023_project_intelligence'",
+				"DELETE FROM _meta WHERE key = 'migration:9002_project_intelligence'",
 				[],
 			)?;
 			Ok(())
@@ -127,7 +127,7 @@ fn upgrading_a_database_from_before_the_migration_keeps_its_data_and_adds_the_ta
 		assert_eq!(name, "shop", "the upgrade must leave existing rows alone");
 		let applied: i64 = conn
 			.query_row(
-				"SELECT COUNT(*) FROM _meta WHERE key = 'migration:0023_project_intelligence'",
+				"SELECT COUNT(*) FROM _meta WHERE key = 'migration:9002_project_intelligence'",
 				[],
 				|r| r.get(0),
 			)

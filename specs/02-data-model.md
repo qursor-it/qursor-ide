@@ -771,7 +771,7 @@ here to exclude and no way for a later change to this table to start persisting
 it by accident. The ciphertext is the only version of that file anything writes
 down.
 
-### Project Intelligence (F33, ADR-0084) - migration `0023`
+### Project Intelligence (F33, ADR-0084) - migration `9002`
 
 Six tables. **Every one hangs off `projects` with `ON DELETE CASCADE`**: removing
 a project removes everything derived from it, and nothing is shared between
