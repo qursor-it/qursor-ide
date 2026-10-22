@@ -100,7 +100,7 @@ export function sessionsLabel(
 /** What a person recorded about whether a change helped, or that they have not.
  *  The status never moves on a verification (ADR-0084), so this is read off the
  *  timeline. */
-export type VerificationState =
+type VerificationState =
 	| { kind: 'unverified' }
 	| {
 			kind: 'recorded';
@@ -147,12 +147,12 @@ export function statusBadge(candidate: Pick<ImprovementCandidate, 'status' | 'ev
 
 // ── Grouping ────────────────────────────────────────────────────────────────
 
-export interface ActionGroup {
+interface ActionGroup {
 	action: ActionKind;
 	candidates: ImprovementCandidate[];
 }
 
-export interface CandidateSections {
+interface CandidateSections {
 	/** `proposed`, grouped by what kind of remedy they are. */
 	review: ActionGroup[];
 	/** `implemented` and `retained`: done, and waiting for someone to check. */
@@ -190,7 +190,7 @@ export function shortHash(hash: string | null): string | null {
 	return hash ? hash.slice(0, 8) : null;
 }
 
-export interface EventLine {
+interface EventLine {
 	label: string;
 	/** Smaller second line, or null. */
 	detail: string | null;
@@ -421,7 +421,7 @@ export function describeIntelligenceError(error: unknown): ErrorNotice {
 	}
 }
 
-export interface RunNotice {
+interface RunNotice {
 	title: string;
 	hint: string;
 	next: ErrorNext;
@@ -512,9 +512,9 @@ export function describeRunError(
 
 // ── Unified diff ────────────────────────────────────────────────────────────
 
-export type DiffLineKind = 'file' | 'hunk' | 'add' | 'remove' | 'context' | 'note';
+type DiffLineKind = 'file' | 'hunk' | 'add' | 'remove' | 'context' | 'note';
 
-export interface DiffLine {
+interface DiffLine {
 	/** Position in the diff, from 1: a line's identity, for a list key. */
 	no: number;
 	kind: DiffLineKind;

@@ -14,7 +14,7 @@
  * write, which keeps "every byte we write to a project traces to one Save"
  * (ADR-0039) a one-file audit.
  */
-export interface FileSavedEvent {
+interface FileSavedEvent {
 	/** The path `write_file` was given: what the viewer had open. */
 	path: string;
 	/** Exactly what was written. */

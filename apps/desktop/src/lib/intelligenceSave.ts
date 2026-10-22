@@ -24,7 +24,7 @@ export async function sha256Hex(text: string): Promise<string> {
 	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export type HandoffKind = 'instruction' | 'revert';
+type HandoffKind = 'instruction' | 'revert';
 
 /** What recording a Save needs to know. */
 export interface RecordTarget {
@@ -107,7 +107,7 @@ export async function recordSaved(
 
 /** What happened when a save was attempted and recorded. The three failures are
  *  different facts about the person's file, so they are different states. */
-export type SaveOutcome =
+type SaveOutcome =
 	| { state: 'recorded'; candidate: ImprovementCandidate }
 	/** `write_file` failed: the file is as it was. */
 	| { state: 'write-failed'; error: unknown }

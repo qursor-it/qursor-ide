@@ -24,7 +24,7 @@ export type HandoffPhase =
 	/** The backend would not record the Save. The notice is already in words. */
 	| { state: 'failed'; notice: ErrorNotice };
 
-export interface HandoffEntry {
+interface HandoffEntry {
 	handoff: Handoff;
 	phase: HandoffPhase;
 }
