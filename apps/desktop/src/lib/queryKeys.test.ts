@@ -52,4 +52,19 @@ describe('queryKeys', () => {
 		expect(queryKeys.ghPrSide('/r', 7, 'a', 'p')[0]).toBe('gh-pr-side');
 		expect(queryKeys.ghPr('s', 7)[0]).toBe('gh-pr');
 	});
+	it('the intelligence keys: a project’s results share a prefix with nothing the preview uses', () => {
+		expect(queryKeys.intelligenceStatus()).toEqual(['intelligence-status']);
+		expect(queryKeys.intelligenceRun('p1')).toEqual(['intelligence-run', 'p1']);
+		expect(queryKeys.improvements('p1')).toEqual(['improvements', 'p1']);
+		// The prefixes turning the switch off drops every project's results by.
+		expect(queryKeys.intelligenceRun()).toEqual(['intelligence-run']);
+		expect(queryKeys.improvements()).toEqual(['improvements']);
+		// A refetch changes the signals a consent was given for, so no
+		// invalidation aimed at a project's results may match the preview.
+		const preview = queryKeys.intelligencePreview('p1', 20);
+		expect(preview[0]).toBe('intelligence-preview');
+		expect(preview[0]).not.toBe(queryKeys.intelligenceRun('p1')[0]);
+		expect(preview[0]).not.toBe(queryKeys.improvements('p1')[0]);
+		expect(queryKeys.intelligencePreview('p1', 50)).not.toEqual(preview);
+	});
 });

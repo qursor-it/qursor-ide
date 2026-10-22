@@ -2,6 +2,7 @@ import type { FileContents } from '@factorai/types';
 import { useQueryClient } from '@tanstack/react-query';
 import { type MutableRefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { errorText } from '@components/viewer/chrome';
+import { emitFileSaved } from '@lib/fileSaved';
 import { cmd } from '@lib/tauri';
 import { draftFor, useDraftStore } from '@store/draftStore';
 
@@ -206,6 +207,9 @@ export function useEditBuffer({
 			// recomputing the line count here would be a second definition of it.
 			queryClient.setQueryData(cacheKey, written);
 			adopt(text);
+			// After the buffer is clean and the cache is right, so a listener that
+			// reads either sees the saved state (F33 records an instruction's Save).
+			emitFileSaved({ path, contents: text });
 		} catch (e) {
 			// **The buffer stays dirty.** A failed write leaves the text the reader
 			// typed as the only copy of it, and discarding that to report an error
