@@ -292,10 +292,6 @@ impl ClaudeCliProvider {
 		self
 	}
 
-	fn descriptor() -> &'static agents::AgentDescriptor {
-		agents::descriptor(agents::CLAUDE).expect("claude is in the registry")
-	}
-
 	/// Which of [`REQUIRED_FLAGS`] the binary's `--help` does not mention.
 	fn probe(&self, binary: &Path) -> Probe {
 		let meta = std::fs::metadata(binary).ok();
@@ -331,7 +327,15 @@ impl AnalysisProvider for ClaudeCliProvider {
 
 	fn availability(&self, _project_id: &str) -> Availability {
 		let override_path = settings::binary_override(&self.db, agents::CLAUDE);
-		let status = agent_cli::check_agent_cli(Self::descriptor(), override_path.as_deref());
+		// Claude is always in the registry; if that ever stopped being true the
+		// answer is "unavailable", not a panic.
+		let Some(descriptor) = agents::descriptor(agents::CLAUDE) else {
+			return Availability::unavailable(
+				UnavailableReason::NotInstalled,
+				"the Claude agent is not registered in this build",
+			);
+		};
+		let status = agent_cli::check_agent_cli(descriptor, override_path.as_deref());
 		let Some(binary) = status.binary_path.clone().filter(|_| status.installed) else {
 			return Availability::unavailable(
 				UnavailableReason::NotInstalled,
