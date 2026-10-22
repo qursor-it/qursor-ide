@@ -168,9 +168,20 @@ export function useEditBuffer({
 	useEffect(() => {
 		if (!file || file.isBinary || dirty) return;
 		if (file.contents === baseline) return;
+		// **A draft this buffer was seeded from is an edit that has not been
+		// flagged yet.** `dirty` is set for it by the effect above, but not until
+		// the render after this one, so without this the first pass saw a clean
+		// buffer and put disk over the draft - the editor was created from the draft
+		// and `bufferRef` then held disk, so a reopened draft was shown, marked
+		// dirty, and saved as the file it was a draft of. Disk is still adopted as
+		// the baseline, which is what a later change on disk is measured against.
+		if (baseline === null && draftFor(path) !== undefined) {
+			setBaseline(file.contents);
+			return;
+		}
 		bufferRef.current = file.contents;
 		setBaseline(file.contents);
-	}, [file, dirty, baseline]);
+	}, [file, dirty, baseline, path]);
 
 	// The draft outlives the tab, not the app (ADR-0040 is the next slice).
 	// Written on the way out rather than per keystroke: nothing reads it while

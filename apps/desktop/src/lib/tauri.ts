@@ -1099,6 +1099,15 @@ function mockIntelligenceRequire(fx: TestFixture | undefined): void {
 	}
 }
 
+/** A command's answer as the real one is: a new object every time. The candidate
+ *  commands change the fixture's own objects, and handing those same objects back
+ *  would make a refetch look unchanged to TanStack Query (structural sharing keeps
+ *  the previous reference when it is `===`), so a click would change the fixture
+ *  and not the screen - the opposite of what a Tauri round trip does. */
+function mockFresh<V>(value: V): V {
+	return structuredClone(value);
+}
+
 let mockImprovementEventId = 0;
 
 /** The candidate commands, applied to the fixture's own candidate objects. */
@@ -2014,16 +2023,18 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			mockIntelligenceRequire(fx);
 			const run = fx?.intelligence?.runs?.[String(args?.runId ?? '')];
 			if (!run) throw mockIntelligenceError('run_not_found', 'no such analysis in the fixture');
-			return run as unknown as T;
+			return mockFresh(run) as unknown as T;
 		}
 		case 'latest_intelligence_run':
 			mockIntelligenceRequire(fx);
-			return (fx?.intelligence?.latestRuns?.[String(args?.projectId ?? '')] ??
-				null) as unknown as T;
+			return mockFresh(
+				fx?.intelligence?.latestRuns?.[String(args?.projectId ?? '')] ?? null,
+			) as unknown as T;
 		case 'list_improvements':
 			mockIntelligenceRequire(fx);
-			return (fx?.intelligence?.improvements?.[String(args?.projectId ?? '')] ??
-				[]) as unknown as T;
+			return mockFresh(
+				fx?.intelligence?.improvements?.[String(args?.projectId ?? '')] ?? [],
+			) as unknown as T;
 		case 'prepare_instruction_change': {
 			mockIntelligenceRequire(fx);
 			const prepared = fx?.intelligence?.prepared?.[String(args?.candidateId ?? '')];

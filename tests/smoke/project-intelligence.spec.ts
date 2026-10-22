@@ -235,7 +235,7 @@ test.describe('project intelligence', () => {
 
 		const preview = page.getByTestId('intelligence-preview');
 		await expect(preview.getByTestId('intelligence-session-count')).toContainText('2 completed');
-		await expect(preview.getByTestId('intelligence-session-count')).toContainText('Claude 2');
+		await expect(preview.getByTestId('intelligence-session-count')).toContainText('Claude Code 2');
 		await expect(preview.getByTestId('intelligence-overview')).toContainText('1 still running');
 		await expect(preview.getByTestId('intelligence-payload')).toContainText(
 			'3 found, about 1.5 KB',
@@ -384,13 +384,17 @@ test.describe('project intelligence', () => {
 			'aria-checked',
 			'true',
 		);
+		// (The dev build mounts twice under StrictMode, so count what changed.)
+		const readsBefore = (await calls(page, 'preview_analysis')).length;
 		await preview.getByTestId('intelligence-analyze').click();
 
 		await expect(preview.getByTestId('intelligence-start-error')).toContainText(
 			'The sessions changed after the preview',
 		);
 		// Re-read, so what is on screen is what a new run would send...
-		await expect.poll(async () => (await calls(page, 'preview_analysis')).length).toBe(2);
+		await expect
+			.poll(async () => (await calls(page, 'preview_analysis')).length)
+			.toBeGreaterThan(readsBefore);
 		// ...and consent given for the old set no longer stands.
 		await expect(preview.getByTestId('intelligence-consent')).toHaveAttribute(
 			'aria-checked',
@@ -587,7 +591,8 @@ test.describe('project intelligence', () => {
 		await page.getByTestId('intelligence-closed-toggle').click();
 		const closed = page.getByTestId('candidate-cand-instruction');
 		await expect(closed).toHaveAttribute('data-status', 'dismissed');
-		await closed.getByTestId('candidate-toggle').click();
+		// It was open when it was dismissed, and a move between sections does not
+		// close it: the person is still reading it.
 		await expect(closed.getByTestId('candidate-timeline')).toContainText('covered by the README');
 		await expect(closed.getByTestId('prepare-change')).toHaveCount(0);
 		await expect(closed.getByTestId('dismiss')).toHaveCount(0);
@@ -641,9 +646,13 @@ test.describe('project intelligence', () => {
 		await expect(prepared.getByTestId('prepare-nothing-written')).toContainText(
 			'Nothing has been written',
 		);
-		expect(await calls(page, 'prepare_instruction_change')).toEqual([
-			{ candidateId: 'cand-instruction' },
-		]);
+		// Asked for without `allowDuplicate`, however many times StrictMode asked.
+		const prepares = await calls(page, 'prepare_instruction_change');
+		expect(prepares.length).toBeGreaterThan(0);
+		for (const asked of prepares) {
+			expect(asked.candidateId).toBe('cand-instruction');
+			expect(asked.allowDuplicate ?? false).toBe(false);
+		}
 
 		// Preparing is not saving, and neither is asking to save.
 		await prepared.getByTestId('save-directly').click();
