@@ -8129,7 +8129,10 @@ unverified` until a person records a check, then `implemented · check passed`
 `prepare_instruction_change` and shows the target, the unified diff (`+` and `-`
 kept, colour is not the only cue) and **"Nothing has been written."** A
 `duplicate` shows where the file already says it, with *Prepare anyway*
-(`allowDuplicate`). Then exactly two explicit ways to Save:
+(`allowDuplicate`) and *I saved it earlier - record it*, which reads the file and
+reports its hash for a Save this window never heard (the app was closed before it
+was recorded); the backend decides from the file and the change it prepared. Then
+exactly two explicit ways to Save:
 
 1. **Open as draft in editor.** The proposal becomes the unsaved draft of
    `targetPath` in `draftStore`, the viewer opens it on the first changed line
