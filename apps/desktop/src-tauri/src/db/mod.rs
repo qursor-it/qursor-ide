@@ -89,6 +89,11 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	// so not standalone.
 	("0021_incremental_index", include_str!("migrations/0021_incremental_index.sql")),
 	("0022_transcript_path", include_str!("migrations/0022_transcript_path.sql")),
+	// Project Intelligence (F33, ADR-0084): runs, candidates, the evidence they
+	// cite and a timeline of what the person decided. Everything hangs off
+	// `projects` with ON DELETE CASCADE; nothing references `sessions`, for the
+	// reason 0007 gives. Plain `CREATE TABLE`s, so not standalone.
+	("0023_project_intelligence", include_str!("migrations/0023_project_intelligence.sql")),
 	// Junk `\\s\S`-style entries in touched_paths, which stalled list_sessions on
 	// Windows; the parse version bump alone cannot remove them (see the file).
 	("9001_clean_touched_paths", include_str!("migrations/9001_clean_touched_paths.sql")),
