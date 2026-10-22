@@ -792,6 +792,41 @@ test.describe('project intelligence', () => {
 			.toEqual({ candidateId: 'cand-instruction', allowDuplicate: true });
 	});
 
+	test('@smoke a line that is there because it was saved earlier can be recorded from the duplicate view', async ({
+		page,
+	}) => {
+		await openTab(
+			page,
+			withResults([candidateFixture()], {
+				prepared: {
+					'cand-instruction': preparedFixture({
+						status: 'duplicate',
+						proposedContent: null,
+						proposedHash: null,
+						diff: null,
+						appendedBlock: null,
+						duplicateOf: { path: 'AGENTS.md', line: 4, text: '- Use pnpm, not npm.' },
+					}),
+				},
+			}),
+		);
+		const card = await expand(page, 'cand-instruction');
+		await card.getByTestId('prepare-change').click();
+		await card.getByTestId('record-existing').click();
+
+		// It looked at the file and told the backend what it holds; nothing was written.
+		await expect
+			.poll(async () => callNames(page))
+			.toEqual(expect.arrayContaining(['read_file', 'record_implementation']));
+		expect((await calls(page, 'record_implementation'))[0]).toEqual({
+			candidateId: 'cand-instruction',
+			targetPath: INTEL_FILE,
+			expectedHash: sha256(INTEL_BASE),
+		});
+		expect(await calls(page, 'write_file')).toHaveLength(0);
+		await expect(card).toHaveAttribute('data-status', 'implemented');
+	});
+
 	test('@smoke the draft goes to the editor, and the editor’s Save is what is recorded', async ({
 		page,
 	}) => {

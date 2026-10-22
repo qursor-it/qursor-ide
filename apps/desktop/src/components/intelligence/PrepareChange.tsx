@@ -105,6 +105,7 @@ export function PrepareChange({
 			{prepared.data?.status === 'duplicate' && (
 				<Duplicate
 					change={prepared.data}
+					projectId={projectId}
 					onProceed={() => setAllowDuplicate(true)}
 					onClose={onClose}
 				/>
@@ -135,14 +136,41 @@ export function PrepareChange({
  *  person may still ask for one. */
 function Duplicate({
 	change,
+	projectId,
 	onProceed,
 	onClose,
 }: {
 	change: PreparedChange;
+	projectId: string;
 	onProceed: () => void;
 	onClose: () => void;
 }) {
+	const queryClient = useQueryClient();
+	const [checking, setChecking] = useState(false);
+	const [notice, setNotice] = useState<ErrorNotice | null>(null);
 	const where = change.duplicateOf;
+
+	// The other way a line gets into the file: a Save this window never heard -
+	// the app was closed between pressing it and recording it, or another editor
+	// did it. Preparing again then finds the line there. The backend decides
+	// whether to believe it, from the file and the change it prepared earlier.
+	async function recordExisting() {
+		setChecking(true);
+		setNotice(null);
+		const outcome = await recordFromDisk({
+			candidateId: change.candidateId,
+			projectId,
+			kind: 'instruction',
+			targetPath: change.targetPath,
+		});
+		setChecking(false);
+		if (outcome.state === 'recorded') {
+			await queryClient.invalidateQueries({ queryKey: queryKeys.improvements(projectId) });
+		} else {
+			setNotice(describeIntelligenceError(outcome.error));
+		}
+	}
+
 	return (
 		<div className="space-y-2" data-testid="prepare-duplicate">
 			<p className="font-medium text-sm">This looks already covered</p>
@@ -156,11 +184,22 @@ function Duplicate({
 			)}
 			<p className="text-muted-foreground text-xs">
 				No patch was prepared, and nothing was written. You can still ask for one, or close this and
-				dismiss the suggestion.
+				dismiss the suggestion. If the line is there because you saved this change earlier, record
+				that instead.
 			</p>
+			{notice && <Notice notice={notice} />}
 			<div className="flex flex-wrap gap-2">
 				<Button variant="outline" size="sm" data-testid="prepare-anyway" onClick={onProceed}>
 					Prepare anyway
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					data-testid="record-existing"
+					disabled={checking}
+					onClick={() => void recordExisting()}
+				>
+					{checking ? 'Checking…' : 'I saved it earlier - record it'}
 				</Button>
 				<Button variant="quiet" size="sm" onClick={onClose}>
 					Close
