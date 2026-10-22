@@ -515,6 +515,8 @@ export function describeRunError(
 export type DiffLineKind = 'file' | 'hunk' | 'add' | 'remove' | 'context' | 'note';
 
 export interface DiffLine {
+	/** Position in the diff, from 1: a line's identity, for a list key. */
+	no: number;
 	kind: DiffLineKind;
 	text: string;
 }
@@ -532,16 +534,17 @@ export function parseUnifiedDiff(diff: string): DiffLine[] {
 	const lines = diff.split('\n');
 	if (lines.at(-1) === '') lines.pop();
 	let inHunk = false;
-	return lines.map((text): DiffLine => {
+	return lines.map((text, at): DiffLine => {
+		const no = at + 1;
 		if (text.startsWith('@@')) {
 			inHunk = true;
-			return { kind: 'hunk', text };
+			return { no, kind: 'hunk', text };
 		}
-		if (!inHunk) return { kind: 'file', text };
-		if (text.startsWith('+')) return { kind: 'add', text };
-		if (text.startsWith('-')) return { kind: 'remove', text };
-		if (text.startsWith('\\')) return { kind: 'note', text };
-		return { kind: 'context', text };
+		if (!inHunk) return { no, kind: 'file', text };
+		if (text.startsWith('+')) return { no, kind: 'add', text };
+		if (text.startsWith('-')) return { no, kind: 'remove', text };
+		if (text.startsWith('\\')) return { no, kind: 'note', text };
+		return { no, kind: 'context', text };
 	});
 }
 

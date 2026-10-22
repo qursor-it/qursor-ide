@@ -123,4 +123,12 @@ export const queryKeys = {
 	 *  up. It is refetched only by a person asking for a new preview. */
 	intelligencePreview: (projectId: string, sessionLimit: number) =>
 		['intelligence-preview', projectId, sessionLimit] as const,
+	/** A change prepared for review (F33): the diff and the text a Save would
+	 *  write. Its own root for the preview's reason - it describes the file *now*,
+	 *  so a candidate's invalidation must not swap it under a reader. */
+	intelligencePrepared: (
+		candidateId: string,
+		kind: 'instruction' | 'revert',
+		allowDuplicate: boolean,
+	) => ['intelligence-prepared', candidateId, kind, allowDuplicate] as const,
 };

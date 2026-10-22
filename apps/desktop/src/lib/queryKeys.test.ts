@@ -66,5 +66,14 @@ describe('queryKeys', () => {
 		expect(preview[0]).not.toBe(queryKeys.intelligenceRun('p1')[0]);
 		expect(preview[0]).not.toBe(queryKeys.improvements('p1')[0]);
 		expect(queryKeys.intelligencePreview('p1', 50)).not.toEqual(preview);
+		expect(queryKeys.intelligencePrepared('c1', 'instruction', false)[0]).toBe(
+			'intelligence-prepared',
+		);
+		expect(queryKeys.intelligencePrepared('c1', 'instruction', true)).not.toEqual(
+			queryKeys.intelligencePrepared('c1', 'instruction', false),
+		);
+		expect(queryKeys.intelligencePrepared('c1', 'revert', false)).not.toEqual(
+			queryKeys.intelligencePrepared('c1', 'instruction', false),
+		);
 	});
 });

@@ -26,13 +26,21 @@ export async function sha256Hex(text: string): Promise<string> {
 
 export type HandoffKind = 'instruction' | 'revert';
 
-/** A prepared change that is ready to be saved, with what recording it needs. */
-export interface Handoff {
+/** What recording a Save needs to know. */
+export interface RecordTarget {
 	candidateId: string;
 	projectId: string;
 	kind: HandoffKind;
 	/** Absolute and canonical, inside the project: what is opened and written. */
 	targetPath: string;
+	/** The proposal, when there was one, so a Save that changed nothing reports
+	 *  the backend's own hash. A change removed by hand has none. */
+	proposedContent?: string;
+	proposedHash?: string;
+}
+
+/** A prepared change that is ready to be saved, with what recording it needs. */
+export interface Handoff extends RecordTarget {
 	relativePath: string;
 	/** `false`: saving creates the file, and the viewer cannot open it yet. */
 	exists: boolean;
@@ -60,6 +68,18 @@ export function handoffOf(change: PreparedChange, projectId: string): Handoff | 
 	};
 }
 
+/** A revert the backend could not propose a patch for (`status: conflict`): the
+ *  person removes the line by hand, and this is what lets them say so. The
+ *  backend accepts that as a revert too (F33), once it finds the line gone. */
+export function manualRevertTarget(change: PreparedChange, projectId: string): RecordTarget {
+	return {
+		candidateId: change.candidateId,
+		projectId,
+		kind: 'revert',
+		targetPath: change.targetPath,
+	};
+}
+
 /**
  * The hash to report for what was saved: `proposedHash` when the text is exactly
  * the proposal (the backend computed it, so there is no second implementation to
@@ -67,20 +87,22 @@ export function handoffOf(change: PreparedChange, projectId: string): Handoff | 
  * the draft before pressing Save, and the backend then checks that the prepared
  * line survived.
  */
-export async function expectedHash(handoff: Handoff, savedText: string): Promise<string> {
-	return savedText === handoff.proposedContent ? handoff.proposedHash : sha256Hex(savedText);
+export async function expectedHash(target: RecordTarget, savedText: string): Promise<string> {
+	return target.proposedHash !== undefined && savedText === target.proposedContent
+		? target.proposedHash
+		: sha256Hex(savedText);
 }
 
 /** Report a Save that happened. The backend re-reads the file and refuses with
  *  `not_saved` or `file_conflict` when it does not match. */
 export async function recordSaved(
-	handoff: Handoff,
+	target: RecordTarget,
 	savedText: string,
 ): Promise<ImprovementCandidate> {
-	const hash = await expectedHash(handoff, savedText);
-	return handoff.kind === 'revert'
-		? cmd.recordRevert(handoff.candidateId, handoff.targetPath, hash)
-		: cmd.recordImplementation(handoff.candidateId, handoff.targetPath, hash);
+	const hash = await expectedHash(target, savedText);
+	return target.kind === 'revert'
+		? cmd.recordRevert(target.candidateId, target.targetPath, hash)
+		: cmd.recordImplementation(target.candidateId, target.targetPath, hash);
 }
 
 /** What happened when a save was attempted and recorded. The three failures are
@@ -121,17 +143,17 @@ export async function saveDirectly(handoff: Handoff): Promise<SaveOutcome> {
  * the file, hashes it, and lets the backend decide.
  */
 export async function recordFromDisk(
-	handoff: Handoff,
+	target: RecordTarget,
 ): Promise<
 	| { state: 'recorded'; candidate: ImprovementCandidate }
 	| { state: 'record-failed'; error: unknown }
 > {
 	try {
-		const file = await cmd.readFile(handoff.targetPath);
+		const file = await cmd.readFile(target.targetPath);
 		if (file.isBinary || file.truncated || file.lossy) {
 			throw new Error('The file cannot be read back as complete text.');
 		}
-		return { state: 'recorded', candidate: await recordSaved(handoff, file.contents) };
+		return { state: 'recorded', candidate: await recordSaved(target, file.contents) };
 	} catch (error) {
 		return { state: 'record-failed', error };
 	}

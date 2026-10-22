@@ -6,6 +6,7 @@ import {
 	expectedHash,
 	type Handoff,
 	handoffOf,
+	manualRevertTarget,
 	recordFromDisk,
 	recordSaved,
 	saveDirectly,
@@ -248,6 +249,33 @@ describe('recordFromDisk', () => {
 	it('reports a file that is not there as a failed check, not a crash', async () => {
 		installFixture({ settings: { projectIntelligence: 'on' }, files: {} });
 		expect((await recordFromDisk(handoff())).state).toBe('record-failed');
+	});
+});
+
+describe('a revert removed by hand', () => {
+	it('has no proposal, so whatever the file holds is hashed, even an empty file', async () => {
+		const { calls } = installFixture({
+			settings: { projectIntelligence: 'on' },
+			files: { [TARGET]: file('') },
+			intelligence: { improvements: { p1: [candidate({ status: 'implemented' })] } },
+		});
+		const target = manualRevertTarget(
+			prepared({ kind: 'revert', status: 'conflict', proposedContent: null, proposedHash: null }),
+			'p1',
+		);
+		expect(target).toEqual({
+			candidateId: 'c1',
+			projectId: 'p1',
+			kind: 'revert',
+			targetPath: TARGET,
+		});
+		const outcome = await recordFromDisk(target);
+		expect(outcome.state).toBe('recorded');
+		expect(calls.map((c) => c.name)).toEqual(['read_file', 'record_revert']);
+		// sha256 of the empty text: never the (absent) proposal's hash.
+		expect(calls[1]?.args?.expectedHash).toBe(
+			'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+		);
 	});
 });
 

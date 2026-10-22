@@ -412,7 +412,7 @@ describe('parseUnifiedDiff', () => {
 		const lines = parseUnifiedDiff(
 			['--- a/x', '+++ b/x', '@@ -1,1 +0,0 @@', '--- a/dash'].join('\n'),
 		);
-		expect(lines.at(-1)).toEqual({ kind: 'remove', text: '--- a/dash' });
+		expect(lines.at(-1)).toEqual({ no: 4, kind: 'remove', text: '--- a/dash' });
 		expect(diffStats(lines)).toEqual({ added: 0, removed: 1 });
 	});
 

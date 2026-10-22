@@ -1,9 +1,11 @@
+import { IntelligenceView } from '@components/intelligence/IntelligenceView';
 import { EmptyHero } from '@components/layout/EmptyHero';
 import { StatusDot } from '@components/layout/StatusDot';
 import { RoutineOrigin } from '@components/routines/RoutineOrigin';
 import { RoutinesView } from '@components/routines/RoutinesView';
 import { Button, IconButton } from '@factorai/ui';
 import type { SessionSummary } from '@factorai/types';
+import { useIntelligenceStatus } from '@hooks/useIntelligenceStatus';
 import { useSessionMarks } from '@hooks/useSessionMarks';
 import { useStartSession } from '@hooks/useStartSession';
 import { formatStamp, routineSessionLabel } from '@lib/cron';
@@ -109,10 +111,10 @@ function SectionLabel({ children }: { children: ReactNode }) {
 	);
 }
 
-/** The two lists a project has (F22). In the URL rather than component state so
- *  the context menu's `New routine` — and later the MCP tool — can land you on
- *  the right one. */
-type ProjectTab = 'sessions' | 'routines';
+/** The lists a project has (F22), and Intelligence once its switch is on (F33).
+ *  In the URL rather than component state so the context menu's `New routine` —
+ *  and later the MCP tool — can land you on the right one. */
+type ProjectTab = 'sessions' | 'routines' | 'intelligence';
 
 function ProjectView() {
 	const { id } = projectRoute.useParams();
@@ -133,6 +135,16 @@ function ProjectView() {
 	const marks = useSessionMarks();
 	const clock24 = usePrefsStore((s) => s.clock24);
 	const startSession = useStartSession();
+	// The third tab exists only while Project Intelligence is on (F33, ADR-0084).
+	// A URL that asks for it while it is off - a bookmark, or a switch turned off
+	// in another window - shows the sessions instead of an empty page or a tab the
+	// strip does not offer. Until the answer is in, a URL that asks for it waits
+	// rather than flashing the sessions first.
+	const intelligenceStatus = useIntelligenceStatus();
+	const intelligenceOn = intelligenceStatus.data?.enabled === true;
+	const intelligencePending = tab === 'intelligence' && intelligenceStatus.isPending;
+	const currentTab: ProjectTab =
+		tab === 'intelligence' ? (intelligenceOn ? 'intelligence' : 'sessions') : (tab ?? 'sessions');
 
 	// Which groups are open, by parent id. Local and unpersisted, the same
 	// stance F12 takes for the file tree: an expanded set is cheap to rebuild
@@ -169,6 +181,7 @@ function ProjectView() {
 	);
 
 	const isEmpty = sessionsQ.data?.length === 0 && pending.length === 0;
+	const showSessions = currentTab === 'sessions' && !intelligencePending;
 
 	return (
 		// The header stays put and the list scrolls under it. `min-h-0` on the
@@ -209,7 +222,7 @@ function ProjectView() {
 				    follows the tab rather than moving to the list below it.
 				    See Sidebar for why the title sits on a wrapper rather than the
 				    Button itself. */}
-				{tab === 'routines' ? (
+				{currentTab === 'intelligence' ? null : currentTab === 'routines' ? (
 					<Button
 						size="sm"
 						className="gap-1.5"
@@ -241,19 +254,30 @@ function ProjectView() {
 				)}
 			</header>
 
-			{/* Two tabs, hardcoded for the same reason the panel's three are (Q18):
-			    this is a project's two lists, not a registry. */}
+			{/* Three tabs at most, hardcoded for the same reason the panel's three
+			    are (Q18): this is a project's lists, not a registry. The third is
+			    drawn only while its switch is on. */}
 			<div
 				className="flex shrink-0 items-center gap-1.5 px-6 pb-3"
 				role="tablist"
 				aria-label="Project"
 			>
-				<ProjectTabButton tab="sessions" label="Sessions" current={tab} projectId={id} />
-				<ProjectTabButton tab="routines" label="Routines" current={tab} projectId={id} />
+				<ProjectTabButton tab="sessions" label="Sessions" current={currentTab} projectId={id} />
+				<ProjectTabButton tab="routines" label="Routines" current={currentTab} projectId={id} />
+				{intelligenceOn && (
+					<ProjectTabButton
+						tab="intelligence"
+						label="Intelligence"
+						current={currentTab}
+						projectId={id}
+					/>
+				)}
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
-				{tab === 'routines' && (
+				{currentTab === 'intelligence' && <IntelligenceView projectId={id} />}
+				{intelligencePending && <p className="text-muted-foreground text-sm">Loading…</p>}
+				{currentTab === 'routines' && (
 					<RoutinesView
 						projectId={id}
 						canRun={canStart}
@@ -268,10 +292,10 @@ function ProjectView() {
 						}
 					/>
 				)}
-				{tab !== 'routines' && sessionsQ.isLoading && (
+				{showSessions && sessionsQ.isLoading && (
 					<p className="text-muted-foreground text-sm">Loading sessions…</p>
 				)}
-				{tab !== 'routines' && isEmpty && (
+				{showSessions && isEmpty && (
 					<EmptyHero
 						icon={<MessagesSquare />}
 						title="No sessions yet"
@@ -284,7 +308,7 @@ function ProjectView() {
 					/>
 				)}
 
-				{tab !== 'routines' && (pending.length > 0 || groups.length > 0) && (
+				{showSessions && (pending.length > 0 || groups.length > 0) && (
 					<ul className="flex flex-col divide-y divide-border rounded-md border border-border bg-card">
 						{pending.map((p) => (
 							<li key={p.sessionId}>
@@ -531,9 +555,10 @@ function ProjectTabButton({
 export const projectRoute = createRoute({
 	getParentRoute: () => rootRoute,
 	path: '/projects/$id',
-	// `?tab=routines` selects the Routines list. Anything else — including a
-	// hand-edited URL — is the sessions list, which is the one a project is
-	// mostly about.
+	// `?tab=routines` selects the Routines list and `?tab=intelligence` the
+	// Intelligence tab (F33; shown only while its switch is on). Anything else —
+	// including a hand-edited URL — is the sessions list, which is the one a
+	// project is mostly about.
 	// **Optional**, so the sidebar's and the tab strip's plain `to="/projects/$id"`
 	// links stay plain: absent means the sessions list, which is what a project
 	// is mostly about. Anything unrecognised — including a hand-edited URL —
@@ -543,7 +568,7 @@ export const projectRoute = createRoute({
 	// The route clears it as soon as the editor is open, so a reload or a
 	// browser-back does not reopen an editor you cancelled.
 	validateSearch: (search: Record<string, unknown>): { tab?: ProjectTab; new?: true } => ({
-		tab: search.tab === 'routines' ? 'routines' : undefined,
+		tab: search.tab === 'routines' || search.tab === 'intelligence' ? search.tab : undefined,
 		new: search.new === true || search.new === 'true' ? true : undefined,
 	}),
 	component: ProjectView,
