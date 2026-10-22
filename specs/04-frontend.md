@@ -72,7 +72,7 @@ apps/desktop/src/
 | -------------------------- | --------------------- | ------------------------------------------- |
 | `/`                        | home                  | "Select a project", or the first-run hero   |
 | `/projects`                | ProjectsView          | grid of project cards                       |
-| `/projects/$id`            | ProjectView           | `Sessions \| Routines` tabs; `?tab=routines` selects (F22)  |
+| `/projects/$id`            | ProjectView           | `Sessions \| Routines` tabs, plus `Intelligence` while its switch is on; `?tab=routines` / `?tab=intelligence` select (F22, F33)  |
 | `/projects/$id/sessions/$sessionId` | SessionView  | terminal-only (header + xterm)              |
 | `/projects/$projectId/prs/$number` | PullRequestView | one pull request in the main area, opened as a tab in the top strip (F31); `?change=<relPath>` selects the changed file shown; a bad number redirects to the project |
 | `/search?q=...`            | SearchView            | global FTS; a hit opens its session         |

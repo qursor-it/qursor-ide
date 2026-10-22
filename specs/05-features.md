@@ -2218,7 +2218,7 @@ someone made is not the kind of small that is fine.
 ### The surface
 
 **A medium modal, driven by the URL.**
-`?settings=appearance|keyboard|claude|profiles|editor|confirmations|sessions|routines|about`,
+`?settings=appearance|keyboard|claude|profiles|editor|confirmations|sessions|routines|intelligence|about`,
 validated on the root route exactly as `?file=` already is. That is deliberately
 both things: the modal keeps the session visible behind it and dismisses on Esc,
 and the URL gives deep links, reload/HMR survival and browser-back-closes — which
@@ -2390,6 +2390,11 @@ agent" (F31). A renderer preference (ADR-0013): only the renderer reads it, when
 the session starts. Empty means the shipped default, shown as the placeholder and
 stored as `''` so an improved default still reaches everyone who never wrote
 their own; *Reset to default* clears it. It is compared and saved trimmed.
+
+**Intelligence.** Added 2026-10-22, between Pull requests and Advanced
+(`?settings=intelligence`): the Project Intelligence switch and its provider
+status (F33). It is the second section, with Profiles, that **writes as you
+click** and holds nothing in the draft, so it is never dirty.
 
 **Advanced.** Added 2026-09-23, directly above About, with one row: the **update
 channel**, a `Select` of Stable and Alpha (F14, ADR-0064). A SQLite setting,
@@ -7739,8 +7744,8 @@ diff, Save it themselves, and later record whether it helped and keep or revert
 it. The cycle is *observe, verify, evaluate, implement, test, retain or revert,
 document*; the product never claims the middle step worked.
 
-This section is the **backend contract** (this slice). The screens are the next
-slice and are built against it.
+This section is the **backend contract**, and § "The screens" below is the
+renderer built against it.
 
 ### The switch
 
@@ -8064,6 +8069,105 @@ Evidence has **no foreign key to `sessions`**. When a session leaves the index
 stay as a record that something was observed and their `excerpt` / `context` are
 blanked (on every read and every start). Removing a project cascades every row
 derived from it. Nothing is shared between projects.
+
+### The screens
+
+**The switch is a row in Settings, in its own section.** `?settings=intelligence`,
+between Pull requests and Advanced, `settings-intelligence`. Unlike the rest of
+the modal it **writes as you click**, like Profiles: `setSetting
+('projectIntelligence', 'on' | null)` runs on the toggle and the modal's Save is
+not involved. A draft would put Save between the person and the two things the
+flip does at once (the provider is probed so its status can be shown, and turning
+it off cancels runs in flight), and a run that is cancelling is not something
+Cancel can take back. The section says what off means (nothing is read, nothing
+runs), that excerpts reach the provider only with consent given for each run,
+that an instruction file changes only by a Save the person presses, and, while it
+is on, the provider from `get_intelligence_status` - name, version, **remote**,
+`available` or the reason it is not. Turning it off drops the cached results of
+past runs.
+
+**The tab.** A third project tab, `?tab=intelligence`, **drawn only while the
+switch is on**. A URL that asks for it while it is off (a bookmark, a switch
+turned off elsewhere) shows the sessions, and waits for the switch's answer
+rather than flashing them first. On the tab the header has no action of its own:
+the way in is *Analyze sessions* inside it.
+
+| State | What it shows |
+|---|---|
+| Empty | One sentence of what it does and *Analyze sessions*. Nothing has been asked of a model |
+| Preview | Sessions read (by agent), what was skipped (still running, sub-agents, unreadable), the size of the excerpts, the provider with **remote** and `available`, the session limit (1 to 50, default 20, applied on blur or Enter), every signal with an include checkbox (stable ids, so a strike survives a new read), the optional instruction file, and the consent. *Analyze* sends `previewHash`, `excludedEvidenceIds` and `consentRemote`. Without consent the button reads **Analyze offline (signals only)** and says nothing is sent; with it, *Analyze*. Consent only counts where something could be sent: an unavailable provider or no excerpt selected hides it. `preview_stale` re-reads the preview and **withdraws the consent**, which was given for a set that no longer exists |
+| Running | The phase and sessions done of sessions read from `intelligence:progress` (matched on `projectId`; it may arrive before `start_analysis` resolves), a progress bar only once a total is known, *Cancel analysis*, and the line that no project file is written. A run that is `running` when the tab mounts shows the same, and a `run-finished` already heard wins over a row that has not caught up |
+| Results | The last run's counts, then the suggestions: **To review** (`proposed`, grouped Instruction, Test suggestion, Script suggestion, Manual follow-up, each group named and explained), **Saved changes** (`implemented`, `retained`) and **Closed** (`dismissed`, `reverted`, collapsed). A re-run never moves a decided candidate back, so earlier decisions stay below the new ones |
+| No actionable patterns | `no_change` is a result: it says so and that nothing was added. No candidate and no invented text |
+| Unreviewed signals | `signals_only`: the run's signals under *Unreviewed signals*, with the line that no model reviewed them, so they are not findings. If the provider was asked for and could not be used (`provider_unavailable` on a completed run) a neutral, not red, notice says that |
+| Failed or cancelled run | A cancelled run is one muted line. A failed one is a notice by `errorCode` (`invalid_output`, `timeout`, `provider_unauthenticated`, ... each in its own words, each saying nothing was saved) with *Try again*, which reopens the preview |
+
+**A suggestion** is collapsed to its action, problem kind, status, **independent
+sessions** (a single one reads `hypothesis · 1 independent session`) and title,
+and opens (a disclosure button, `aria-expanded`) to the problem, the suggestion,
+why this remedy, the limits, the downgrade note (*Weakened by the app*), a
+duplicate warning, the evidence and the timeline. **There is no score anywhere**:
+the honest quantities are the sessions and the hypothesis flag (ADR-0084). Blue
+is spent once, on `implemented · unverified`, because that is the person's move.
+
+**Evidence.** Each item is the signal's type, agent, `locator.line` and age, the
+session as a link to its route when `sessionAvailable`, and the redacted excerpt
+and context. When the session left the index it says **Evidence no longer
+available**, with no excerpt and no link.
+
+**Actions.** `proposed`: *Prepare change* (an `instruction` only), *Mark for
+follow-up* (a toggle), *Dismiss...* which **asks first** with an optional reason,
+because it is terminal. A test, script or manual suggestion has no *Prepare*:
+it says it is for consulting and that nothing is run or written for it.
+`implemented` and `retained`: *Document a check* (how, result, note; the **result
+starts empty**, so `passed` is never one click from a form), *Retain...* (with a
+reason, `implemented` only) and *Revert...*. The chip reads `implemented ·
+unverified` until a person records a check, then `implemented · check passed`
+(or `failed`, `inconclusive`): their word, never `works` or `effective`.
+
+**Preparing, and the two Saves.** *Prepare change* calls
+`prepare_instruction_change` and shows the target, the unified diff (`+` and `-`
+kept, colour is not the only cue) and **"Nothing has been written."** A
+`duplicate` shows where the file already says it, with *Prepare anyway*
+(`allowDuplicate`). Then exactly two explicit ways to Save:
+
+1. **Open as draft in editor.** The proposal becomes the unsaved draft of
+   `targetPath` in `draftStore`, the viewer opens it on the first changed line
+   (`?file=&line=`), and the person presses the editor's Save. `useEditBuffer`
+   announces the write (`lib/fileSaved`), and `useIntelligenceSaveRecorder`,
+   mounted at the root because the Save can come from any route, reports it to
+   `record_implementation` with the hash of **what was saved**: `proposedHash`
+   when it is the proposal, `sha256` of the text (`crypto.subtle`) when the person
+   edited it first. It only reports a write that already happened. *I saved it -
+   check now* reads the file and reports its hash for a Save the app did not see.
+   Not offered when the file does not exist (the viewer cannot open it), when it
+   is the file the viewer already has open (a mounted editor reads its draft
+   once), or when the person already has unsaved edits to it; the panel says
+   which.
+2. **Save to AGENTS.md...** opens a confirm dialog whose *Save to <file>* calls
+   the existing `write_file` and then records it. The way for a file that does
+   not exist yet.
+
+`not_saved` and `file_conflict` are shown as what they are (the change is not in
+the file; the file is not what was saved) with *Check again* or *Prepare again*.
+A write that failed says the file is as it was and records nothing; a write that
+succeeded and could not be recorded says only the record is missing.
+
+**Revert** runs the same flow backwards with `prepare_revert`. `ready` is the
+inverse diff and the same two Saves, then `record_revert`. `conflict` shows the
+backend's reason and `manualInstructions` and **offers no Save**: nothing is
+overwritten. *I removed it - check* reads the file and calls `record_revert`,
+which the backend accepts for a line removed by hand.
+
+**Errors.** Every `IntelligenceErrorCode` has its own title and what it means for
+the person's data (`lib/intelligenceView.ts`), with the one action `next` names:
+refresh the preview, prepare again, check again, open Settings, or none.
+
+**A bug this slice found in F26.** A draft restored when a file is reopened was
+shown, marked dirty, and **saved as the file it was a draft of**: the "disk lands
+only when clean" effect ran before the draft had marked the buffer dirty and put
+disk in `bufferRef`. Disk is now adopted as the baseline only, and the
+intelligence smoke spec covers the draft being shown and saved.
 
 ### Not built / not verified
 

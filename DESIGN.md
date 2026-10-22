@@ -656,6 +656,11 @@ too loud for a mark repeated once per expanded project.
 - **Truncation:** capped against the width of the *text* column it sits in, never
   a constant, and never past 55% of it — two long branch names on one row still
   have to leave the subject something.
+- **A status that is the person's move may take blue** (F33): a Project
+  Intelligence suggestion's chip is `border-primary/30 bg-primary/10 text-primary`
+  only while it reads `implemented · unverified`, because a saved change nobody
+  has checked asks to be checked. Every other status, kind and count is the
+  neutral chip, so blue stays rare enough to mean it.
 
 ### Cards / Containers
 
@@ -770,7 +775,8 @@ reason.
 ### Tab Chips
 
 Two or three sibling lists inside one route — the project page's
-`Sessions | Routines` — are **chips**: 12px label, 8px horizontal padding, the
+`Sessions | Routines`, and `Intelligence` as a third once its switch is on (F33) —
+are **chips**: 12px label, 8px horizontal padding, the
 card's `rounded-md` corner so the control and the box beneath it agree, and a
 1px border on **every** chip — `border` on the selected one, `border/50` on the
 others. The border is on all of them because a chip that only becomes a box when
