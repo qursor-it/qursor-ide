@@ -249,6 +249,14 @@ pub fn run() {
 				});
 			let live = terminals.clone();
 			let reap = terminals.clone();
+			// Project Intelligence (F33). Asks the terminals which sessions are
+			// still running, so an analysis never reads one mid-turn.
+			let intelligence_live = terminals.clone();
+			let intelligence = services::intelligence::IntelligenceService::for_app(
+				db.clone(),
+				app.handle().clone(),
+				Arc::new(move || intelligence_live.live_session_ids()),
+			);
 			let indexer = Arc::new(
 				Indexer::for_app(db.clone(), app.handle().clone())
 					.with_live_ids(Arc::new(move || live.live_session_ids()))
@@ -311,6 +319,7 @@ pub fn run() {
 				media: Arc::new(std::sync::OnceLock::new()),
 				webview_health,
 				attention,
+				intelligence,
 			});
 
 			spawn_initial_scan(indexer.clone());
@@ -350,6 +359,9 @@ pub fn run() {
 			}
 			if let WindowEvent::CloseRequested { api, .. } = event {
 				if let Some(state) = window.try_state::<AppState>() {
+					// An analysis is a child process too (ADR-0005, ADR-0084): it ends
+					// with the window whether or not a session is asking to be kept.
+					state.intelligence.cancel_all();
 					let live = state.terminals.live_count();
 					// **What is working decides whether we ask; what is live decides
 					// what dies** (ADR-0020). Both go to the renderer so the dialog
@@ -462,6 +474,21 @@ pub fn run() {
 			commands::terminal::terminal_resize,
 			commands::terminal::terminal_kill,
 			commands::terminal::terminal_list,
+			commands::intelligence::get_intelligence_status,
+			commands::intelligence::preview_analysis,
+			commands::intelligence::start_analysis,
+			commands::intelligence::cancel_analysis,
+			commands::intelligence::get_intelligence_run,
+			commands::intelligence::latest_intelligence_run,
+			commands::intelligence::list_improvements,
+			commands::intelligence::dismiss_improvement,
+			commands::intelligence::mark_follow_up,
+			commands::intelligence::prepare_instruction_change,
+			commands::intelligence::record_implementation,
+			commands::intelligence::record_verification,
+			commands::intelligence::mark_retained,
+			commands::intelligence::prepare_revert,
+			commands::intelligence::record_revert,
 			commands::terminal::shell_spawn,
 			commands::terminal::shell_kill_for_project,
 			commands::terminal::shell_name,

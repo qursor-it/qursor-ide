@@ -14,6 +14,7 @@ pub mod files;
 pub mod gh;
 pub mod git;
 pub mod ide;
+pub mod intelligence;
 pub mod profiles;
 pub mod projects;
 pub mod routines;

@@ -42,4 +42,8 @@ pub struct AppState {
 	pub webview_health: Arc<Health>,
 	/// Desktop notifications for a session that wants you (F32, ADR-0081).
 	pub attention: Arc<crate::services::attention::AttentionNotifier>,
+	/// Project Intelligence (F33, ADR-0084): analyses of a project's sessions and
+	/// the candidates they produce. Holds the analysis processes it started so
+	/// quitting the app ends them.
+	pub intelligence: crate::services::intelligence::IntelligenceService,
 }

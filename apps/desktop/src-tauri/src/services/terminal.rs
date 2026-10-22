@@ -522,7 +522,7 @@ fn process_descendants(root_pid: u32) -> std::io::Result<Vec<u32>> {
 }
 
 #[cfg(windows)]
-fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
+pub(crate) fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
 	let mut process_ids = process_descendants(root_pid).unwrap_or_default();
 	process_ids.push(root_pid);
 	process_ids.reverse();
