@@ -225,13 +225,15 @@ pub struct CompleteArgs<'a> {
 /// Write a finished run: its evidence, its candidates (merged into what already
 /// exists), their timeline, and the run row itself - or nothing.
 ///
-/// `still_wanted` is asked once, immediately before the commit. If it says no
+/// `still_wanted` is asked once, immediately before the commit, **with the
+/// transaction's own connection** - it runs while the writer lock is held, so it
+/// must not take that lock again. If it says no
 /// (the run was cancelled in the meantime) everything is rolled back and `None`
 /// comes back, so a late cancel cannot leave a half-visible result.
 pub fn complete_run(
 	conn: &mut Connection,
 	args: CompleteArgs<'_>,
-	still_wanted: impl FnOnce() -> bool,
+	still_wanted: impl FnOnce(&Connection) -> bool,
 ) -> AppResult<Option<Completion>> {
 	let tx = conn.transaction()?;
 
@@ -345,7 +347,7 @@ pub fn complete_run(
 			message,
 		],
 	)?;
-	if updated != 1 || !still_wanted() {
+	if updated != 1 || !still_wanted(&tx) {
 		// Dropped, not committed: the run was ended by someone else.
 		return Ok(None);
 	}

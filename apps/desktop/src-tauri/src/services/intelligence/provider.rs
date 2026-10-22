@@ -286,7 +286,7 @@ impl ClaudeCliProvider {
 		Self { db, timeout: ANALYSIS_TIMEOUT, probes: Mutex::new(HashMap::new()) }
 	}
 
-	#[cfg(test)]
+	/// A shorter (or longer) deadline than [`ANALYSIS_TIMEOUT`].
 	pub fn with_timeout(mut self, timeout: Duration) -> Self {
 		self.timeout = timeout;
 		self

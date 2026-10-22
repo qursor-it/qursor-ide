@@ -210,13 +210,7 @@ impl IntelligenceService {
 	/// Whether the person has turned Project Intelligence on. Anything but the
 	/// exact value `on`, and any failure to read it, is off.
 	pub fn enabled(&self) -> bool {
-		self.inner
-			.db
-			.with(|conn| crate::services::settings::get(conn, SettingKey::ProjectIntelligence))
-			.ok()
-			.flatten()
-			.as_deref()
-			== Some("on")
+		self.inner.db.with(|conn| Ok(switch_is_on(conn))).unwrap_or(false)
 	}
 
 	pub fn require_enabled(&self) -> AppResult<()> {
@@ -356,6 +350,12 @@ impl Drop for Inner {
 			run.value().cancel();
 		}
 	}
+}
+
+/// The switch, read on a connection the caller already holds.
+pub(crate) fn switch_is_on(conn: &rusqlite::Connection) -> bool {
+	crate::services::settings::get(conn, SettingKey::ProjectIntelligence).ok().flatten().as_deref()
+		== Some("on")
 }
 
 pub(crate) fn now_ms() -> i64 {

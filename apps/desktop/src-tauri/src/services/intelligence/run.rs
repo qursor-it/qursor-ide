@@ -258,7 +258,7 @@ impl IntelligenceService {
 				},
 				// Asked once, immediately before the commit: a cancel that arrives after
 				// the answer but before the write still stops it.
-				|| !job.control.is_cancelled() && self.enabled(),
+				|conn| !job.control.is_cancelled() && super::switch_is_on(conn),
 			)
 		});
 		match saved {
