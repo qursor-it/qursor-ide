@@ -873,6 +873,74 @@ test.describe('project intelligence', () => {
 		expect(sha256(String(write?.contents))).not.toBe(sha256(INTEL_PROPOSED));
 	});
 
+	test('@smoke a Save the backend will not record says so, and the way out matches the cause', async ({
+		page,
+	}) => {
+		await openTab(
+			page,
+			withResults([candidateFixture()], {
+				prepared: { 'cand-instruction': preparedFixture() },
+				fails: {
+					kind: 'Intelligence',
+					message:
+						'file_conflict: AGENTS.md on disk is not the content that was saved; it changed since. Prepare the change again',
+				},
+			}),
+		);
+		const card = await expand(page, 'cand-instruction');
+		await card.getByTestId('prepare-change').click();
+		await card.getByTestId('save-directly').click();
+		await page.getByTestId('intelligence-confirm-save').click();
+
+		// The file was written, and the backend would not believe it: said as exactly
+		// that, with nothing moved.
+		const notice = card.getByTestId('intelligence-notice');
+		await expect(notice).toContainText('The file is not what was saved');
+		await expect(notice).toContainText('only the record is missing');
+		await expect(card).toHaveAttribute('data-status', 'proposed');
+		// A conflict means the diff is stale, so the way out is a fresh one.
+		const before = (await calls(page, 'prepare_instruction_change')).length;
+		await expect(notice.getByTestId('intelligence-notice-retry')).toHaveText('Prepare again');
+		await notice.getByTestId('intelligence-notice-retry').click();
+		await expect
+			.poll(async () => (await calls(page, 'prepare_instruction_change')).length)
+			.toBeGreaterThan(before);
+		await expect(card.getByTestId('intelligence-notice')).toHaveCount(0);
+	});
+
+	test('@smoke a draft saved without the instruction is "not saved", and Check again looks at the file', async ({
+		page,
+	}) => {
+		await openTab(
+			page,
+			withResults([candidateFixture()], {
+				prepared: { 'cand-instruction': preparedFixture() },
+				fails: {
+					kind: 'Intelligence',
+					message: 'not_saved: AGENTS.md does not contain the prepared line',
+				},
+			}),
+		);
+		const card = await expand(page, 'cand-instruction');
+		await card.getByTestId('prepare-change').click();
+		await card.getByTestId('open-as-draft').click();
+		await page.getByTestId('file-viewer').getByTestId('viewer-save').click();
+
+		const waiting = card.getByTestId('prepare-waiting');
+		const notice = waiting.getByTestId('intelligence-notice');
+		await expect(notice).toContainText('The change is not in the file');
+		await expect(notice).toContainText('Nothing was recorded');
+		await expect(notice.getByTestId('intelligence-notice-retry')).toHaveText('Check again');
+		const recordedBefore = (await calls(page, 'record_implementation')).length;
+		await notice.getByTestId('intelligence-notice-retry').click();
+		// It read the file and asked the backend again; the candidate did not move.
+		await expect
+			.poll(async () => (await calls(page, 'record_implementation')).length)
+			.toBeGreaterThan(recordedBefore);
+		expect(await callNames(page)).toContain('read_file');
+		await expect(card).toHaveAttribute('data-status', 'proposed');
+	});
+
 	test('@smoke a person documents a check; it never becomes "effective"', async ({ page }) => {
 		await openTab(page, withResults([implemented()]));
 		const card = await expand(page, 'cand-instruction');

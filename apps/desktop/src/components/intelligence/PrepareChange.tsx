@@ -120,7 +120,12 @@ export function PrepareChange({
 			)}
 
 			{prepared.data?.status === 'ready' && (
-				<Ready change={prepared.data} projectId={projectId} onClose={onClose} />
+				<Ready
+					change={prepared.data}
+					projectId={projectId}
+					onClose={onClose}
+					onPrepareAgain={() => void prepared.refetch()}
+				/>
 			)}
 		</section>
 	);
@@ -216,7 +221,9 @@ function Conflict({
 					</pre>
 				</>
 			)}
-			{notice && <Notice notice={notice} onRetry={() => void check()} />}
+			{notice && (
+				<Notice notice={notice} onRetry={retryFor(notice, () => void check(), onRefresh)} />
+			)}
 			<div className="flex flex-wrap gap-2">
 				<Button
 					variant="outline"
@@ -238,6 +245,14 @@ function Conflict({
 	);
 }
 
+/** What a notice's retry control does. The label comes from the notice (`next`),
+ *  so the action has to come from it too: a conflict means the diff is stale and
+ *  the way out is a fresh one, while a change that is not in the file yet is
+ *  answered by looking at the file again. */
+function retryFor(notice: ErrorNotice, check: () => void, prepareAgain: () => void): () => void {
+	return notice.next === 'prepare-again' ? prepareAgain : check;
+}
+
 const DRAFT_BLOCK_TEXT: Record<DraftBlock, (name: string) => string> = {
 	'new-file': (name) =>
 		`${name} does not exist yet, so the editor cannot open it. Saving from here creates it.`,
@@ -252,10 +267,12 @@ function Ready({
 	change,
 	projectId,
 	onClose,
+	onPrepareAgain,
 }: {
 	change: PreparedChange;
 	projectId: string;
 	onClose: () => void;
+	onPrepareAgain: () => void;
 }) {
 	const handoff = handoffOf(change, projectId);
 	const queryClient = useQueryClient();
@@ -333,13 +350,25 @@ function Ready({
 		}
 	}
 
-	function stopWaiting(h: Handoff) {
+	function dropHandoff(h: Handoff) {
 		// The draft goes only if it is still exactly what was seeded: anything the
 		// person typed into it is theirs.
 		const draft = useDraftStore.getState().drafts[h.targetPath];
 		if (draft === h.proposedContent) useDraftStore.getState().clearDraft(h.targetPath);
 		useIntelligenceHandoffStore.getState().forget(h.candidateId);
+	}
+
+	function stopWaiting(h: Handoff) {
+		dropHandoff(h);
 		onClose();
+	}
+
+	/** A fresh diff against the file as it is now. What was handed to the editor is
+	 *  let go first: it was prepared against a file that has since moved. */
+	function prepareAgain() {
+		setRecordNotice(null);
+		if (entry) dropHandoff(entry.handoff);
+		onPrepareAgain();
 	}
 
 	return (
@@ -369,7 +398,10 @@ function Ready({
 			</p>
 
 			{recordNotice && (
-				<Notice notice={recordNotice} onRetry={() => void checkNow(handoff)}>
+				<Notice
+					notice={recordNotice}
+					onRetry={retryFor(recordNotice, () => void checkNow(handoff), prepareAgain)}
+				>
 					<span className="text-muted-foreground text-xs">
 						The file was written; only the record is missing.
 					</span>
@@ -383,6 +415,7 @@ function Ready({
 					checking={checking}
 					onShow={() => viewer.open(entry.handoff.targetPath, { line: line ?? undefined })}
 					onCheck={() => void checkNow(entry.handoff)}
+					onPrepareAgain={prepareAgain}
 					onStop={() => stopWaiting(entry.handoff)}
 				/>
 			) : (
@@ -465,6 +498,7 @@ function Waiting({
 	checking,
 	onShow,
 	onCheck,
+	onPrepareAgain,
 	onStop,
 }: {
 	name: string;
@@ -472,12 +506,13 @@ function Waiting({
 	checking: boolean;
 	onShow: () => void;
 	onCheck: () => void;
+	onPrepareAgain: () => void;
 	onStop: () => void;
 }) {
 	return (
 		<div className="space-y-2" data-testid="prepare-waiting">
 			{phase.state === 'failed' ? (
-				<Notice notice={phase.notice} onRetry={onCheck} />
+				<Notice notice={phase.notice} onRetry={retryFor(phase.notice, onCheck, onPrepareAgain)} />
 			) : (
 				<p className="text-sm">
 					{phase.state === 'recording'
