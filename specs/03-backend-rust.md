@@ -28,6 +28,13 @@ commands/
                       #   gh_pr_checkout_plan, gh_pr_checkout —
                       #   pull requests of `origin` (F31)
   ide.rs              # the IDE bridge's command surface (F20)
+  intelligence.rs     # Project Intelligence (F33, ADR-0084): preview_analysis,
+                      #   start_analysis, cancel_analysis, get_intelligence_status,
+                      #   get_intelligence_run, latest_intelligence_run,
+                      #   list_improvements, dismiss_improvement, mark_follow_up,
+                      #   prepare_instruction_change, record_implementation,
+                      #   record_verification, mark_retained, prepare_revert,
+                      #   record_revert
   routines.rs         # list/create/update/delete/set_enabled/run_now
                       #   (+ list_skills — slice 2, planned)
   memory.rs           # list_plans, read_plan — PLANNED, roadmap item 2 (#14).
@@ -57,6 +64,21 @@ services/
                       #   path_kinds
   sops.rs             # what a SOPS-encrypted file looks like, and where the
                       #   `sops` binary is (F27)
+  intelligence/       # Project Intelligence (F33, ADR-0084). Off until the
+                      #   `intelligence.enabled` setting is `on`
+    mod.rs            #   IntelligenceService, the error codes, the switch, preview
+    evidence.rs       #   signals from a Claude / Codex transcript (offline)
+    collect.rs        #   which sessions, the per-run cap, the preview hash
+    redact.rs         #   best-effort secret redaction + excerpt shaping
+    provider.rs       #   AnalysisProvider seam; the Claude CLI adapter (stdin,
+                      #   no tools, own process group, deadline, kill handle)
+    analyzer.rs       #   fail-closed validation of the model's JSON
+    dedupe.rs         #   candidate keys and the conservative merge
+    store.rs          #   runs, evidence, candidates, timeline (SQLite)
+    patch.rs          #   instruction target, block, duplicate check, diff
+    run.rs            #   start / execute / cancel a run
+    lifecycle.rs      #   prepare / record implementation, verification,
+                      #   retain, revert
   gh/                 # pull requests through the user's `gh` (F31, ADR-0077):
                       #   run (find + run `gh`), repo (`origin` -> owner/name),
                       #   args (every argv), parse (JSON + failures), patch
@@ -100,7 +122,9 @@ db/
     0005_session_subagent.sql
     0006_session_worktrees.sql   # F21, planned
 models/
-  mod.rs              # every cross-boundary struct, one file
+  mod.rs              # every cross-boundary struct
+  intelligence.rs     # the Project Intelligence types (F33): enums are snake_case
+                      #   strings, fields camelCase
 ```
 
 **Corrected 2026-08-21.** This block had drifted: it was missing `state.rs`,
@@ -459,6 +483,27 @@ set_setting(key: SettingKey, value: Option<String>) -> ()
 // the settings page's override field validates with on blur.
 validate_claude_binary(path: String) -> ClaudeCliStatus
 
+// intelligence (F33, ADR-0084). Every one rejects with AppError::Intelligence
+// "disabled" until the `projectIntelligence` setting is "on", except
+// get_intelligence_status (reads the switch, probes nothing while off) and
+// cancel_analysis. None writes a project file; prepare_* return text + a diff for
+// the viewer, record_* verify the person's Save on disk.
+get_intelligence_status() -> IntelligenceStatus { enabled, provider: Option<ProviderInfo> }
+preview_analysis(project_id: String, session_limit: Option<u32>) -> AnalysisPreview
+start_analysis(request: AnalysisRequest) -> StartedRun { run_id }   // progress by event
+cancel_analysis(run_id: String) -> ()                               // idempotent
+get_intelligence_run(run_id: String) -> IntelligenceRunDetail { run, signals }
+latest_intelligence_run(project_id: String) -> Option<IntelligenceRunDetail>
+list_improvements(project_id: String) -> Vec<ImprovementCandidate>
+dismiss_improvement(candidate_id: String, reason: Option<String>) -> ImprovementCandidate
+mark_follow_up(candidate_id: String, follow_up: bool, note: Option<String>) -> ImprovementCandidate
+prepare_instruction_change(candidate_id: String, allow_duplicate: Option<bool>) -> PreparedChange
+record_implementation(candidate_id: String, target_path: String, expected_hash: String) -> ImprovementCandidate
+record_verification(input: VerificationInput) -> ImprovementCandidate
+mark_retained(candidate_id: String, reason: Option<String>) -> ImprovementCandidate
+prepare_revert(candidate_id: String) -> PreparedChange              // status ready | conflict
+record_revert(candidate_id: String, target_path: String, expected_hash: String) -> ImprovementCandidate
+
 // updates (F14, ADR-0064). Checks the channel the `updateChannel` setting names
 // and hands back the plugin's own `Update` resource id, so download and install
 // stay the plugin's commands. `update` is None when nothing is newer.
@@ -479,6 +524,9 @@ check_update() -> UpdateCheck { channel: "stable" | "alpha", update: Option<Upda
 | `routine:fire`         | `{ routineId, routineName, projectId, sessionId, prompt, cwd }` | RoutineRunner (F22) |
 | `routines:changed`     | `{ projectId }`                      | routines service (F22 slice 3) |
 | `file:changed`         | `{ path }`                           | FileWatch (F7)      |
+| `intelligence:progress` | `{ runId, projectId, phase, sessionsDone, sessionsTotal, signals }` | IntelligenceService (F33) |
+| `intelligence:run-finished` | `{ runId, projectId, state, outcome, errorCode, candidateCount, signalCount }` | IntelligenceService (F33) - once per run, after its row is final |
+| `intelligence:changed` | `{ projectId, candidateId }`         | IntelligenceService (F33) - refetch `list_improvements` |
 
 `session:worktree` is the one event whose source is the IDE bridge rather than a
 service, and it fires **after** the write to `session_worktrees`, never before:
@@ -1569,6 +1617,7 @@ Keys, as of F11:
 | `routinesMaxConcurrent` | `routines.max_concurrent` | `RoutineRunner` | How many routine sessions may start at once; the rest queue |
 | `updateChannel` | `updates.channel` | `check_update` | `alpha`, or unset for stable (F14, ADR-0064). Anything else reads as stable |
 | `desktopNotifications` | `notifications.desktop` | `AttentionNotifier` (`TauriSink`) | `off`, or unset for on (F32, ADR-0081) |
+| `projectIntelligence` | `intelligence.enabled` | `IntelligenceService` | `on`, or **unset for off**; any other value is off (F33, ADR-0084). Writing anything but `on` cancels runs in flight |
 
 **The serde name and the row key differ on purpose.** The dotted namespace is
 what this table was created with and what an operator sees in `sqlite3`; the
@@ -1622,6 +1671,7 @@ struct AppState {
   watch: Arc<watcher::Control>,
   file_watch: Arc<FileWatch>,
   attention: Arc<AttentionNotifier>,  // F32: notifies when a session wants you
+  intelligence: IntelligenceService,  // F33: analyses, candidates; owns the analysis processes
 }
 ```
 
@@ -1662,6 +1712,7 @@ pub enum AppError {
   #[error("process: {0}")]       Process(String),
   #[error("unauthenticated: {0}")] Unauthenticated(String),
   #[error("remote: {0}")]        Remote(String),
+  #[error("intelligence: {0}")]  Intelligence(String),
 }
 ```
 
@@ -1673,6 +1724,14 @@ in `packages/types` `AppError`: `Unauthenticated` is "the user's `gh` has no
 usable login for this host" and is answered with `gh auth login`, not a toast;
 `Remote` is a failure of a request `gh` made — rate limit, network, SAML, a 422 —
 carrying the remote's own words. A missing pull request or file is `NotFound`.
+
+`Intelligence` is the kind F33 added (ADR-0084), mirrored in `packages/types`
+`AppError`. Its message is `<code>: <detail>` with the code one of a closed set
+(`disabled`, `file_conflict`, `not_saved`, `preview_stale`, ... - F33 § "Commands")
+so the renderer branches on the code without the union growing a variant per
+reason. `apps/desktop/src/lib/intelligence.ts` splits it. Failures of a *run*
+(`timeout`, `invalid_output`, ...) are not errors of a command: they are the
+run's `errorCode`.
 
 ## Permissions (`capabilities/default.json`)
 

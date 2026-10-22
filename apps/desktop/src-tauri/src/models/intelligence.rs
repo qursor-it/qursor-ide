@@ -457,7 +457,7 @@ pub struct PreparedChange {
 pub struct IntelligenceProgressEvent {
 	pub run_id: String,
 	pub project_id: String,
-	/// `collecting`, `analyzing`, `validating`, `saving`.
+	/// `analyzing` and `validating` (a run that calls the provider), then `saving`.
 	pub phase: String,
 	pub sessions_done: u32,
 	pub sessions_total: u32,
