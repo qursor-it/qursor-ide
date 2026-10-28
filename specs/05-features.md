@@ -2433,8 +2433,8 @@ Advanced section.
 `get_setting` / `set_setting`, keyed by a **mirrored `SettingKey` union** — see
 [`03-backend-rust.md`](./03-backend-rust.md) § `settings`. The keys: the claude
 and codex binary paths, the default agent, F22's `routines.catchup_hours` and
-`routines.max_concurrent`, F14's `updates.channel` (ADR-0064), F32's `notifications.desktop`, and F33's
-`usage.claude_endpoint`, `usage.taskbar_widget` and `usage.statusline` (ADR-0084).
+`routines.max_concurrent`, F14's `updates.channel` (ADR-0064), F32's `notifications.desktop`, and F34's
+`usage.claude_endpoint`, `usage.taskbar_widget` and `usage.statusline` (ADR-0086).
 
 The override is read by **`find_claude_binary(override)`** rather than
 `TerminalManager`'s existing `binary_override` field. That field is documented for
@@ -8195,9 +8195,9 @@ intelligence smoke spec covers the draft being shown and saved.
 
 ---
 
-## F33 — Usage monitor: plan limits and session cost
+## F34 — Usage monitor: plan limits and session cost
 
-**Shipped 2026-10-19; decisions in [ADR-0084](adr/0084-usage-monitor.md),
+**Shipped 2026-10-19; decisions in [ADR-0086](adr/0086-usage-monitor.md),
 design in `docs/superpowers/specs/2026-10-19-usage-monitor-design.md`.** For
 each agent (Claude, Codex) the 5-hour and weekly windows with their reset
 times, and for the session in front of you its tokens and an estimated

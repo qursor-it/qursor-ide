@@ -20,7 +20,7 @@ pub fn get_setting(state: State<'_, AppState>, key: SettingKey) -> AppResult<Opt
 /// clears an override and goes back to auto-detection — an empty string would
 /// be a *set* value that happens to be empty, and would break the probe.
 ///
-/// The taskbar widget follows its setting live (ADR-0084).
+/// The taskbar widget follows its setting live (ADR-0086).
 #[tauri::command]
 pub fn set_setting(
 	app: AppHandle,

@@ -1,4 +1,4 @@
-//! The Win32 half of the taskbar widget (ADR-0084). One named thread owns a
+//! The Win32 half of the taskbar widget (ADR-0086). One named thread owns a
 //! hidden listener window (timers, `TaskbarCreated`), the layered surface
 //! reparented into `Shell_TrayWnd`, the WinEvent hook and the message loop.
 //!

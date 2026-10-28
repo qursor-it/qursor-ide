@@ -46,7 +46,7 @@ commands/
   webview.rs          # webview_crash_notice — why this renderer is a fresh one
                       #   (F17, ADR-0059)
   usage.rs            # get_usage, session_usage — plan limits and the active
-                      #   session's tokens and cost (F33, ADR-0084)
+                      #   session's tokens and cost (F34, ADR-0086)
 agents/
   mod.rs              # Discovered, display_name_for_path — the store-agnostic bits
   claude.rs           # Claude's directory encoding, transcript paths, discovery
@@ -109,7 +109,7 @@ services/
     server.rs         # a streamable-HTTP endpoint per session
     tools.rs          # listRoutines, createRoutine, updateRoutine,
                       #   setRoutineEnabled — reaching the agent as mcp__factorai__*
-  usage/              # plan limits and session cost (F33, ADR-0084):
+  usage/              # plan limits and session cost (F34, ADR-0086):
                       #   store (usage.json, on-change subscribers), poller (one
                       #   thread, every source), statusline (the --settings
                       #   status line and its helper mode), codex_log,
@@ -121,7 +121,7 @@ services/
     protocol.rs       # initialize, tools/list, tools/call, two notifications
     scope.rs          # resolve_within — the boundary that matters (ADR-0017 § 3)
 platform/
-  taskbar_widget/     # the usage widget in the Windows taskbar (ADR-0084):
+  taskbar_widget/     # the usage widget in the Windows taskbar (ADR-0086):
                       #   render (pure pixmap), windows (the embed, its own
                       #   thread), tray (the fallback icon); no-op elsewhere
 db/
@@ -522,7 +522,7 @@ record_revert(candidate_id: String, target_path: String, expected_hash: String) 
 // stay the plugin's commands. `update` is None when nothing is newer.
 check_update() -> UpdateCheck { channel: "stable" | "alpha", update: Option<UpdateMetadata> }
 
-// usage (F33, ADR-0084). Every profile's latest limits, a window past its reset
+// usage (F34, ADR-0086). Every profile's latest limits, a window past its reset
 // already shown as reset; `usage:changed` pushes the same list on every change.
 get_usage() -> Vec<ProviderUsage>
 // Tokens and estimated list-price cost of one session, from its transcript, off
@@ -547,7 +547,7 @@ session_usage(session_id: String) -> Option<SessionUsage>
 | `intelligence:progress` | `{ runId, projectId, phase, sessionsDone, sessionsTotal, signals }` | IntelligenceService (F33) |
 | `intelligence:run-finished` | `{ runId, projectId, state, outcome, errorCode, candidateCount, signalCount }` | IntelligenceService (F33) - once per run, after its row is final |
 | `intelligence:changed` | `{ projectId, candidateId }`         | IntelligenceService (F33) - refetch `list_improvements` |
-| `usage:changed`        | `ProviderUsage[]` (every profile)    | usage store (F33)   |
+| `usage:changed`        | `ProviderUsage[]` (every profile)    | usage store (F34)   |
 
 `session:worktree` is the one event whose source is the IDE bridge rather than a
 service, and it fires **after** the write to `session_worktrees`, never before:
@@ -1639,7 +1639,7 @@ Keys, as of F11:
 | `updateChannel` | `updates.channel` | `check_update` | `alpha`, or unset for stable (F14, ADR-0064). Anything else reads as stable |
 | `desktopNotifications` | `notifications.desktop` | `AttentionNotifier` (`TauriSink`) | `off`, or unset for on (F32, ADR-0081) |
 | `projectIntelligence` | `intelligence.enabled` | `IntelligenceService` | `on`, or **unset for off**; any other value is off (F33, ADR-0084). Writing anything but `on` cancels runs in flight |
-| `usageClaudeEndpoint` | `usage.claude_endpoint` | usage poller (`claude_api`) | `on`, or unset for off: the opt-in endpoint (F33, ADR-0084) |
+| `usageClaudeEndpoint` | `usage.claude_endpoint` | usage poller (`claude_api`) | `on`, or unset for off: the opt-in endpoint (F34, ADR-0086) |
 | `usageTaskbarWidget` | `usage.taskbar_widget` | `TaskbarWidget`, at boot and live from `set_setting` | `off`, or unset for on (Windows only) |
 | `usageStatusLine` | `usage.statusline` | `TerminalManager` (per Claude spawn) | `off`, or unset for on: the injected status line |
 
@@ -1681,8 +1681,8 @@ binary that spawns sessions perfectly well, which is the same class of mistake a
 
 ### Usage monitor
 
-**Shipped 2026-10-19 with F33; decisions in
-[ADR-0084](adr/0084-usage-monitor.md).** `services/usage/`.
+**Shipped 2026-10-19 with F34; decisions in
+[ADR-0086](adr/0086-usage-monitor.md).** `services/usage/`.
 
 - **`UsageStore`** keeps the latest `ProviderUsage` per `(agent, profile)`,
   persisted to `<data_dir>/usage.json` (temp file and rename, serialised). A
@@ -1729,8 +1729,8 @@ struct AppState {
   file_watch: Arc<FileWatch>,
   attention: Arc<AttentionNotifier>,  // F32: notifies when a session wants you
   intelligence: IntelligenceService,  // F33: analyses, candidates; owns the analysis processes
-  usage: Arc<UsageStore>,             // F33: plan limits per (agent, profile)
-  taskbar_widget: Arc<TaskbarWidget>, // F33: the Windows taskbar widget, if running
+  usage: Arc<UsageStore>,             // F34: plan limits per (agent, profile)
+  taskbar_widget: Arc<TaskbarWidget>, // F34: the Windows taskbar widget, if running
 }
 ```
 

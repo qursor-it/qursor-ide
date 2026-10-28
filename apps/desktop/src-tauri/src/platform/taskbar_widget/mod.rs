@@ -1,4 +1,4 @@
-//! The usage widget in the Windows taskbar (ADR-0084): a native layered window
+//! The usage widget in the Windows taskbar (ADR-0086): a native layered window
 //! reparented into `Shell_TrayWnd`, falling back to a notification-area icon
 //! when embedding fails. Windows only; elsewhere every call is a no-op.
 //!

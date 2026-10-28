@@ -342,7 +342,7 @@ pub fn run() {
 					let _ = handle.emit("usage:changed", list);
 				}));
 			}
-			// The taskbar widget (ADR-0084) hears the same changes. `update` only
+			// The taskbar widget (ADR-0086) hears the same changes. `update` only
 			// posts to the widget thread, so a hung Explorer cannot hold a source.
 			let taskbar_widget = Arc::new(platform::taskbar_widget::TaskbarWidget::default());
 			{

@@ -1,5 +1,5 @@
 //! The notification-area icon the widget falls back to when it cannot live in
-//! the taskbar (ADR-0084).
+//! the taskbar (ADR-0086).
 //!
 //! Tauri's tray icon is not thread-safe (an `Rc` inside), so the widget thread
 //! never holds one: every build, update and removal is a closure posted with

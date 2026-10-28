@@ -1,7 +1,7 @@
 /// tauri-build's default manifest (Common-Controls v6) plus the Windows 8+
 /// compatibility section: Windows supports `WS_EX_LAYERED` on a *child* window
 /// only for a process that declares Windows 8 or later, and the taskbar widget
-/// (ADR-0084) is a layered child of the taskbar.
+/// (ADR-0086) is a layered child of the taskbar.
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>

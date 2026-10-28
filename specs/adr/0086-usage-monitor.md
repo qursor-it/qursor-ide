@@ -1,4 +1,4 @@
-# ADR-0084 — Usage monitor: plan limits from the agents' own channels, a status bar, and a widget in the Windows taskbar
+# ADR-0086 — Usage monitor: plan limits from the agents' own channels, a status bar, and a widget in the Windows taskbar
 
 Date: 2026-10-19
 Status: Accepted for this local fork. Builds on ADR-0002 (the agent is an embedded PTY), ADR-0005 (kill-on-quit), ADR-0036 (a profile is a config directory) and ADR-0060 (Codex behind one seam, F30). Design: `docs/superpowers/specs/2026-10-19-usage-monitor-design.md`.
