@@ -34,34 +34,22 @@ $env:CARGO_BUILD_JOBS = '2'
 pnpm build:windows
 ```
 
-The output is under the workspace `target\release\bundle\nsis` directory. The product and executable use the `qursor-ide` name, and version 0.55.0 produces `qursor-ide_0.55.0_x64-setup.exe`. The existing `dev.factorai` application identity keeps the current data location available. The Windows configuration selects NSIS and disables updater artifacts, the upstream update endpoint, and the upstream signing key. Local Windows builds therefore need to be updated by installing a newer setup executable.
+The output is under the workspace `target\release\bundle\nsis` directory. The product and executable use the `qursor-ide` name, and version 0.55.0 produces `qursor-ide_0.55.0_x64-setup.exe`. The existing `dev.factorai` application identity keeps the current data location available. The Windows configuration selects NSIS and points the updater at this fork's own signed feed (see below); it never polls the upstream project. Local builds do not produce updater artifacts, so a local build is updated by installing a newer setup executable.
 
 Run `pnpm windows:check` to verify the native bundle defaults before packaging.
 
-## Optional fork updater configuration
+## Fork updater and releases
 
-A fork release can add its own update feed explicitly with a Tauri configuration overlay. Keep the overlay local unless the fork intentionally maintains its own updater identity and feed:
+Installed Windows builds poll `https://github.com/qursor-it/qursor-ide/releases/latest/download/latest.json` (`tauri.windows.conf.json`, ADR-0087). Pushing a `v*` tag runs `.github/workflows/windows-release.yml`, which checks the tag equals `v` + the `tauri.conf.json` version, builds the signed NSIS installer with `tauri.windows.release.conf.json` (the only place `createUpdaterArtifacts` is on) and publishes it with `latest.json` to this repository's releases.
 
-```json
-{
-  "bundle": {
-    "createUpdaterArtifacts": true
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "YOUR_FORK_PUBLIC_KEY",
-      "endpoints": ["https://your-fork.example/latest.json"]
-    }
-  }
-}
-```
+One-time setup:
 
-Save the overlay as `apps/desktop/src-tauri/tauri.windows.updater.conf.json`, then build from the repository root:
+1. Generate the signing key: `pnpm tauri signer generate -w ~/.tauri/qursor-updater.key`.
+2. Paste the public key into `plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.windows.conf.json`, replacing `REPLACE_WITH_QURSOR_UPDATER_PUBKEY`. `pnpm windows:check` fails until this is done.
+3. Add the repository secrets `TAURI_SIGNING_PRIVATE_KEY` (the key file contents) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
-```powershell
-pnpm --filter @factorai/desktop run build:windows -- --config src-tauri/tauri.windows.updater.conf.json
-```
+Keep the private key safe: if it is lost, no installed build can verify a new release, and every install has to be reinstalled by hand.
 
-Supply the matching private signing key through the [Tauri updater environment variables](https://v2.tauri.app/plugin/updater/#signing-your-updates); do not put the private key in the config file or repository. Tauri merges additional configuration with the project defaults using JSON Merge Patch, as described in its [configuration files guide](https://v2.tauri.app/develop/configuration-files/).
+macOS and Linux are source builds only. Their base `tauri.conf.json` has no updater endpoint or key, so the updater is off and never polls upstream.
 
 The Windows workflow checks and builds the NSIS artifact. It does not publish a release.

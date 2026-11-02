@@ -25,8 +25,10 @@
 	},
 	"plugins": {
 		"updater": {
-			"endpoints": [],
-			"pubkey": ""
+			"endpoints": [
+				"https://github.com/qursor-it/qursor-ide/releases/latest/download/latest.json"
+			],
+			"pubkey": "REPLACE_WITH_QURSOR_UPDATER_PUBKEY"
 		},
 		"shell": {
 			"open": "((mailto:|tel:)[\\w+][^\\s]*|https?://\\w[^\\s]*|[a-zA-Z]:[\\\\/][^\\r\\n]*|\\\\\\\\\\?\\\\[a-zA-Z]:\\\\[^\\r\\n]*|\\\\\\\\(?:\\?\\\\UNC\\\\)?[^\\\\/.?\\r\\n][^\\\\/\\r\\n]*\\\\[^\\\\/\\r\\n]+(?:\\\\[^\\r\\n]*)?)"

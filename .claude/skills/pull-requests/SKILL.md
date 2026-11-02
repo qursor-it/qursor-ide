@@ -16,8 +16,7 @@ owner included**:
   has no write access, so a maintainer reads their PR and presses merge. That
   click is the approval.
 
-`promote.yml`'s bump commit is the one exception. It goes through a deploy key
-and is marked `[skip ci]`.
+(`promote.yml` and its bump commit were removed, ADR-0087.)
 
 ## Start: a branch in its own worktree
 

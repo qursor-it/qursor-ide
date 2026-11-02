@@ -9,6 +9,8 @@ const windowsConfig = JSON.parse(
 		'utf8',
 	),
 );
+// The real key is pasted by the owner; fixtures use a synthetic one.
+windowsConfig.plugins.updater.pubkey = 'synthetic-pubkey';
 const appConfig = JSON.parse(
 	await readFile(new URL('../apps/desktop/src-tauri/tauri.conf.json', import.meta.url), 'utf8'),
 );
@@ -43,14 +45,24 @@ test('Windows overlay cannot replace the product name or stable release identity
 	]);
 });
 
-test('Windows native configuration fails closed if an upstream updater feed is restored', () => {
+test('Windows native configuration fails closed if the updater feed or key is wrong', () => {
 	const config = structuredClone(windowsConfig);
-	config.plugins.updater.endpoints.push('https://example.invalid/latest.json');
-	config.plugins.updater.pubkey = 'unexpected-key';
+	config.plugins.updater.endpoints = ['https://example.invalid/latest.json'];
+	config.plugins.updater.pubkey = 'REPLACE_WITH_QURSOR_UPDATER_PUBKEY';
 
 	assert.deepEqual(windowsConfigProblems(config, appConfig), [
-		'plugins.updater.endpoints must be an empty array',
-		'plugins.updater.pubkey must be empty',
+		'plugins.updater.endpoints must be exactly [https://github.com/qursor-it/qursor-ide/releases/latest/download/latest.json]',
+		'plugins.updater.pubkey must be the Qursor updater public key',
+	]);
+	config.plugins.updater.pubkey = '';
+	assert.equal(windowsConfigProblems(config, appConfig).length, 2);
+});
+
+test('source builds keep an empty updater feed in the base configuration', () => {
+	const app = structuredClone(appConfig);
+	app.plugins.updater.endpoints = ['https://example.invalid/latest.json'];
+	assert.deepEqual(windowsConfigProblems(windowsConfig, app), [
+		'tauri.conf.json plugins.updater.endpoints must be an empty array',
 	]);
 });
 
