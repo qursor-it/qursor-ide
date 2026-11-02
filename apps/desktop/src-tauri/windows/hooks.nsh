@@ -6,8 +6,9 @@
 ; %LOCALAPPDATA%\qursor-ide. Both Start menu shortcuts then carry the
 ; AppUserModelID dev.factorai, Windows keeps one app per ID, and search and the
 ; old shortcut keep opening the stale factorai.exe. Remove that install's files,
-; shortcuts and registry keys before installing. App data lives under the
-; identifier (dev.factorai), not here, and is left alone.
+; shortcuts and registry keys before installing. App data used to live under
+; dev.factorai and now lives under it.qursor.ide (ADR-0088); the installer does
+; not move it.
 
 !define QURSOR_LEGACY_DIR "$LOCALAPPDATA\factorai"
 
@@ -35,4 +36,7 @@
 
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro QURSOR_REMOVE_LEGACY_FACTORAI_INSTALL
+  ; Written by qursor-ide installs made under the old identifier (ADR-0088).
+  DeleteRegKey HKCU "Software\factorai\qursor-ide"
+  DetailPrint "Removed the registry key of the pre-identifier-change install"
 !macroend

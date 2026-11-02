@@ -1752,7 +1752,7 @@ and there were four more fields. What is there now, after PERF-02
   outside the single-writer discipline.
 
 Constructed in `setup()` after `app.path().app_data_dir()` resolves — which is
-derived from `identifier`, so a dev build lands in `dev.factorai-dev` rather
+derived from `identifier`, so a dev build lands in `it.qursor.ide-dev` rather
 than beside the installed release (ADR-0024). The indexer kicks off its first
 scan from `setup()` on a **named `std::thread`**, not `tokio::spawn`: it is a
 long synchronous walk, and the runner and the watcher are started the same way

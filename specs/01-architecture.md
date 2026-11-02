@@ -156,14 +156,14 @@ inside the distribution, so every path it sees is already a Linux path.
   a default first and corrects itself. `tauri-plugin-store` was the documented
   answer here and is **removed** — see
   [ADR-0013](adr/0013-preferences-storage-split.md).
-- **SQLite** (`~/.local/share/dev.factorai/factorai.db` on Linux,
+- **SQLite** (`~/.local/share/it.qursor.ide/factorai.db` on Linux,
   equivalent on mac/win via `app_data_dir`): session index, FTS, derived
   metadata — and the `settings` table, which holds **the settings Rust reads**
   (F11). "Who reads this?" is what decides between the two.
 - **Both of those live under `app_data_dir()`, and a dev build resolves a
   different one.** `app_data_dir()` is derived from `identifier`, so
   `tauri dev` — which merges `src-tauri/tauri.dev.conf.json` over the config —
-  reads and writes `~/.local/share/dev.factorai-dev/` instead, `localStorage`
+  reads and writes `~/.local/share/it.qursor.ide-dev/` instead, `localStorage`
   included. It is one field rather than a code path because a migration run in
   dev is otherwise free to leave the installed release unable to open its own
   database: 0011 dropping `projects.pinned` did exactly that. See

@@ -8,7 +8,7 @@ const FORK_FEED = 'https://github.com/qursor-it/qursor-ide/releases/latest/downl
 const PUBKEY_PLACEHOLDER = 'REPLACE_WITH_QURSOR_UPDATER_PUBKEY';
 const APP_CONFIG = resolve(ROOT, 'apps/desktop/src-tauri/tauri.conf.json');
 
-/** Validate the Windows bundle defaults from ADR-0074 and product identity from ADR-0075. */
+/** Validate the Windows bundle defaults from ADR-0074 and product identity from ADR-0075 and ADR-0088. */
 export function windowsConfigProblems(config, appConfig) {
 	const problems = [];
 	const bundle = config?.bundle;
@@ -47,14 +47,14 @@ export function windowsConfigProblems(config, appConfig) {
 	if (config?.productName !== undefined && config.productName !== 'qursor-ide') {
 		problems.push('Windows productName override must be "qursor-ide"');
 	}
-	if (config?.identifier !== undefined && config.identifier !== 'dev.factorai') {
-		problems.push('Windows identifier override must remain "dev.factorai"');
+	if (config?.identifier !== undefined && config.identifier !== 'it.qursor.ide') {
+		problems.push('Windows identifier override must be "it.qursor.ide"');
 	}
 	if (appConfig?.productName !== 'qursor-ide') {
 		problems.push('Tauri productName must be "qursor-ide"');
 	}
-	if (appConfig?.identifier !== 'dev.factorai') {
-		problems.push('Tauri identifier must remain "dev.factorai"');
+	if (appConfig?.identifier !== 'it.qursor.ide') {
+		problems.push('Tauri identifier must be "it.qursor.ide"');
 	}
 	if (!appConfig?.app?.windows?.some((window) => window.title === 'Qursor IDE')) {
 		problems.push('Tauri window title must be "Qursor IDE"');

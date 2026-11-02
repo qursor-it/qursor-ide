@@ -21,7 +21,7 @@ test('Windows native configuration creates only an NSIS bundle without updater a
 
 test('native product metadata is branded while the app data identity stays compatible', () => {
 	assert.equal(appConfig.productName, 'qursor-ide');
-	assert.equal(appConfig.identifier, 'dev.factorai');
+	assert.equal(appConfig.identifier, 'it.qursor.ide');
 	assert.ok(appConfig.app.windows.some((window) => window.title === 'Qursor IDE'));
 
 	const renamed = structuredClone(appConfig);
@@ -30,7 +30,7 @@ test('native product metadata is branded while the app data identity stays compa
 	renamed.app.windows[0].title = 'factorai';
 	assert.deepEqual(windowsConfigProblems(windowsConfig, renamed), [
 		'Tauri productName must be "qursor-ide"',
-		'Tauri identifier must remain "dev.factorai"',
+		'Tauri identifier must be "it.qursor.ide"',
 		'Tauri window title must be "Qursor IDE"',
 	]);
 });
@@ -41,7 +41,7 @@ test('Windows overlay cannot replace the product name or stable release identity
 	config.identifier = 'dev.qursor-ide';
 	assert.deepEqual(windowsConfigProblems(config, appConfig), [
 		'Windows productName override must be "qursor-ide"',
-		'Windows identifier override must remain "dev.factorai"',
+		'Windows identifier override must be "it.qursor.ide"',
 	]);
 });
 

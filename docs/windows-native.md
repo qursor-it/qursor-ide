@@ -25,7 +25,7 @@ pnpm install
 pnpm dev:windows
 ```
 
-`dev:windows` combines the Windows configuration with the existing development configuration, so the development app keeps its separate `dev.factorai-dev` identifier. The release identifier remains `dev.factorai` to preserve the existing app data location and upgrade path.
+`dev:windows` combines the Windows configuration with the existing development configuration, so the development app keeps its separate `it.qursor.ide-dev` identifier. The release identifier is `it.qursor.ide`; data from `dev.factorai` builds is not migrated (ADR-0088).
 
 Build the NSIS setup executable with:
 
@@ -34,7 +34,7 @@ $env:CARGO_BUILD_JOBS = '2'
 pnpm build:windows
 ```
 
-The output is under the workspace `target\release\bundle\nsis` directory. The product and executable use the `qursor-ide` name, and version 0.55.0 produces `qursor-ide_0.55.0_x64-setup.exe`. The existing `dev.factorai` application identity keeps the current data location available. The Windows configuration selects NSIS and points the updater at this fork's own signed feed (see below); it never polls the upstream project. Local builds do not produce updater artifacts, so a local build is updated by installing a newer setup executable.
+The output is under the workspace `target\release\bundle\nsis` directory. The product and executable use the `qursor-ide` name, and version 0.55.0 produces `qursor-ide_0.55.0_x64-setup.exe`. The application identifier is `it.qursor.ide`, which sets the data location; data from `dev.factorai` builds is not migrated (ADR-0088). The Windows configuration selects NSIS and points the updater at this fork's own signed feed (see below); it never polls the upstream project. Local builds do not produce updater artifacts, so a local build is updated by installing a newer setup executable.
 
 Run `pnpm windows:check` to verify the native bundle defaults before packaging.
 

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
 const port = 9230;
-const expectedIdentifier = 'dev.factorai-windows-smoke';
+const expectedIdentifier = 'it.qursor.ide-windows-smoke';
 const powershellMarkerPattern = /FACTORAI_WINDOWS_SMOKE:(Desktop|Core):[A-Z]:\\/i;
 const pending = new Map();
 const cleanupWarnings = [];

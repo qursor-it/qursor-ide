@@ -1,6 +1,6 @@
 # Native Windows smoke validation
 
-`pnpm windows:smoke` drives the real Windows WebView2, Tauri IPC and PowerShell ConPTY paths. It uses no browser automation package, model, or provider CLI. The script first calls the read-only `plugin:app|identifier` command and requires `dev.factorai-windows-smoke`; until that succeeds it creates no fixture, registers no event listener, and sends no mutating command. This FactorAI-namespaced identifier is a stable internal smoke boundary, separate from the release app identity. It uses `__TAURI_INTERNALS__.invoke` and `transformCallback` with `withGlobalTauri` left `false`.
+`pnpm windows:smoke` drives the real Windows WebView2, Tauri IPC and PowerShell ConPTY paths. It uses no browser automation package, model, or provider CLI. The script first calls the read-only `plugin:app|identifier` command and requires `it.qursor.ide-windows-smoke`; until that succeeds it creates no fixture, registers no event listener, and sends no mutating command. This FactorAI-namespaced identifier is a stable internal smoke boundary, separate from the release app identity. It uses `__TAURI_INTERNALS__.invoke` and `transformCallback` with `withGlobalTauri` left `false`.
 
 ## Launch an isolated smoke app
 
