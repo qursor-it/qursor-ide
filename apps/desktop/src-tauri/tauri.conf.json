@@ -27,7 +27,7 @@
 	"bundle": {
 		"active": true,
 		"shortDescription": "Qursor IDE",
-		"copyright": "© 2026 Titouan BENOIT and contributors",
+		"copyright": "© 2026 Titouan BENOIT and contributors, © 2026 Qursor",
 		"longDescription": "Qursor IDE is a local agentic development environment. Supervise AI coding sessions, review their changes, and keep your work on your own machine.",
 		"targets": [
 			"app",

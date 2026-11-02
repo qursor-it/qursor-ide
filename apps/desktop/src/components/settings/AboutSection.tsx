@@ -153,7 +153,10 @@ export function AboutSection() {
 					</span>
 				</SettingRow>
 
-				<SettingRow label="Licence" description="© 2026 Titouan BENOIT and contributors.">
+				<SettingRow
+					label="Licence"
+					description="© 2026 Titouan BENOIT and contributors, © 2026 Qursor."
+				>
 					<button
 						type="button"
 						className="text-sm transition-colors hover:text-primary"
