@@ -89,7 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Same list as windows-release.yml on purpose. Some of these are only needed
+      # One list on purpose (it matched the removed Linux release build). Some are only needed
       # by the bundler, so a leaner set would compile — but keeping one list
       # means there is no such thing as "passes CI, fails the release build".
       - name: Install Linux system dependencies
