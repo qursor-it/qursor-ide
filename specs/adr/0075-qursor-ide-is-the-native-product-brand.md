@@ -1,7 +1,7 @@
 # ADR-0075 — Qursor IDE is the native product brand
 
 Date: 2026-10-09
-Status: Accepted for this local fork. Supersedes ADR-0074 only where it names the native product as FactorAI; all Windows platform and behavior decisions in ADR-0074 remain in force.
+Status: Accepted for this local fork. Supersedes ADR-0074 only where it names the native product as FactorAI; all Windows platform and behavior decisions in ADR-0074 remain in force. Superseded in part by ADR-0088 (the identifiers).
 
 ## Context
 

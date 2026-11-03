@@ -10,7 +10,7 @@ two environment variables that move its whole world:
 
     CLAUDE_CONFIG_DIR   where the agent's store is read from (see `claude_dir`
                         in src-tauri/src/lib.rs)
-    XDG_DATA_HOME       where `app_data_dir` puts `dev.factorai/factorai.db`
+    XDG_DATA_HOME       where `app_data_dir` puts `it.qursor.ide/factorai.db`
 
 Nothing here touches the real store or the real database.
 
@@ -660,10 +660,10 @@ def transcripts(root: Path, store: Path) -> None:
 
 
 def seed(root: Path) -> None:
-    # A debug build carries its own identifier (`dev.factorai-dev`), so the
+    # A debug build carries its own identifier (`it.qursor.ide-dev`), so the
     # directory differs between a `pnpm dev` window and a release one and the
     # fixture has to take whichever is there.
-    candidates = sorted((root / ".data").glob("dev.factorai*/factorai.db"))
+    candidates = sorted((root / ".data").glob("it.qursor.ide*/factorai.db"))
     if not candidates:
         sys.exit(
             f"no database under {root / '.data'}\n"

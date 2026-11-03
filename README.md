@@ -88,7 +88,7 @@ The existing [FactorAI releases](https://github.com/Nightbr/factorai/releases)
 provide `.dmg` for macOS, `.AppImage` for Linux (glibc 2.39+), and
 `factorai-setup.exe` for Windows, which installs the Linux build into WSL 2.
 This fork's native Windows build is named
-`qursor-ide_0.55.0_x64-setup.exe`; see [Windows native build](docs/windows-native.md).
+`qursor-ide_0.56.0_x64-setup.exe`; see [Windows native build](docs/windows-native.md).
 The WSL app updates itself and asks before restarting. You need
 [Claude Code](https://claude.com/claude-code) or
 [Codex](https://developers.openai.com/codex/cli), already logged in.

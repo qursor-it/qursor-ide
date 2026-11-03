@@ -216,12 +216,12 @@ memory, and stream summary metadata to the UI.
 
 ## SQLite schema
 
-`~/.local/share/dev.factorai/factorai.db` (per platform via `app_data_dir`).
+`~/.local/share/it.qursor.ide/factorai.db` (per platform via `app_data_dir`).
 Tables created on first launch and migrated forward by ordered SQL files in
 `apps/desktop/src-tauri/src/db/migrations/`.
 
 **A dev build opens a different file** —
-`~/.local/share/dev.factorai-dev/factorai.db`, from its own `identifier`
+`~/.local/share/it.qursor.ide-dev/factorai.db`, from its own `identifier`
 (ADR-0024). Migrations are forward-only, so sharing one file meant a dev run
 could migrate the installed release out of its own schema; it does not any
 more. A dev database starts empty and rebuilds `sessions` from

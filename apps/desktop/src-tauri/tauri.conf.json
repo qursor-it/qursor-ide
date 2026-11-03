@@ -1,8 +1,8 @@
 {
 	"$schema": "https://schema.tauri.app/config/2",
-	"identifier": "dev.factorai",
+	"identifier": "it.qursor.ide",
 	"productName": "qursor-ide",
-	"version": "0.55.0",
+	"version": "0.56.0",
 	"build": {
 		"beforeDevCommand": "pnpm vite:dev",
 		"devUrl": "http://localhost:1420",
@@ -26,6 +26,7 @@
 	},
 	"bundle": {
 		"active": true,
+		"publisher": "Qursor",
 		"shortDescription": "Qursor IDE",
 		"copyright": "© 2026 Titouan BENOIT and contributors, © 2026 Qursor",
 		"longDescription": "Qursor IDE is a local agentic development environment. Supervise AI coding sessions, review their changes, and keep your work on your own machine.",
