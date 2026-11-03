@@ -32,11 +32,17 @@ export default defineConfig({
 				...devices['Desktop Chrome'],
 				viewport: { width: 1440, height: 900 },
 				deviceScaleFactor: 2,
+				// Desktop Chrome's UA says Windows, which switches the terminal to
+				// WebGL, and a headless WebGL canvas captures blank.
+				userAgent:
+					'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
 			},
 		},
 	],
 	webServer: {
-		command: `VITE_FACTORAI_SCREENSHOT=1 pnpm --filter @factorai/desktop vite:dev --port ${PORT} --strictPort`,
+		command: `pnpm --filter @factorai/desktop vite:dev --port ${PORT} --strictPort`,
+		// Through `env`, not a `VAR=1 cmd` prefix, so it also runs under cmd.exe.
+		env: { VITE_FACTORAI_SCREENSHOT: '1' },
 		url: `http://localhost:${PORT}`,
 		reuseExistingServer: false,
 		timeout: 60_000,
