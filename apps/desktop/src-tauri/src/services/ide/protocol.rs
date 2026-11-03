@@ -250,7 +250,7 @@ impl Mcp {
 				"worktrees": checkouts,
 				"viewing": viewing,
 				"hint": "Call setWorktree when you start working in a different git \
-						 worktree, so factorai's file tree and changes follow you.",
+						 worktree, so Qursor IDE's file tree and changes follow you.",
 			})
 			.to_string(),
 		)
@@ -300,7 +300,7 @@ impl Mcp {
 		}
 
 		(self.worktrees.signal)(&checkout);
-		tool_text(&format!("factorai is now showing {}", checkout.display()))
+		tool_text(&format!("Qursor IDE is now showing {}", checkout.display()))
 	}
 
 	fn open_file(&self, args: &Value) -> Value {
@@ -348,7 +348,7 @@ impl Mcp {
 			tool_text(&format!("Opened {}", path.display()))
 		} else {
 			// **Not shown, and said plainly.** The human is looking at a different
-			// session, and factorai has nowhere to put the request yet — the tab
+			// session, and Qursor IDE has nowhere to put the request yet — the tab
 			// mark this used to claim was removed for colliding with the session
 			// status dot. Reporting "marked" while nothing is marked is the same
 			// confident falsehood `getDiagnostics` is kept out of the tool list to
@@ -369,7 +369,7 @@ fn tools_list() -> Value {
 		"tools": [
 			{
 				"name": "openFile",
-				"description": "Open a file in the factorai viewer, optionally at a line.",
+				"description": "Open a file in the Qursor IDE viewer, optionally at a line.",
 				"inputSchema": {
 					"type": "object",
 					"properties": {
@@ -394,7 +394,7 @@ fn tools_list() -> Value {
 			},
 			{
 				"name": "getOpenEditors",
-				"description": "Files the human currently has open in factorai.",
+				"description": "Files the human currently has open in Qursor IDE.",
 				"inputSchema": { "type": "object", "properties": {} },
 			},
 			// **Advertised unconditionally, even for a repository with one
@@ -403,7 +403,7 @@ fn tools_list() -> Value {
 			// a list without the tool at the exact moment it creates the second one.
 			{
 				"name": "setWorktree",
-				"description": "Tell factorai which git worktree you are working in, so its \
+				"description": "Tell Qursor IDE which git worktree you are working in, so its \
 								file tree, changes and git graph follow you. Call this after \
 								creating a worktree with `git worktree add`, or whenever you \
 								start editing files in a different checkout of this \

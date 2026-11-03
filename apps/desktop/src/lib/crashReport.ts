@@ -10,7 +10,7 @@
 
 /** Where `Report an issue` goes. The repo is public; the URL is prefilled and
  *  opened in the browser, never submitted for the user. */
-const ISSUES_URL = 'https://github.com/Nightbr/factorai/issues/new';
+const ISSUES_URL = 'https://github.com/qursor-it/qursor-ide/issues/new';
 
 /** The bug form in `.github/ISSUE_TEMPLATE/`. Blank issues are off
  *  (ADR-0070), so a bare `?body=` lands on the template chooser and drops the

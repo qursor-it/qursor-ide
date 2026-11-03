@@ -787,7 +787,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 							<SettingRow
 								label="Forward Claude limits through the status line"
 								htmlFor="settings-usage-status-line"
-								description="factorai adds a status line to the Claude sessions it starts, to read your plan limits from it. Your own status line keeps working. If you have none, Claude Code hides some footer hints (like esc to interrupt) while a status line is set — turn this off to get them back; Claude limits then only come from the endpoint below. Takes effect for sessions started after the change."
+								description="Qursor IDE adds a status line to the Claude sessions it starts, to read your plan limits from it. Your own status line keeps working. If you have none, Claude Code hides some footer hints (like esc to interrupt) while a status line is set — turn this off to get them back; Claude limits then only come from the endpoint below. Takes effect for sessions started after the change."
 							>
 								<Switch
 									id="settings-usage-status-line"
@@ -800,7 +800,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 								<SettingRow
 									label="Show usage in the Windows taskbar"
 									htmlFor="settings-usage-taskbar"
-									description="A small readout beside the system tray while factorai is running."
+									description="A small readout beside the system tray while Qursor IDE is running."
 								>
 									<Switch
 										id="settings-usage-taskbar"
@@ -813,7 +813,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 							<SettingRow
 								label="Read Claude limits from Anthropic's usage endpoint"
 								htmlFor="settings-usage-endpoint"
-								description="Polls an undocumented Anthropic endpoint with the login Claude Code saved on this computer, for fresher limits and per-model figures. Anthropic's terms restrict third-party use of Claude.ai credentials; turn this on only if you accept that. factorai only reads the login, never changes or sends it anywhere else."
+								description="Polls an undocumented Anthropic endpoint with the login Claude Code saved on this computer, for fresher limits and per-model figures. Anthropic's terms restrict third-party use of Claude.ai credentials; turn this on only if you accept that. Qursor IDE only reads the login, never changes or sends it anywhere else."
 							>
 								<Switch
 									id="settings-usage-endpoint"

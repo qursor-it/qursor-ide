@@ -1,18 +1,18 @@
 name: Bug report
-description: Something in factorai is broken or behaves differently from what it says.
+description: Something in Qursor IDE is broken or behaves differently from what it says.
 title: "Bug: "
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for filing this. Please check the [open issues](https://github.com/Nightbr/factorai/issues) first, in case it is already known.
+        Thanks for filing this. Please check the [open issues](https://github.com/qursor-it/qursor-ide/issues) first, in case it is already known.
 
         Before pasting logs or screenshots, remove anything private: project names, paths, tokens.
   - type: input
     id: version
     attributes:
-      label: factorai version
+      label: Qursor IDE version
       description: Settings → About shows it, along with the update channel.
       placeholder: 0.52.0
     validations:

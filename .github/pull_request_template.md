@@ -8,7 +8,7 @@ One PR, one slice. If it does two things, it is two PRs.
 
 ## What and why
 
-<!-- What changes for someone using factorai, and why. Link the issue. -->
+<!-- What changes for someone using Qursor IDE, and why. Link the issue. -->
 
 Closes #
 

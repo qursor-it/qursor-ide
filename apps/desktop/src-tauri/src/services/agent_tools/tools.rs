@@ -1,4 +1,4 @@
-//! factorai's own tools, and the only ones the model can actually call
+//! Qursor IDE's own tools, and the only ones the model can actually call
 //! (F22 slice 3, ADR-0029).
 //!
 //! **Why these are not on the IDE bridge**, which is where they were first
@@ -12,7 +12,7 @@
 //! evidence.
 //!
 //! What is here is therefore a plain MCP server under a plain name, and its
-//! tools arrive as `mcp__factorai__*`.
+//! tools arrive as `mcp__Qursor IDE__*`.
 
 use std::sync::Arc;
 
@@ -65,7 +65,7 @@ pub struct Routines {
 	pub update: UpdateRoutine,
 }
 
-/// One session's view of factorai's tools.
+/// One session's view of Qursor IDE's tools.
 pub struct AgentTools {
 	routines: Routines,
 }
@@ -83,14 +83,14 @@ impl AgentTools {
 	/// execute on a cron schedule", the user's exact words — spent a turn
 	/// interviewing them, and failed with a 403 because the vault is a private
 	/// repository the cloud cannot read. Nothing had told the session it was
-	/// running inside factorai at all, so a local routine was not a thing it could
+	/// running inside Qursor IDE at all, so a local routine was not a thing it could
 	/// have chosen.
 	///
-	/// Claude Code injects this as `## factorai` followed by the text
+	/// Claude Code injects this as `## Qursor IDE` followed by the text
 	/// (`mcp_instructions_delta`, observed 2.1.251). It is short on purpose: it is
-	/// paid for in context on every session factorai starts.
+	/// paid for in context on every session Qursor IDE starts.
 	///
-	/// **The "only while factorai is open" line is a property of the tool, not a
+	/// **The "only while Qursor IDE is open" line is a property of the tool, not a
 	/// hedge against the recommendation.** F22 insists that limit is stated as
 	/// behaviour rather than buried as a caveat, and a session that schedules
 	/// something without knowing it would be reporting work it cannot promise.
@@ -100,13 +100,13 @@ impl AgentTools {
 		// which put tabs in the middle of sentences. Caught by the test below.
 		const BODY: &str = concat!(
 			"To schedule recurring work in this project, use `createRoutine` from this server ",
-			"rather than a cloud routine. A factorai routine starts a new agent session in this ",
+			"rather than a cloud routine. A Qursor IDE routine starts a new agent session in this ",
 			"same folder, on this machine, with your prompt as its first message — nothing has ",
 			"to be pushed to a remote and no repository access has to be granted to anyone. ",
-			"It runs only while factorai is open.",
+			"It runs only while Qursor IDE is open.",
 		);
 		format!(
-			"This session is running inside factorai, in the project at {}.\n\n{BODY}",
+			"This session is running inside Qursor IDE, in the project at {}.\n\n{BODY}",
 			self.routines.project_path
 		)
 	}
@@ -177,7 +177,7 @@ impl AgentTools {
 						"routines": rows,
 						"note": "These are the routines of the project this session is running \
 								 in. A routine starts a new agent session with its prompt as the \
-								 first message, and only while factorai is open.",
+								 first message, and only while Qursor IDE is open.",
 					})
 					.to_string(),
 				)
@@ -335,7 +335,7 @@ fn schedule_answer(routine: &Routine) -> String {
 		return format!("Schedule: {} — no upcoming runs.", routine.cron);
 	}
 	format!(
-		"Schedule: {} — next runs {}. It runs only while factorai is open.",
+		"Schedule: {} — next runs {}. It runs only while Qursor IDE is open.",
 		routine.cron,
 		next.iter().map(|at| stamp(*at)).collect::<Vec<_>>().join(", ")
 	)
@@ -393,23 +393,23 @@ fn tools_list() -> Value {
 								with its prompt as the first message. Call this before \
 								updating one, for its id and its current schedule.",
 				"inputSchema": { "type": "object", "properties": {} },
-				"annotations": { "title": "List factorai routines", "readOnlyHint": true },
+				"annotations": { "title": "List Qursor IDE routines", "readOnlyHint": true },
 				"_meta": {
 					"anthropic/searchHint": "list existing routines, schedules, cron jobs or \
 											 recurring tasks configured for this project in \
-											 factorai",
+											 Qursor IDE",
 				},
 			},
 			{
 				"name": "createRoutine",
 				"description": "Schedule recurring work in this project — use this rather \
-								than a cloud routine when the session is running in factorai. \
-								factorai starts a new agent session in this same folder, on \
+								than a cloud routine when the session is running in Qursor IDE. \
+								Qursor IDE starts a new agent session in this same folder, on \
 								this machine, on the schedule you give, with `prompt` as its \
 								first message. Nothing has to be pushed to a remote and no \
 								repository access has to be granted. Write the prompt for an \
 								agent starting cold, with no memory of this conversation. \
-								Routines run only while factorai is open; one due while it is \
+								Routines run only while Qursor IDE is open; one due while it is \
 								closed runs when it next opens, if it is still inside its \
 								catch-up window. Say what you scheduled and when it will run.",
 				"inputSchema": {
@@ -443,14 +443,14 @@ fn tools_list() -> Value {
 					},
 					"required": ["name", "cron", "prompt"],
 				},
-				"annotations": { "title": "Create a factorai routine", "readOnlyHint": false },
+				"annotations": { "title": "Create a Qursor IDE routine", "readOnlyHint": false },
 				// The one tool that has to exist before anyone thinks to look for
 				// it — see this function's own comment.
 				"_meta": {
 					"anthropic/alwaysLoad": true,
 					"anthropic/searchHint": "schedule a recurring task, routine, cron job, \
 											 daily or weekly agent run for this project in \
-											 factorai, running locally on this machine",
+											 Qursor IDE, running locally on this machine",
 				},
 			},
 			{
@@ -476,9 +476,9 @@ fn tools_list() -> Value {
 					},
 					"required": ["id"],
 				},
-				"annotations": { "title": "Change a factorai routine", "readOnlyHint": false },
+				"annotations": { "title": "Change a Qursor IDE routine", "readOnlyHint": false },
 				"_meta": {
-					"anthropic/searchHint": "change or edit an existing factorai routine's \
+					"anthropic/searchHint": "change or edit an existing Qursor IDE routine's \
 											 schedule, cron, prompt or catch-up window",
 				},
 			},
@@ -497,12 +497,12 @@ fn tools_list() -> Value {
 					"required": ["id", "enabled"],
 				},
 				"annotations": {
-					"title": "Enable or disable a factorai routine",
+					"title": "Enable or disable a Qursor IDE routine",
 					"readOnlyHint": false,
 				},
 				"_meta": {
 					"anthropic/searchHint": "stop, pause, resume, enable or disable a \
-											 factorai routine without deleting it",
+											 Qursor IDE routine without deleting it",
 				},
 			},
 		]
@@ -663,21 +663,21 @@ mod tests {
 		// reached for Claude Code's built-in `schedule` skill — cloud agents,
 		// whose description carries the same words — interviewed the user, and
 		// died on a 403 against a private repo. Nothing had told it that it was
-		// running inside factorai, so a local routine was never a candidate.
+		// running inside Qursor IDE, so a local routine was never a candidate.
 		let f = fixture();
 		let reply = call(&f.tools, "initialize", json!({ "protocolVersion": "2025-11-25" }));
 		let instructions = reply["result"]["instructions"].as_str().expect("instructions");
 
-		assert!(instructions.contains("factorai"), "{instructions}");
+		assert!(instructions.contains("Qursor IDE"), "{instructions}");
 		assert!(instructions.contains("/p/session"), "it names the project folder");
 		assert!(instructions.contains("createRoutine"), "it names the tool to reach for");
 		assert!(instructions.contains("cloud routine"), "it names what it is preferred over");
 		// The limit is stated rather than buried, which F22 requires of every
 		// surface that mentions a routine at all.
-		assert!(instructions.contains("only while factorai is open"), "{instructions}");
+		assert!(instructions.contains("only while Qursor IDE is open"), "{instructions}");
 		// No stray indentation inside the sentences: rustfmt joins `\`-continued
 		// lines and leaves the source's tabs in the literal, which is how this
-		// text first shipped reading "It runs only while\t\t\tfactorai is open".
+		// text first shipped reading "It runs only while\t\t\tQursor IDE is open".
 		assert!(!instructions.contains('\t'), "{instructions:?}");
 	}
 
@@ -701,7 +701,7 @@ mod tests {
 		for t in tools {
 			let hint = t["_meta"]["anthropic/searchHint"].as_str().unwrap_or_default();
 			assert!(hint.contains("routine"), "{} has no usable search hint", t["name"]);
-			assert!(hint.contains("factorai"), "{} does not name the app", t["name"]);
+			assert!(hint.contains("Qursor IDE"), "{} does not name the app", t["name"]);
 		}
 	}
 
@@ -773,7 +773,7 @@ mod tests {
 		// The next-fire line is what stops a schedule that silently never runs —
 		// the editor shows it to a human, and this is the agent's copy of it.
 		assert!(text.contains("next runs"), "{text}");
-		assert!(text.contains("only while factorai is open"), "{text}");
+		assert!(text.contains("only while Qursor IDE is open"), "{text}");
 	}
 
 	#[test]

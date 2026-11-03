@@ -60,7 +60,7 @@ describe('issueUrl', () => {
 
 	it('opens the bug form and fills the fields it has', () => {
 		const params = new URL(issueUrl(ctx())).searchParams;
-		expect(issueUrl(ctx())).toContain('https://github.com/Nightbr/factorai/issues/new?');
+		expect(issueUrl(ctx())).toContain('https://github.com/qursor-it/qursor-ide/issues/new?');
 		// Blank issues are off, so without a template the report is dropped.
 		expect(params.get('template')).toBe('bug.yml');
 		expect(params.get('title')).toMatch(/^Crash: /);

@@ -1,14 +1,14 @@
 name: Feature request
-description: Something factorai should do that it does not.
+description: Something Qursor IDE should do that it does not.
 title: "Feature: "
 labels: [feature]
 body:
   - type: markdown
     attributes:
       value: |
-        factorai is an Agentic Development Environment: agents are at the centre, and the human supervises, decides, reviews and sets the rules agents run under. A feature that serves one of those four usually fits.
+        Qursor IDE is an Agentic Development Environment: agents are at the centre, and the human supervises, decides, reviews and sets the rules agents run under. A feature that serves one of those four usually fits.
 
-        Some things are out of scope on purpose: a native Windows port (Windows runs the Linux build in WSL 2), telemetry or crash reporting, and localization. See [What this project does not do](https://github.com/Nightbr/factorai/blob/main/AGENTS.md#what-this-project-does-not-do).
+        Some things are out of scope on purpose: telemetry or crash reporting, and localization. See [What this project does not do](https://github.com/qursor-it/qursor-ide/blob/main/AGENTS.md#what-this-project-does-not-do).
   - type: textarea
     id: problem
     attributes:

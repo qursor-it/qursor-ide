@@ -14,7 +14,7 @@ import { useTerminalStore } from '@store/terminalStore';
 
 /** The repository, which is where every link in this section goes. One
  *  constant, because three of them are the same URL with a suffix. */
-const REPO = 'https://github.com/Nightbr/factorai';
+const REPO = 'https://github.com/qursor-it/qursor-ide';
 
 /**
  * About: the mark, the name, the build, the licence and the people in it
@@ -211,7 +211,7 @@ export function AboutSection() {
 					</div>
 				)}
 
-				<SettingRow label="Repository" description="github.com/Nightbr/factorai">
+				<SettingRow label="Repository" description="github.com/qursor-it/qursor-ide">
 					<button
 						type="button"
 						className="text-sm transition-colors hover:text-primary"
