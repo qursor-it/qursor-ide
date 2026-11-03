@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WINDOWS_CONFIG = resolve(ROOT, 'apps/desktop/src-tauri/tauri.windows.conf.json');
+const FORK_FEED = 'https://github.com/qursor-it/qursor-ide/releases/latest/download/latest.json';
+const PUBKEY_PLACEHOLDER = 'REPLACE_WITH_QURSOR_UPDATER_PUBKEY';
 const APP_CONFIG = resolve(ROOT, 'apps/desktop/src-tauri/tauri.conf.json');
 
 /** Validate the Windows bundle defaults from ADR-0074 and product identity from ADR-0075. */
@@ -19,11 +21,24 @@ export function windowsConfigProblems(config, appConfig) {
 	if (bundle?.createUpdaterArtifacts !== false) {
 		problems.push('bundle.createUpdaterArtifacts must be false');
 	}
-	if (!Array.isArray(updater?.endpoints) || updater.endpoints.length !== 0) {
-		problems.push('plugins.updater.endpoints must be an empty array');
+	if (
+		!Array.isArray(updater?.endpoints) ||
+		updater.endpoints.length !== 1 ||
+		updater.endpoints[0] !== FORK_FEED
+	) {
+		problems.push(`plugins.updater.endpoints must be exactly [${FORK_FEED}]`);
 	}
-	if (updater?.pubkey !== '') {
-		problems.push('plugins.updater.pubkey must be empty');
+	if (
+		typeof updater?.pubkey !== 'string' ||
+		updater.pubkey.trim() === '' ||
+		updater.pubkey === PUBKEY_PLACEHOLDER
+	) {
+		problems.push('plugins.updater.pubkey must be the Qursor updater public key');
+	}
+	const appEndpoints = appConfig?.plugins?.updater?.endpoints;
+	if (!Array.isArray(appEndpoints) || appEndpoints.length !== 0) {
+		// Source builds on macOS/Linux must never poll a feed (ADR-0087).
+		problems.push('tauri.conf.json plugins.updater.endpoints must be an empty array');
 	}
 	if (bundle?.windows?.nsis?.installerHooks !== './windows/hooks.nsh') {
 		// The hook removes the pre-rename factorai install (ADR-0085).

@@ -49,12 +49,8 @@ pub struct UpdateCheck {
 #[tauri::command]
 pub async fn check_update(webview: Webview, state: State<'_, AppState>) -> AppResult<UpdateCheck> {
 	let channel = updates::channel(&state.db);
-	#[cfg(windows)]
 	let endpoints =
-		updates::native_windows_endpoints(webview.app_handle().config().plugins.0.get("updater"))?;
-	#[cfg(not(windows))]
-	let endpoints = vec![tauri::Url::parse(channel.endpoint())
-		.map_err(|e| AppError::InvalidInput(format!("update endpoint: {e}")))?];
+		updates::configured_endpoints(webview.app_handle().config().plugins.0.get("updater"))?;
 	let updater = webview
 		.updater_builder()
 		.endpoints(endpoints)

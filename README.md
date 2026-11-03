@@ -11,15 +11,20 @@
 
 Agentic Development Environment for the AI era
 
-[![site: factorai.build](https://img.shields.io/badge/site-factorai.build-FFB020?style=flat-square&labelColor=272B31)](https://factorai.build)
-[![status: alpha](https://img.shields.io/badge/status-alpha-FFB020?style=flat-square&labelColor=272B31)](https://github.com/Nightbr/factorai/releases)
+[![status: alpha](https://img.shields.io/badge/status-alpha-FFB020?style=flat-square&labelColor=272B31)](https://github.com/qursor-it/qursor-ide/releases)
 [![platform: macOS, Linux, native Windows and WSL 2](https://img.shields.io/badge/platform-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows%20%28native%20%26%20WSL%202%29-3A4048?style=flat-square&labelColor=272B31)](#install)
-[![CI](https://img.shields.io/github/actions/workflow/status/Nightbr/factorai/quality.yml?branch=main&style=flat-square&labelColor=272B31&color=FFB020&label=CI)](https://github.com/Nightbr/factorai/actions/workflows/quality.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/qursor-it/qursor-ide/quality.yml?branch=main&style=flat-square&labelColor=272B31&color=FFB020&label=CI)](https://github.com/qursor-it/qursor-ide/actions/workflows/quality.yml)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-3A4048?style=flat-square&labelColor=272B31)](LICENSE)
 
-[Download](https://factorai.build/#download) · [Guide](https://factorai.build/docs/first-run) · [Roadmap](https://github.com/users/Nightbr/projects/1) · [Contributing](CONTRIBUTING.md)
+[Download](https://github.com/qursor-it/qursor-ide/releases) · [Guide (upstream)](https://factorai.build/docs/first-run) · [Contributing](CONTRIBUTING.md)
 
 </div>
+
+> [!IMPORTANT]
+> Qursor IDE is a fork of [factorai](https://github.com/Nightbr/factorai) by
+> Titouan BENOIT and contributors, released under the MIT licence. It is not
+> the official factorai project; report problems with this fork here, not
+> upstream.
 
 > [!NOTE]
 > **Early, and used daily by several senior engineers.** Two update channels,
@@ -88,6 +93,6 @@ The WSL app updates itself and asks before restarting. You need
 [Claude Code](https://claude.com/claude-code) or
 [Codex](https://developers.openai.com/codex/cli), already logged in.
 
-Something look broken? See [installation](https://factorai.build/docs/installation)
+Something look broken? See the upstream [installation](https://factorai.build/docs/installation)
 and [troubleshooting](https://factorai.build/docs/troubleshooting). Building from
 source is in [CONTRIBUTING.md](CONTRIBUTING.md).

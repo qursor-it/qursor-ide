@@ -1,25 +1,10 @@
-//! Which update channel this install follows, and where that channel's
-//! manifest lives (F14, ADR-0064).
-//!
-//! **Stable stays at `/releases/latest`**, which is where every install that
-//! predates channels already looks — so moving it would strand them. Alpha
-//! cannot live there: GitHub's `latest` skips prereleases, and an alpha is one.
-//! It lives in a fixed pointer release instead, whose only asset is the newest
-//! alpha's `latest.json`.
+//! The channel this install reports to the UI (F14, ADR-0064) and the update
+//! feed it may poll. The feed is only ever the one the build configures
+//! (ADR-0087); there is no per-channel endpoint any more.
 
 use crate::db::Db;
 use crate::models::SettingKey;
 use crate::services::settings;
-
-/// The stable manifest. The same URL `tauri.conf.json` names, which is what an
-/// install that has never called `check_update` still polls.
-pub const STABLE_ENDPOINT: &str =
-	"https://github.com/Nightbr/factorai/releases/latest/download/latest.json";
-
-/// The alpha pointer release's manifest. `alpha.yml` replaces this one asset
-/// after each alpha publishes; its URLs point into that alpha's own release.
-pub const ALPHA_ENDPOINT: &str =
-	"https://github.com/Nightbr/factorai/releases/download/alpha-channel/latest.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
@@ -41,13 +26,6 @@ impl Channel {
 		match self {
 			Channel::Stable => "stable",
 			Channel::Alpha => "alpha",
-		}
-	}
-
-	pub fn endpoint(self) -> &'static str {
-		match self {
-			Channel::Stable => STABLE_ENDPOINT,
-			Channel::Alpha => ALPHA_ENDPOINT,
 		}
 	}
 }
@@ -75,15 +53,6 @@ mod tests {
 	}
 
 	#[test]
-	fn stable_keeps_the_endpoint_every_existing_install_polls() {
-		let conf: serde_json::Value =
-			serde_json::from_str(include_str!("../../tauri.conf.json")).expect("tauri.conf.json");
-		let configured = &conf["plugins"]["updater"]["endpoints"][0];
-		assert_eq!(configured.as_str(), Some(STABLE_ENDPOINT));
-		assert_ne!(Channel::Alpha.endpoint(), STABLE_ENDPOINT);
-	}
-
-	#[test]
 	fn the_setting_picks_the_channel() {
 		let tmp = TempDir::new().expect("tempdir");
 		let db = Db::open(&tmp.path().join("data")).expect("open db");
@@ -95,17 +64,16 @@ mod tests {
 	}
 }
 
-/// A native fork uses only the signed feed explicitly configured for its own
-/// Windows artifact. The upstream release channels have no native Windows build
-/// and must never replace this fork (ADR-0074).
-#[cfg(windows)]
-pub fn native_windows_endpoints(
+/// A build polls only the signed feed its own config names (ADR-0087). The
+/// shipped Windows build names this fork's feed; every other build names none,
+/// so it never polls, and the upstream feed must never replace this fork.
+pub fn configured_endpoints(
 	config: Option<&serde_json::Value>,
 ) -> crate::error::AppResult<Vec<tauri::Url>> {
 	use crate::error::AppError;
 	let not_configured = || {
 		AppError::InvalidInput(
-        "Automatic updates are not configured for this Windows build. Install a newer Windows installer manually.".into(),
+        "Automatic updates are not configured for this build. Install a newer release manually, or rebuild from source.".into(),
     )
 	};
 	let config = config.ok_or_else(not_configured)?;
@@ -124,7 +92,7 @@ pub fn native_windows_endpoints(
 			let url = tauri::Url::parse(raw)
 				.map_err(|e| AppError::InvalidInput(format!("update endpoint: {e}")))?;
 			if url.scheme() != "https" {
-				return Err(AppError::InvalidInput("Windows update feeds must use HTTPS.".into()));
+				return Err(AppError::InvalidInput("Update feeds must use HTTPS.".into()));
 			}
 			if url.host_str() == Some("github.com")
 				&& url.path().to_ascii_lowercase().starts_with("/nightbr/factorai/")
@@ -138,17 +106,17 @@ pub fn native_windows_endpoints(
 		.collect()
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod windows_tests {
-	use super::native_windows_endpoints;
+	use super::configured_endpoints;
 	use serde_json::json;
 
 	#[test]
 	fn a_local_build_cannot_check_the_upstream_feed() {
-		assert!(native_windows_endpoints(None).is_err());
-		assert!(native_windows_endpoints(Some(&json!({"pubkey": "", "endpoints": []}))).is_err());
-		assert!(native_windows_endpoints(Some(
-			&json!({"pubkey": "synthetic", "endpoints": [super::STABLE_ENDPOINT]})
+		assert!(configured_endpoints(None).is_err());
+		assert!(configured_endpoints(Some(&json!({"pubkey": "", "endpoints": []}))).is_err());
+		assert!(configured_endpoints(Some(
+			&json!({"pubkey": "synthetic", "endpoints": ["https://github.com/Nightbr/factorai/releases/latest/download/latest.json"]})
 		))
 		.is_err());
 	}
@@ -156,10 +124,9 @@ mod windows_tests {
 	#[test]
 	fn explicit_https_fork_feed_is_used_without_channel_fallback() {
 		let config = json!({"pubkey": "synthetic", "endpoints": ["https://example.test/windows/latest.json"]});
-		let endpoints =
-			native_windows_endpoints(Some(&config)).expect("synthetic fork configuration");
+		let endpoints = configured_endpoints(Some(&config)).expect("synthetic fork configuration");
 		assert_eq!(endpoints[0].as_str(), "https://example.test/windows/latest.json");
-		assert!(native_windows_endpoints(Some(
+		assert!(configured_endpoints(Some(
 			&json!({"pubkey": "synthetic", "endpoints": ["http://example.test/latest.json"]})
 		))
 		.is_err());

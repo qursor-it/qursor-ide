@@ -1,20 +1,19 @@
 # Contributing
 
-Thanks for wanting to help. factorai is an Agentic Development Environment:
-agents are at the centre, and the human supervises, decides, reviews and sets
+Thanks for wanting to help. Qursor IDE, a fork of
+[factorai](https://github.com/Nightbr/factorai), is an Agentic Development
+Environment: agents are at the centre, and the human supervises, decides, reviews and sets
 the rules they run under. It is a community project with one maintainer, so a
 clear issue and a small PR are the fastest way to get something in.
 
 ## How a change gets in
 
-1. **Find or file an issue.** The
-   [roadmap board](https://github.com/users/Nightbr/projects/1) shows what is
-   next, the [open issues](https://github.com/Nightbr/factorai/issues) are the
+1. **Find or file an issue.** The [open issues](https://github.com/qursor-it/qursor-ide/issues) are the
    work, and the ones labelled
-   [`good first issue`](https://github.com/Nightbr/factorai/labels/good%20first%20issue)
-   and [`help wanted`](https://github.com/Nightbr/factorai/labels/help%20wanted)
+   [`good first issue`](https://github.com/qursor-it/qursor-ide/labels/good%20first%20issue)
+   and [`help wanted`](https://github.com/qursor-it/qursor-ide/labels/help%20wanted)
    are the easiest way in. Every triaged issue also carries a `size:*` label,
-   from [`size:XS`](https://github.com/Nightbr/factorai/labels/size%3AXS) (under
+   from [`size:XS`](https://github.com/qursor-it/qursor-ide/labels/size%3AXS) (under
    an hour) to `size:XL` (an epic that is split before it is scheduled);
    [`specs/roadmap/README.md`](specs/roadmap/README.md#size) defines them, and
    a first issue is `size:XS` or `size:S`. For anything bigger than a small
@@ -29,7 +28,7 @@ clear issue and a small PR are the fastest way to get something in.
    squash-merged, so the PR title becomes the commit on `main`. Use the prefixes
    below.
 
-PRs [#5](https://github.com/Nightbr/factorai/pull/5) and
+Upstream PRs [#5](https://github.com/Nightbr/factorai/pull/5) and
 [#6](https://github.com/Nightbr/factorai/pull/6) are good examples of the size
 that merges easily: one bug, one fix, a test.
 
@@ -157,7 +156,7 @@ PR**: read the diff, run the gate, and be ready to answer the review yourself.
 ## Questions, security and licence
 
 - **Questions and ideas** go to
-  [Discussions](https://github.com/Nightbr/factorai/discussions), not issues.
+  [Discussions](https://github.com/qursor-it/qursor-ide/discussions), not issues.
 - **Security problems** are reported privately: see [SECURITY.md](SECURITY.md).
-- **Licence:** factorai is [MIT](LICENSE). By contributing, you agree your
+- **Licence:** Qursor IDE is [MIT](LICENSE). By contributing, you agree your
   contribution is released under it. There is no CLA.
