@@ -60,15 +60,16 @@ You need:
     That is the list CI uses (`.github/workflows/quality.yml`). For other
     distributions, see [Tauri's prerequisites](https://tauri.app/start/prerequisites/).
   - **macOS:** the Xcode command line tools, `xcode-select --install`.
-  - **Windows:** work inside WSL 2 and follow the Linux steps.
+  - **Windows:** see [docs/windows-native.md](docs/windows-native.md) for the
+    native toolchain, then use `pnpm dev:windows`.
 - The [Claude Code CLI](https://claude.com/claude-code) or Codex, signed in, if
   you want to run sessions rather than only look at them.
 
 Then:
 
 ```bash
-git clone https://github.com/<you>/factorai.git
-cd factorai
+git clone https://github.com/<you>/qursor-ide.git
+cd qursor-ide
 mise install
 pnpm install
 pnpm dev            # the full app
