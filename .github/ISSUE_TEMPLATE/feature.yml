@@ -8,7 +8,7 @@ body:
       value: |
         Qursor IDE is an Agentic Development Environment: agents are at the centre, and the human supervises, decides, reviews and sets the rules agents run under. A feature that serves one of those four usually fits.
 
-        Some things are out of scope on purpose: telemetry or crash reporting, and localization. See [What this project does not do](https://github.com/qursor-it/qursor-ide/blob/main/AGENTS.md#what-this-project-does-not-do).
+        Some things are out of scope on purpose: telemetry or crash reporting, and localization. See [What this project does not do](https://github.com/qursor-it/qursor-ide/blob/develop/AGENTS.md#what-this-project-does-not-do).
   - type: textarea
     id: problem
     attributes:
