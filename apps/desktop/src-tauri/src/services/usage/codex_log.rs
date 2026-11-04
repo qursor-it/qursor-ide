@@ -20,6 +20,9 @@ const RECENT_ROLLOUTS: usize = 20;
 const CANDIDATES: usize = 40;
 /// First tail read per rollout; widened x4 until a reading is found.
 const TAIL: u64 = 256 * 1024;
+/// The widest tail read. A rollout with no limits in its last 4 MB (any
+/// rollout Codex wrote none into) would otherwise be read whole on every poll.
+const MAX_TAIL: u64 = 4 * 1024 * 1024;
 
 /// The newest `token_count` with non-null `rate_limits` across the most
 /// recently modified rollouts.
@@ -58,7 +61,7 @@ fn last_reading(path: &Path) -> Option<UsageReading> {
 		if let Some(r) = lines.rev().find_map(reading_of_line) {
 			return Some(r);
 		}
-		if start == 0 {
+		if start == 0 || window >= MAX_TAIL {
 			return None;
 		}
 		window = window.saturating_mul(4);

@@ -1007,7 +1007,13 @@ fn line_stats(repo: &Repository, rows: &[RawRow]) -> HashMap<(GitGroup, String),
 		.recurse_untracked_dirs(true)
 		.show_untracked_content(true)
 		// We want counts, not context. Fewer lines to produce per hunk.
-		.context_lines(0);
+		.context_lines(0)
+		// Literal paths, so each diff walks only the surviving rows instead of
+		// re-walking the whole worktree on every status poll.
+		.disable_pathspec_match(true);
+	for (_, rel) in wanted.keys() {
+		opts.pathspec(rel);
+	}
 
 	let head_tree = repo.head().and_then(|head| head.peel_to_tree()).ok();
 	if let Ok(diff) = repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts)) {

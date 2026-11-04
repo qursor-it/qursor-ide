@@ -737,15 +737,20 @@ function useSessionTitles(tabs: Array<{ projectId: string }>): Map<string, strin
 			queryKey: queryKeys.sessions(projectId),
 			queryFn: () => cmd.listSessions(projectId),
 		})),
-		combine: (results) => {
-			const map = new Map<string, string>();
-			for (const result of results) {
-				for (const session of (result.data ?? []) as SessionSummary[]) {
-					const title = session.title.trim();
-					if (title) map.set(session.id, title);
-				}
-			}
-			return map;
-		},
+		combine: titlesOf,
 	});
+}
+
+/** Module-level so its identity is stable: useQueries re-runs an inline
+ *  `combine` on every render, and this one walks every session of every open
+ *  project. */
+function titlesOf(results: Array<{ data?: unknown }>): Map<string, string> {
+	const map = new Map<string, string>();
+	for (const result of results) {
+		for (const session of (result.data ?? []) as SessionSummary[]) {
+			const title = session.title.trim();
+			if (title) map.set(session.id, title);
+		}
+	}
+	return map;
 }
