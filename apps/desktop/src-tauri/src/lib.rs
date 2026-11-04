@@ -491,6 +491,7 @@ pub fn run() {
 			commands::sessions::list_sessions,
 			commands::sessions::get_session_tail,
 			commands::sessions::session_transcript_path,
+			commands::sessions::list_running_subagents,
 			commands::sessions::search_sessions,
 			commands::sessions::set_session_pinned,
 			commands::sessions::delete_session,

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { formatAbsolute, formatBytes, formatRelative, formatReset } from './format';
+import { formatAbsolute, formatBytes, formatElapsed, formatRelative, formatReset } from './format';
+
+describe('formatElapsed', () => {
+	it('formats seconds, minutes and hours', () => {
+		expect(formatElapsed(-5)).toBe('0s');
+		expect(formatElapsed(45_000)).toBe('45s');
+		expect(formatElapsed(72_000)).toBe('1m12s');
+		expect(formatElapsed(3_780_000)).toBe('1h03m');
+	});
+});
 
 const NOW = 1_700_000_000_000; // fixed reference
 

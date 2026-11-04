@@ -184,6 +184,17 @@ export interface SessionSummary {
 	agent: AgentId;
 }
 
+/** A sub-agent running now (F23): its meta file has no `finished` key. */
+export interface RunningSubagent {
+	id: string;
+	agentType: string;
+	description: string;
+	/** The model that answered last; null before its first reply. */
+	model: string | null;
+	/** Epoch ms. */
+	startedAt: number;
+}
+
 export interface SessionPage {
 	id: string;
 	events: SessionEvent[];

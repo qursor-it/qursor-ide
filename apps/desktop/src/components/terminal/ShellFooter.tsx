@@ -1,10 +1,71 @@
 import { Button } from '@factorai/ui';
+import { useQuery } from '@tanstack/react-query';
+import { useParams } from '@tanstack/react-router';
 import { Columns2, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { ShellChip } from '@components/terminal/ShellChip';
 import { closeChip } from '@components/terminal/shells';
+import { formatElapsed } from '@lib/format';
+import { queryKeys } from '@lib/queryKeys';
 import { splitDisabledReason } from '@lib/shellLayout';
+import { cmd } from '@lib/tauri';
 import { useShellStore } from '@store/shellStore';
+import { useTerminalStore } from '@store/terminalStore';
+
+/** Sub-agents shown before the rest fold into `+N`. */
+const MAX_SHOWN = 2;
+
+/**
+ * The sub-agents the open session is running (`specs/05-features.md` § F23).
+ *
+ * Polled only while the session has a live terminal: a Claude that crashed
+ * never marks its agents finished, and without a process there is nothing to
+ * be running. Nothing is drawn when none are.
+ */
+function RunningSubagents() {
+	const { sessionId } = useParams({ strict: false }) as { sessionId?: string };
+	const live = useTerminalStore((s) => {
+		const t = sessionId ? s.bySession[sessionId] : undefined;
+		return t !== undefined && t.status !== 'stopped';
+	});
+	const q = useQuery({
+		queryKey: queryKeys.runningSubagents(sessionId ?? ''),
+		queryFn: () => cmd.listRunningSubagents(sessionId ?? ''),
+		enabled: live,
+		refetchInterval: 2000,
+	});
+	const agents = live ? (q.data ?? []) : [];
+	const [now, setNow] = useState(() => Date.now());
+	const any = agents.length > 0;
+	useEffect(() => {
+		if (!any) return;
+		setNow(Date.now());
+		const id = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(id);
+	}, [any]);
+	if (!any) return null;
+
+	const rest = agents.slice(MAX_SHOWN);
+	const text = (a: (typeof agents)[number]) =>
+		[a.agentType, a.model?.replace(/^claude-/, ''), formatElapsed(now - a.startedAt)]
+			.filter(Boolean)
+			.join(' · ');
+	return (
+		<div
+			role="status"
+			aria-label="Running sub-agents"
+			data-testid="running-subagents"
+			className="ml-auto flex shrink-0 items-center gap-3 pl-2 text-muted-foreground text-xs"
+		>
+			{agents.slice(0, MAX_SHOWN).map((a) => (
+				<span key={a.id} title={a.description}>
+					{text(a)}
+				</span>
+			))}
+			{rest.length > 0 && <span title={rest.map(text).join(' · ')}>+{rest.length}</span>}
+		</div>
+	);
+}
 
 /**
  * The strip along the bottom of every view of a project
@@ -138,6 +199,7 @@ export function ShellFooter({
 					<Columns2 /> Split
 				</Button>
 			</span>
+			<RunningSubagents />
 		</div>
 	);
 }

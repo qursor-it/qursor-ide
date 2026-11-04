@@ -10,6 +10,7 @@
 import type {
 	AnalysisPreview,
 	AppError,
+	RunningSubagent,
 	ClaudeCliStatus,
 	DirEntry,
 	DirListing,
@@ -93,6 +94,8 @@ export interface TestFixture {
 	 *  to talk about the id. */
 	newSessionId?: string;
 	searchHits?: SearchHit[];
+	/** What `list_running_subagents` answers (F23). */
+	runningSubagents?: RunningSubagent[];
 	/** Directory listings keyed by absolute path (F12 file tree). Paths the
 	 *  test never expands can be omitted — the mock treats them as empty. */
 	dirListings?: Record<string, DirListing>;

@@ -29,7 +29,11 @@ Sub-agent transcripts carry `isSidechain: true` and an `agentId` on their
 events. They are **sessions of a kind** — same JSONL event format, indexed
 into `sessions` with `subagent_of` set — but they are never resumable:
 `claude --resume` looks for a top-level `<id>.jsonl` under the project, and
-an agent id has none. They surface nested under their parent in the session
+an agent id has none. `agent-<id>.meta.json` holds `agentType`, `description`
+and `toolUseId`; while the agent runs it has **no `finished` key**, and Claude
+adds `"finished": true` when it ends (the footer's running list, F23). Its
+`pickedEffortModel` is not the model used — that is `message.model` in the
+`.jsonl`. They surface nested under their parent in the session
 list (F2), open read-only (F3), and don't count toward `session_count`.
 
 ### Project-path encoding

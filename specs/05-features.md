@@ -5573,6 +5573,24 @@ the same way, so the guard is on the shared path rather than on this one.
   is refused by the backend anyway, and not offering the control is the honest
   version of that.
 
+**Running sub-agents.** The right end of the strip, after `Split`, shows the
+Claude sub-agents the session in the route is running now, one item each:
+`{agentType} · {model without "claude-"} · {elapsed}` (`implementer · sonnet-5-5 ·
+1m12s`), with the description as the one-line `title`. More than two fold into a
+`+N` whose `title` joins the rest. It is a `role="status"` group outside the tab
+semantics, and nothing is drawn when none are running.
+
+`list_running_subagents(session_id) -> RunningSubagent[]` reads
+`<store dir>/<session>/subagents/agent-*.meta.json` and keeps those without
+`"finished": true`. The model is the last `message.model` in the last 64 KiB of
+the agent's `.jsonl` — `pickedEffortModel` in the meta file is the *requested*
+model, not the one used — and the start is the first line's `timestamp` (the
+meta file's mtime if that is unreadable). Unreadable or malformed files are
+skipped; an unindexed session, a sub-agent session or a Codex session answers
+empty. The renderer polls every 2 s, **only while the session has a live
+terminal**: a Claude that crashed never writes `finished`, so without that guard
+its agents would count up forever. Elapsed ticks once a second in the renderer.
+
 **Roadmap.** Item 47, the splits and the static label F24 owns as item 49, the
 project rescope as item 50, and the file links as item 56.
 

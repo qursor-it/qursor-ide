@@ -49,6 +49,7 @@ import type {
 	RoutineInput,
 	RunNowResult,
 	SearchHit,
+	RunningSubagent,
 	SessionPage,
 	SessionSummary,
 	SessionUsage,
@@ -143,6 +144,9 @@ export const cmd = {
 	 *  not the file is still on disk — that case is one reason to ask. */
 	sessionTranscriptPath: (sessionId: string) =>
 		invoke<string>('session_transcript_path', { sessionId }),
+	/** The sub-agents a session has running now (F23), for the shell footer. */
+	listRunningSubagents: (sessionId: string) =>
+		invoke<RunningSubagent[]>('list_running_subagents', { sessionId }),
 	/** Pin or unpin a session (F2). A pinned session leads its project's list in
 	 *  the sidebar and on the project page, where recency can no longer push it
 	 *  below the fold.
@@ -846,6 +850,8 @@ interface TestFixture {
 	/** Session id `start_session` hands back for a new-session click. */
 	newSessionId?: string;
 	searchHits?: SearchHit[];
+	/** What `list_running_subagents` answers, for every session (F23). */
+	runningSubagents?: RunningSubagent[];
 	/** Directory listings keyed by absolute path, for the F12 file tree. */
 	dirListings?: Record<string, DirListing>;
 	/** File contents keyed by absolute path, for the F7 viewer. */
@@ -1432,6 +1438,8 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			}
 			return undefined as unknown as T;
 		}
+		case 'list_running_subagents':
+			return (fx?.runningSubagents ?? []) as unknown as T;
 		case 'session_transcript_path': {
 			const sessionId = String(args?.sessionId ?? '');
 			// The real command reads the store key recorded at index time; the mock

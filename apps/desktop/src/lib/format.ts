@@ -1,3 +1,12 @@
+/** Elapsed time as `45s`, `1m12s`, `1h03m` — what the footer shows per running sub-agent. */
+export function formatElapsed(ms: number): string {
+	const sec = Math.max(0, Math.floor(ms / 1000));
+	if (sec < 60) return `${sec}s`;
+	const min = Math.floor(sec / 60);
+	if (min < 60) return `${min}m${String(sec % 60).padStart(2, '0')}s`;
+	return `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}m`;
+}
+
 /**
  * Human-friendly "X ago" formatter. Uses absolute date once we exceed 30d.
  */

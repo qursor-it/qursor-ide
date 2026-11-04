@@ -266,6 +266,10 @@ delete_session(session_id: String) -> ()
 // the reasons to ask.
 session_transcript_path(session_id: String) -> String
 
+// The sub-agents a session has running now (F23): meta files without
+// `finished: true`, model from the transcript's tail. Empty when none or unknown.
+list_running_subagents(session_id: String) -> Vec<RunningSubagent>
+
 // An offset-paged `get_session` sat here until 2026-08-16. It outlived the
 // JSONL viewer it was written for and was never called again — deleted rather
 // than kept "available", see 05-features.md F3.

@@ -195,6 +195,34 @@ test.describe('the footer belongs to the project', () => {
 		await expect(page.getByTestId('shell-footer')).toBeVisible();
 	});
 
+	test('@smoke running sub-agents show type, model and elapsed time', async ({ page }) => {
+		const fx = fixtureOneProjectOneSession();
+		fx.runningSubagents = [
+			{
+				id: 'a1',
+				agentType: 'implementer',
+				description: 'Build the thing',
+				model: 'claude-sonnet-5-5',
+				startedAt: Date.now() - 72_000,
+			},
+			{
+				id: 'a2',
+				agentType: 'scoper',
+				description: 'Map it',
+				model: null,
+				startedAt: Date.now() - 5_000,
+			},
+		];
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.locator('aside').getByText('foo').click();
+		await page.getByText('Refactor the auth middleware').click();
+
+		const group = page.getByRole('status', { name: 'Running sub-agents' });
+		await expect(group).toContainText(/implementer · sonnet-5-5 · 1m1\ds/);
+		await expect(group).toContainText(/scoper · \d+s/);
+	});
+
 	test('@smoke no project, no footer', async ({ page }) => {
 		await installMockBridge(page, fixtureOneProjectOneSession());
 		await page.goto('/');

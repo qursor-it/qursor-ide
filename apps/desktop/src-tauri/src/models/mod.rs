@@ -231,6 +231,20 @@ pub struct SessionPage {
 	pub total: usize,
 }
 
+/// A sub-agent that is running now: its `agent-<id>.meta.json` has no
+/// `finished` key (`specs/02-data-model.md`). Read live, never indexed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningSubagent {
+	pub id: String,
+	pub agent_type: String,
+	pub description: String,
+	/// The model that answered last, from the transcript; `None` before its first reply.
+	pub model: Option<String>,
+	/// Epoch ms.
+	pub started_at: i64,
+}
+
 /// Tolerant JSONL event shape. See specs/02-data-model.md § "Session JSONL
 /// format". `extra` captures any fields we don't model so the renderer can
 /// still display them.

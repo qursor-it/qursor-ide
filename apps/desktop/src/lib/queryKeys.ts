@@ -23,6 +23,8 @@ export const queryKeys = {
 	session: (sessionId: string, offset: number, limit: number) =>
 		['session', sessionId, offset, limit] as const,
 	sessionTail: (sessionId: string, limit: number) => ['session-tail', sessionId, limit] as const,
+	/** A session's running sub-agents (F23), polled while its terminal is live. */
+	runningSubagents: (sessionId: string) => ['running-subagents', sessionId] as const,
 	search: (query: string, projectId: string | null) => ['search', query, projectId] as const,
 	/** One directory's listing in the file tree. Keyed by absolute path so
 	 *  every expanded node caches independently. */

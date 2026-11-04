@@ -6,7 +6,7 @@ use tauri::{Emitter, State};
 use crate::agents::claude;
 use crate::commands::off_main;
 use crate::error::{AppError, AppResult};
-use crate::models::{SearchHit, SessionEvent, SessionPage, SessionSummary};
+use crate::models::{RunningSubagent, SearchHit, SessionEvent, SessionPage, SessionSummary};
 use crate::services::jsonl::EventIter;
 use crate::services::search;
 use crate::state::AppState;
@@ -277,6 +277,90 @@ pub fn session_transcript_path(
 	Ok(path.to_string_lossy().to_string())
 }
 
+/// The sub-agents a session has running right now (F23).
+///
+/// A sub-agent's `.meta.json` gains `"finished": true` when it ends, so the
+/// running ones are those without it. A session that is not indexed, is itself a
+/// sub-agent, or has no `subagents/` directory (Codex) answers empty.
+#[tauri::command]
+pub async fn list_running_subagents(
+	state: State<'_, AppState>,
+	session_id: String,
+) -> AppResult<Vec<RunningSubagent>> {
+	let Ok((key, None, _)) = lookup_store_key_and_total(&state, &session_id) else {
+		return Ok(Vec::new());
+	};
+	let dir = state.claude_dir.join("projects").join(key).join(&session_id).join("subagents");
+	off_main(move || Ok(running_subagents_in(&dir))).await
+}
+
+/// How much of a sub-agent transcript's end is read to find its model.
+const SUBAGENT_TAIL_BYTES: u64 = 64 * 1024;
+
+/// The body of [`list_running_subagents`], against a `subagents/` directory.
+/// Anything missing, unreadable or malformed is skipped, never an error.
+pub fn running_subagents_in(dir: &std::path::Path) -> Vec<RunningSubagent> {
+	let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+	let mut out: Vec<RunningSubagent> = entries
+		.filter_map(Result::ok)
+		.filter_map(|e| {
+			let meta_path = e.path();
+			let id = meta_path
+				.file_name()?
+				.to_str()?
+				.strip_suffix(".meta.json")?
+				.strip_prefix("agent-")?
+				.to_string();
+			let meta: serde_json::Value =
+				serde_json::from_slice(&std::fs::read(&meta_path).ok()?).ok()?;
+			if meta.get("finished").and_then(|v| v.as_bool()) == Some(true) {
+				return None;
+			}
+			let jsonl = dir.join(format!("agent-{id}.jsonl"));
+			let started_at = first_line_timestamp_ms(&jsonl).or_else(|| {
+				let t = std::fs::metadata(&meta_path).ok()?.modified().ok()?;
+				Some(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as i64)
+			})?;
+			Some(RunningSubagent {
+				id,
+				agent_type: meta.get("agentType")?.as_str()?.to_string(),
+				description: meta
+					.get("description")
+					.and_then(|v| v.as_str())
+					.unwrap_or_default()
+					.to_string(),
+				model: last_model_in_tail(&jsonl),
+				started_at,
+			})
+		})
+		.collect();
+	out.sort_by_key(|a| a.started_at);
+	out
+}
+
+fn first_line_timestamp_ms(jsonl: &std::path::Path) -> Option<i64> {
+	use std::io::BufRead;
+	let mut line = String::new();
+	std::io::BufReader::new(std::fs::File::open(jsonl).ok()?).read_line(&mut line).ok()?;
+	let v: serde_json::Value = serde_json::from_str(&line).ok()?;
+	let ts = chrono::DateTime::parse_from_rfc3339(v.get("timestamp")?.as_str()?).ok()?;
+	Some(ts.timestamp_millis())
+}
+
+fn last_model_in_tail(jsonl: &std::path::Path) -> Option<String> {
+	use std::io::{Read, Seek, SeekFrom};
+	let mut f = std::fs::File::open(jsonl).ok()?;
+	let len = f.metadata().ok()?.len();
+	f.seek(SeekFrom::Start(len.saturating_sub(SUBAGENT_TAIL_BYTES))).ok()?;
+	let mut buf = Vec::new();
+	f.read_to_end(&mut buf).ok()?;
+	// The first line of a mid-file read is cut; it fails to parse and is skipped.
+	String::from_utf8_lossy(&buf).lines().rev().find_map(|l| {
+		let v: serde_json::Value = serde_json::from_str(l).ok()?;
+		Some(v.get("message")?.get("model")?.as_str()?.to_string())
+	})
+}
+
 /// Full-text search across the workspace (spec F4). `project_id` optionally
 /// restricts to one project. Returns up to `limit` (default 200, hard-capped at
 /// 200) ranked hits.
@@ -487,5 +571,40 @@ pub(crate) fn transcript_path(
 	match subagent_of {
 		Some(parent) => claude::subagent_transcript_path(claude_dir, key, parent, session_id),
 		None => claude::transcript_path_by_key(claude_dir, key, session_id),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::running_subagents_in;
+
+	#[test]
+	fn lists_only_running_subagents_with_model_and_start() {
+		let tmp = tempfile::tempdir().unwrap();
+		let d = tmp.path();
+		let w = |n: &str, c: &str| std::fs::write(d.join(n), c).unwrap();
+		w(
+			"agent-a.meta.json",
+			r#"{"agentType":"scoper","description":"map it","pickedEffortModel":"claude-opus-5-5"}"#,
+		);
+		w(
+			"agent-a.jsonl",
+			concat!(
+				"{\"type\":\"user\",\"timestamp\":\"2026-01-01T00:00:00Z\"}\n",
+				"{\"type\":\"assistant\",\"message\":{\"model\":\"claude-haiku-4-5\"}}\n",
+				"{\"type\":\"assistant\",\"message\":{\"model\":\"claude-sonnet-5-5\"}}\n",
+			),
+		);
+		w("agent-b.meta.json", r#"{"agentType":"x","finished":true}"#);
+		w("agent-b.jsonl", "{}\n");
+		w("agent-c.meta.json", "not json");
+
+		let got = running_subagents_in(d);
+		assert_eq!(got.len(), 1);
+		assert_eq!(got[0].id, "a");
+		assert_eq!(got[0].agent_type, "scoper");
+		assert_eq!(got[0].description, "map it");
+		assert_eq!(got[0].model.as_deref(), Some("claude-sonnet-5-5"));
+		assert_eq!(got[0].started_at, 1_767_225_600_000);
 	}
 }
