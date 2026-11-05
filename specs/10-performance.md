@@ -847,9 +847,8 @@ Found 2026-11-04 in a read-through audit, not profiled. **Landed 2026-11-04.**
   pages in parallel instead of one worker round trip at a time.
 Left open: the indexer re-walks a whole project directory (and, for Codex,
 every rollout) per watcher batch; the Codex adoption probe walks the rollout
-tree on the PTY reader thread until it adopts; and `terminal_write` is a sync
-command, so a large paste into a child that is not reading blocks the main
-thread.
+tree on the PTY reader thread until it adopts. (`terminal_write` blocking
+the main thread was PERF-24, landed the next day.)
 
 **PERF-32 — On Windows the first session waited on a PowerShell start to learn `PATH`.**
 Impact M (about 140 ms with no PowerShell profile, seconds with oh-my-posh,
@@ -1070,6 +1069,12 @@ to M, cost L: `spawn_blocking` at both sites.
 from a synchronous command; a large paste into a child that is not reading
 parks the main thread. Impact L to M, cost L: a bounded per-terminal queue
 and a writer thread, or `spawn_blocking`.
+**Landed 2026-11-05.** `write` now only queues the bytes on a channel drained
+by the terminal's own `term-writer-*` thread, so the command returns at once
+and one queue per terminal keeps input in typed order (`spawn_blocking` would
+not). The queue is unbounded: what it holds is text the user pasted. The
+thread ends with the handle or on the first failed write, once the child is
+gone.
 
 **PERF-25 — Boot-time fan-out.**
 `RootLayout` registers eight listeners, each an IPC round trip, and fires four
