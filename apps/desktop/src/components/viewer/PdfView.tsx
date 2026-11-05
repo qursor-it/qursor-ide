@@ -109,12 +109,15 @@ function PdfDocumentView({ path, base64, size }: { path: string; base64: string;
 				// Measured in one pass at scale 1, so every box can be reserved
 				// before anything rasterises and the scrollbar is honest from the
 				// first paint.
-				const measured: Measured[] = [];
-				for (let n = 1; n <= opened.numPages; n++) {
-					const p = await opened.getPage(n);
-					const { width, height } = p.getViewport({ scale: 1 });
-					measured.push({ number: n, width, height });
-				}
+				// All requests in flight at once: one worker round trip each, in
+				// sequence, kept a long document blank for seconds.
+				const measured: Measured[] = await Promise.all(
+					Array.from({ length: opened.numPages }, async (_, i) => {
+						const p = await opened.getPage(i + 1);
+						const { width, height } = p.getViewport({ scale: 1 });
+						return { number: i + 1, width, height };
+					}),
+				);
 				if (cancelled) return;
 				setLocked(null);
 				setDoc(opened);

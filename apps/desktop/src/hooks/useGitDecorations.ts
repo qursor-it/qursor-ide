@@ -1,5 +1,5 @@
 import type { GitChange, GitChangeKind } from '@factorai/types';
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useGitStatus } from '@hooks/useGitStatus';
 
 /** What a row's decoration says. Ordered by precedence — a directory takes the
@@ -83,12 +83,20 @@ export function useGitDecorations(): GitDecorations {
 	const { status } = useGitStatus();
 	const changes = status?.changes;
 	const repoRoot = status?.repoRoot;
+	const latest = useRef(changes);
+	latest.current = changes;
+	// Keyed on what a decoration reads, not on the array: every poll that only
+	// moves a line count (an agent editing an already-modified file) returns a
+	// new `changes`, and a new object here re-renders every row of the tree
+	// through its context.
+	const signature = changes?.map((c) => `${c.kind}\0${c.path}`).join('\n');
 
 	return useMemo(() => {
-		if (!changes || !repoRoot) return NONE;
-		const map = buildDecorations(changes, repoRoot);
+		const current = latest.current;
+		if (signature === undefined || !current || !repoRoot) return NONE;
+		const map = buildDecorations(current, repoRoot);
 		return { get: (path: string) => map.get(path) };
-	}, [changes, repoRoot]);
+	}, [signature, repoRoot]);
 }
 
 function parentOf(path: string): string {

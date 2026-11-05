@@ -22,15 +22,23 @@ use crate::state::AppState;
 ///
 /// `fresh` skips the reuse above and always mints a new id (ADR-0078): the
 /// caller is about to pass a first message, which a running session would drop.
+///
+/// **Off the main thread**, like `terminal_spawn` (PERF-07): the "messaged"
+/// probe stats the agent's store, and for Codex walks every rollout directory.
 #[tauri::command]
-pub fn start_session(
+pub async fn start_session(
 	state: State<'_, AppState>,
 	project_id: String,
 	agent: Option<String>,
 	fresh: Option<bool>,
 ) -> AppResult<String> {
-	let folder = state.db.with(|conn| project_path(conn, &project_id))?;
-	state.terminals.next_session_id(&project_id, &folder, agent.as_deref(), fresh.unwrap_or(false))
+	let db = state.db.clone();
+	let terminals = state.terminals.clone();
+	off_main(move || {
+		let folder = db.with(|conn| project_path(conn, &project_id))?;
+		terminals.next_session_id(&project_id, &folder, agent.as_deref(), fresh.unwrap_or(false))
+	})
+	.await
 }
 
 /// Spawn the PTY for a session.

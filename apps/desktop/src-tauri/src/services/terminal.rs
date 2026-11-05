@@ -670,7 +670,12 @@ struct TerminalHandle {
 	/// times a second and a directory walk per rewrite would be silly.
 	last_probe: Mutex<Option<Instant>>,
 	master: Mutex<Box<dyn MasterPty + Send>>,
-	writer: Mutex<Box<dyn Write + Send>>,
+	/// Input for the PTY, written by the terminal's own `term-writer-*` thread.
+	/// A paste larger than the kernel's PTY buffer blocks until the child reads
+	/// it, and `terminal_write` runs on the main thread: writing there froze the
+	/// window for as long as the child took. One queue per terminal keeps
+	/// keystrokes and pastes in the order they were typed.
+	writer: std::sync::mpsc::Sender<Vec<u8>>,
 	/// A killer cloned from the child at spawn time. We deliberately do NOT
 	/// store the `Child` itself here: the waiter thread owns it and blocks on
 	/// `wait()` for the process's entire lifetime. If we held the `Child`
@@ -1916,7 +1921,7 @@ impl TerminalManager {
 			}
 		};
 		drop(pair.slave); // close slave end in the parent so EOF works
-		let writer = pair
+		let mut pty_writer = pair
 			.master
 			.take_writer()
 			.map_err(|e| AppError::Process(format!("take_writer: {e}")))?;
@@ -1927,6 +1932,21 @@ impl TerminalManager {
 
 		let id = Uuid::new_v4().to_string();
 		info!(%id, argv = ?argv, cwd = ?cwd_path, "spawned terminal");
+
+		// Ends when the handle (the only sender) is dropped, or when a write
+		// fails because the child is gone and the PTY closed.
+		let (writer, input) = std::sync::mpsc::channel::<Vec<u8>>();
+		std::thread::Builder::new()
+			.name(format!("term-writer-{id}"))
+			.spawn(move || {
+				for data in input {
+					if let Err(e) = pty_writer.write_all(&data).and_then(|()| pty_writer.flush()) {
+						debug!(error = %e, "terminal writer stopped");
+						break;
+					}
+				}
+			})
+			.map_err(|e| AppError::Process(format!("spawn writer thread: {e}")))?;
 
 		let handle = Arc::new(TerminalHandle {
 			session_id: req.session_id.clone(),
@@ -1939,7 +1959,7 @@ impl TerminalManager {
 			store_dir: claude_dir.clone(),
 			last_probe: Mutex::new(None),
 			master: Mutex::new(pair.master),
-			writer: Mutex::new(writer),
+			writer,
 			killer: Mutex::new(killer),
 			#[cfg(windows)]
 			process_job,
@@ -2028,8 +2048,10 @@ impl TerminalManager {
 	pub fn write(&self, id: &str, data: &[u8]) -> AppResult<()> {
 		let handle =
 			self.terminals.get(id).ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-		let mut w = handle.writer.lock();
-		w.write_all(data).map_err(|e| AppError::Io(format!("terminal write: {e}")))?;
+		handle
+			.writer
+			.send(data.to_vec())
+			.map_err(|_| AppError::Io(format!("terminal {id} no longer accepts input")))?;
 		handle.last_activity.store(now_ms(), Ordering::Relaxed);
 		Ok(())
 	}
@@ -2865,6 +2887,28 @@ mod tests {
 			.collect::<Vec<_>>()
 			.join("");
 		assert!(merged.contains("GOT:hello"), "expected GOT:hello in stream, got: {merged:?}");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn a_large_write_returns_while_the_child_is_not_reading() {
+		let (mgr, _data, _exit) = make_manager();
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec!["/bin/sh".into(), "-c".into(), "sleep 60".into()]),
+			)
+			.expect("spawn sleep");
+		// Far past any PTY buffer: a blocking write would wait out the sleep.
+		let started = Instant::now();
+		mgr.write(&id, &vec![b'x'; 1024 * 1024]).expect("write");
+		mgr.write(&id, b"y").expect("write after a queued paste");
+		assert!(
+			started.elapsed() < Duration::from_secs(2),
+			"write blocked: {:?}",
+			started.elapsed()
+		);
+		mgr.kill(&id).expect("kill");
 	}
 
 	#[cfg(unix)]

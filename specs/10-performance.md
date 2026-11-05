@@ -826,6 +826,30 @@ ADR-0002's transport.
 *Measure.* Main-thread time per chunk on WebKitGTK with `cat` of a large
 file, and the keystroke-to-glyph budget under load, before and after.
 
+**PERF-33 — Work repeated on every poll that only the changed part needed.**
+Impact M (constant background disk and CPU while an agent works), cost L.
+Found 2026-11-04 in a read-through audit, not profiled. **Landed 2026-11-04.**
+- `session_usage` re-read and re-parsed the whole transcript, tens of MB, on
+  the status bar's 15 s poll. `session_cost` now keeps each transcript's
+  folded state and the offset past its last complete line, and parses only
+  what was appended; a file shorter than the offset is read again from the
+  start, and an unterminated last line is counted without being cached.
+- `git_status` ran both line-count diffs over the whole worktree on its 3 s
+  poll. `line_stats` now passes the surviving rows as a literal pathspec.
+- A Codex rollout with no `rate_limits` in its tail was read whole every
+  minute by the limits poll; the tail now stops widening at 4 MB.
+- `start_session` probed the agent's store on the main thread (a full rollout
+  walk for Codex); it now goes through `off_main` like `terminal_spawn`.
+- In the renderer, the file tree's decoration index is keyed on each change's
+  path and kind, so a poll that moves only a line count no longer re-renders
+  every row through the tree context; the tab strip's `combine` is
+  module-level so it is not re-run on every render; and a PDF measures its
+  pages in parallel instead of one worker round trip at a time.
+Left open: the indexer re-walks a whole project directory (and, for Codex,
+every rollout) per watcher batch; the Codex adoption probe walks the rollout
+tree on the PTY reader thread until it adopts. (`terminal_write` blocking
+the main thread was PERF-24, landed the next day.)
+
 **PERF-32 — On Windows the first session waited on a PowerShell start to learn `PATH`.**
 Impact M (about 140 ms with no PowerShell profile, seconds with oh-my-posh,
 conda or nvm in one), cost L. Found 2026-10-14 in a Windows pass.
@@ -1045,6 +1069,12 @@ to M, cost L: `spawn_blocking` at both sites.
 from a synchronous command; a large paste into a child that is not reading
 parks the main thread. Impact L to M, cost L: a bounded per-terminal queue
 and a writer thread, or `spawn_blocking`.
+**Landed 2026-11-05.** `write` now only queues the bytes on a channel drained
+by the terminal's own `term-writer-*` thread, so the command returns at once
+and one queue per terminal keeps input in typed order (`spawn_blocking` would
+not). The queue is unbounded: what it holds is text the user pasted. The
+thread ends with the handle or on the first failed write, once the child is
+gone.
 
 **PERF-25 — Boot-time fan-out.**
 `RootLayout` registers eight listeners, each an IPC round trip, and fires four
