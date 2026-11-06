@@ -137,10 +137,11 @@ rulesets, and a direct push is refused for everyone, the owner included. The
 
 ## What this project does not do
 
-No native Windows port: Windows runs the Linux build inside WSL 2 under WSLg
-(ADR-0044), there is no `windows-msvc` target, and anything that must differ
-inside WSL is a runtime branch in `services/wsl.rs` rather than a `#[cfg]`. No
-ARM64 Windows. No telemetry, analytics or crash reporting in the app — the
+Native Windows is an additional x64 target (ADR-0074): `x86_64-pc-windows-msvc`,
+WebView2, ConPTY and an NSIS installer, gated by `windows-native.yml`. Keep it
+working — a Windows difference is a narrow platform branch, not a reason to drop
+the target. The WSL 2 path (ADR-0044) remains, with its runtime branches in
+`services/wsl.rs`. No ARM64 Windows. No telemetry, analytics or crash reporting in the app — the
 site's cookieless page counts are ADR-0063 and stop there. No localization. No
 code generation for Tauri bindings. No CodeScene / Codacy / SonarQube — oxlint
 plus `tsc` plus clippy is the floor. No Claude OAuth helper. No mock data baked

@@ -1,7 +1,8 @@
 # ADR-0044 — Windows is WSL 2, not a second port
 
 **Date.** 2026-09-12
-**Status.** Accepted. Amends `specs/07-open-questions.md` Q1, which dropped
+**Status.** Accepted; superseded by ADR-0074 for native Windows support, the
+WSL 2 path below still stands. Amends `specs/07-open-questions.md` Q1, which dropped
 Windows entirely, and the "no Windows in v1" line in every document that carried
 it.
 
