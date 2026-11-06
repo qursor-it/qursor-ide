@@ -39,6 +39,9 @@ Free, open source, local-first: no account, no telemetry, no paid tier.
 > native Windows build, its own signed update feed, a usage monitor and more.
 > It is not the official factorai project: report problems with Qursor IDE
 > [here](https://github.com/qursor-it/qursor-ide/issues), not upstream.
+>
+> **Qursor IDE targets Windows.** On macOS or Linux, use
+> [factorai](https://github.com/Nightbr/factorai) instead.
 
 ## Contents
 
@@ -132,10 +135,13 @@ ARM64 is not supported yet. More detail in
 
 ### macOS and Linux
 
-There are no prebuilt Qursor IDE packages for macOS or Linux:
-[build from source](#build-from-source). A source build has no auto-updater, so
-pull and rebuild to update. Prebuilt macOS and Linux apps are available from
-upstream [factorai](https://github.com/Nightbr/factorai/releases).
+**Not supported.** Qursor IDE is a Windows app; on macOS or Linux, use
+[factorai](https://github.com/Nightbr/factorai/releases), which ships prebuilt
+apps for both and is where this fork comes from.
+
+The cross-platform code is kept on purpose, so the fork can keep taking
+upstream's changes, and it still [builds from source](#build-from-source). But
+there are no packages, no auto-updater and no support for them.
 
 ## Build from source
 
