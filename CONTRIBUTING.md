@@ -38,9 +38,11 @@ Some things are out of scope on purpose. Read
 [What this project does not do](AGENTS.md#what-this-project-does-not-do) before
 starting on anything large. In short:
 
-- **No native Windows port.** Windows runs the Linux build inside WSL 2
-  ([ADR-0044](specs/adr/0044-windows-is-wsl2-not-a-second-port.md)), so a
-  Windows-only fix is a runtime branch, not a new target.
+- **Native Windows is x64 only.** The native build
+  ([ADR-0074](specs/adr/0074-native-windows-is-an-additional-desktop-target.md))
+  sits beside the WSL 2 path
+  ([ADR-0044](specs/adr/0044-windows-is-wsl2-not-a-second-port.md)); a
+  Windows-only fix is a narrow platform branch, and ARM64 is not supported.
 - **No telemetry, analytics or crash reporting** in the app.
 - **No localization**, and no code generation for the Tauri bindings.
 - **macOS and Linux only** for v1.
