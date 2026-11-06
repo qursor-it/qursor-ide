@@ -1,6 +1,6 @@
 [package]
 name = "qursor-ide"
-version = "0.56.0"
+version = "0.57.0"
 description = "Qursor IDE"
 edition = "2021"
 
