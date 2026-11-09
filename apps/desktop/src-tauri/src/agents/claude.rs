@@ -14,10 +14,13 @@ use crate::services::jsonl::EventIter;
 /// Encode an absolute filesystem path into the directory name Claude Code uses
 /// under `~/.claude/projects/`.
 ///
-/// Rule on Unix: drop trailing slashes, then replace each `/` **and each `.`**
-/// with `-`. Native Windows keys also strip the extended path prefix and fold
-/// drive colons and backslashes to `-`, matching the CLI's Windows directory
-/// spelling.
+/// Rule: drop trailing separators, then replace **every character that is not
+/// an ASCII letter or digit** with `-`, which is Claude Code's own
+/// `replace(/[^a-zA-Z0-9]/g, "-")`. Native Windows keys strip the extended path
+/// prefix first. Folding only the separators missed any folder with a space, a
+/// `_`, a `~` (an 8.3 short name such as `BERNA~1`) or an accent: the probe
+/// looked in a directory Claude never wrote, `--resume` became `--session-id`,
+/// and every restore failed with "already in use".
 /// Example: `/Users/alice/code/foo` becomes `-Users-alice-code-foo`, and
 /// `/Users/alice/repo/.claude/worktrees/wt` becomes
 /// `-Users-alice-repo--claude-worktrees-wt` — the `/.` before `claude` folds to
@@ -35,7 +38,7 @@ pub fn encode_path(p: &Path) -> String {
 		{
 			s.pop();
 		}
-		s.replace(['/', '\\', '.', ':'], "-")
+		fold_to_store_key(&s)
 	}
 	#[cfg(not(windows))]
 	{
@@ -43,8 +46,22 @@ pub fn encode_path(p: &Path) -> String {
 		while s.ends_with('/') {
 			s.pop();
 		}
-		s.replace(['/', '.'], "-")
+		fold_to_store_key(&s)
 	}
+}
+
+/// One `-` per UTF-16 code unit of anything but `[a-zA-Z0-9]`: the CLI's regex
+/// runs over a JS string, so a character outside the BMP folds to two dashes.
+fn fold_to_store_key(s: &str) -> String {
+	let mut out = String::with_capacity(s.len());
+	for c in s.chars() {
+		if c.is_ascii_alphanumeric() {
+			out.push(c);
+		} else {
+			out.extend(std::iter::repeat_n('-', c.len_utf16()));
+		}
+	}
+	out
 }
 
 /// Claude's Windows store uses ordinary drive and UNC paths even when Rust's
@@ -273,6 +290,24 @@ mod tests {
 		assert_eq!(
 			encode_path(&PathBuf::from("/Users/alice/repo/.claude/worktrees/eng-1-a-b")),
 			"-Users-alice-repo--claude-worktrees-eng-1-a-b"
+		);
+	}
+
+	#[test]
+	fn encode_folds_every_non_alphanumeric_as_claude_does() {
+		// As the real store spells it: `C:\Users\Jane DOE` is `C--Users-Jane-DOE`.
+		assert_eq!(
+			encode_path(&PathBuf::from("/home/BERNA~1/my_proj (v2)/città/a😀b")),
+			"-home-BERNA-1-my-proj--v2--citt--a--b"
+		);
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn windows_short_names_and_spaces_fold_to_dashes() {
+		assert_eq!(
+			encode_path(Path::new(r"C:\Users\BERNA~1\Documents\My Repo")),
+			"C--Users-BERNA-1-Documents-My-Repo"
 		);
 	}
 

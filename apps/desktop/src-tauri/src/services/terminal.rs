@@ -2482,8 +2482,14 @@ fn spawn_waiter(
 /// Claude encodes to name its directory, and it is the one thing we have for a
 /// project Claude has never run in — which is precisely the case that needs
 /// `--session-id`.
+///
+/// Then the whole store, as [`is_messaged`] does: ids are uuids, so the file
+/// anywhere is this session's, and a key our encoding misses (or a transcript
+/// Claude moved) must not turn a resume into "already in use".
 fn session_flag(claude_dir: &Path, folder: &Path, session_id: &str) -> &'static str {
-	if claude::transcript_path(claude_dir, folder, session_id).exists() {
+	if claude::transcript_path(claude_dir, folder, session_id).exists()
+		|| claude::transcript_exists_anywhere(claude_dir, session_id)
+	{
 		"--resume"
 	} else {
 		"--session-id"
@@ -3805,12 +3811,14 @@ mod tests {
 	}
 
 	#[test]
-	fn session_flag_is_scoped_per_folder() {
+	fn session_flag_resumes_a_transcript_under_any_store_key() {
 		let tmp = tempfile::TempDir::new().unwrap();
 		let sid = "11111111-2222-3333-4444-555555555555";
 		write_transcript(tmp.path(), "/tmp/other", sid);
-		// Same session id, different folder — not our transcript.
-		assert_eq!(session_flag(tmp.path(), Path::new("/tmp/proj"), sid), "--session-id");
+		// Ids are uuids: under another key it is still this session — one Claude
+		// moved, or a key our encoding spelled differently. `--session-id` here is
+		// "already in use" on every restore.
+		assert_eq!(session_flag(tmp.path(), Path::new("/tmp/proj"), sid), "--resume");
 	}
 
 	#[test]
