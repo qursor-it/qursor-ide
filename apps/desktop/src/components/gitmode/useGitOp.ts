@@ -7,6 +7,7 @@ import { useTerminalStore } from '@store/terminalStore';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 import { create } from 'zustand';
+import { explainGitError } from './gitErrors';
 
 /** What the OpLog shows: the command as run and git's own words. */
 type OpLogEntry = GitOpResult;
@@ -16,9 +17,11 @@ interface GitUiState {
 	logs: Record<string, OpLogEntry | undefined>;
 	/** The destructive-op question being asked, if any. */
 	confirm: { text: string; resolve: (ok: boolean) => void } | null;
+	/** The failed op the error dialog shows, if any. */
+	error: { dir: string; op: GitOp; result: GitOpResult } | null;
 }
 
-export const useGitUi = create<GitUiState>()(() => ({ logs: {}, confirm: null }));
+export const useGitUi = create<GitUiState>()(() => ({ logs: {}, confirm: null, error: null }));
 
 function ask(text: string): Promise<boolean> {
 	return new Promise((resolve) => useGitUi.setState({ confirm: { text, resolve } }));
@@ -128,7 +131,9 @@ export function useGitOp(dir: string): UseGitOp {
 					? 'An agent is working in this checkout. Continue?'
 					: null;
 			const confirm = warn ? [warn, opts?.confirm].filter(Boolean).join(' ') : opts?.confirm;
-			return runGitOp(dir, op, { confirm }, queryClient, setRunning);
+			const result = await runGitOp(dir, op, { confirm }, queryClient, setRunning);
+			if (result && explainGitError(op, result)) useGitUi.setState({ error: { dir, op, result } });
+			return result;
 		},
 		[dir, queryClient],
 	);

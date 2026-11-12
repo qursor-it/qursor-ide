@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { AgentPopover } from './AgentPopover';
 import { ConflictBanner } from './ConflictBanner';
 import { GitActionBar } from './GitActionBar';
+import { GitErrorHost } from './GitErrorDialog';
 import { GitHistory } from './GitHistory';
 import { type GitSection, GitSidebar } from './GitSidebar';
 import { LocalChanges } from './LocalChanges';
@@ -24,6 +25,7 @@ export function GitModeView() {
 				<PanelEmpty>Open a Git tab with +.</PanelEmpty>
 			)}
 			<GitConfirmHost />
+			<GitErrorHost />
 		</div>
 	);
 }

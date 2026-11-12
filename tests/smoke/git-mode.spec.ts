@@ -156,6 +156,39 @@ test.describe('git-mode', () => {
 		await expect(page.getByText('Not a git repository.')).toBeVisible();
 	});
 
+	test('@smoke a rejected push opens the error dialog and Pull and push pulls', async ({
+		page,
+	}) => {
+		await installMockBridge(
+			page,
+			fixtureWithRefs({
+				gitOpResult: {
+					command: 'git push',
+					ok: false,
+					stdout: '',
+					stderr:
+						"! [rejected]        main -> main (fetch first)\nerror: failed to push some refs to 'origin'",
+				},
+			}),
+		);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: 'Push' }).click();
+		const dialog = page.getByTestId('git-error-dialog');
+		await expect(dialog).toContainText('Push rejected');
+		await expect(dialog).toContainText('failed to push some refs');
+		await dialog.getByRole('button', { name: 'Pull and push' }).click();
+		await expect
+			.poll(() =>
+				page.evaluate(() =>
+					(window.__FACTORAI_TEST_CALLS__ ?? [])
+						.filter((c) => c.name === 'git_op')
+						.map((c) => (c.args as { op: { kind: string } }).op.kind),
+				),
+			)
+			.toContain('pull');
+	});
+
 	test('@smoke a missing git is shown in the op log', async ({ page }) => {
 		await installMockBridge(
 			page,
@@ -164,6 +197,10 @@ test.describe('git-mode', () => {
 		await page.goto(PROJECT);
 		await page.getByRole('tab', { name: /^Git/ }).click();
 		await page.getByRole('button', { name: 'Fetch' }).click();
+		await expect(page.getByTestId('git-error-dialog')).toContainText(
+			'git is not installed or not on PATH',
+		);
+		await page.getByTestId('git-error-dialog').getByRole('button', { name: 'Close' }).click();
 		await expect(page.getByTestId('op-log')).toContainText('git not found on PATH');
 		// History still works.
 		await expect(page.getByTestId('commit-row')).toHaveCount(5);
