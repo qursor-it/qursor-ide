@@ -8291,9 +8291,23 @@ daily or per-block cost reports.
 
 ## F35 — Git mode: a full-window git client per project, with agents for the hard parts
 
-**Specified 2026-11-12, not built yet; decisions in
-[ADR-0089](adr/0089-git-mode-writes-through-the-git-cli.md).** Mockups from the
-design conversation are attached to the PR that adds this section.
+**Specified and built 2026-11-12; decisions in
+[ADR-0089](adr/0089-git-mode-writes-through-the-git-cli.md).** Code in
+`components/gitmode/`, `services/git_ops.rs`, `git_proposed.rs`, `git_agent.rs`.
+
+**Shipped short of this section, on purpose:**
+- Quick `✦` actions run Claude only (`claude -p`); `codex exec` is not wired. A
+  Codex project is refused by the backend, and the buttons are hidden when the
+  app's default agent is Codex (there is no per-project agent query in the
+  renderer yet).
+- Selecting a branch in the sidebar does not filter the history: `git_graph`
+  has no ref filter yet.
+- The merge/rebase confirmation counts commits from the loaded graph pages, so
+  on a very long history the number is a lower bound.
+- `✦ Explain this commit`, `Find bugs` and `Write a release note` answer in a
+  dialog, not a popover anchored to the row.
+- `Open side by side` from Local changes switches to Sessions to use the
+  existing viewer.
 
 **Why.** The user pays for a desktop git client and keeps it open beside the
 app to do what F18 deliberately left out: stage, commit, switch branches,
@@ -8470,8 +8484,11 @@ not offered.
   `--delete`), `stash`, `revert`, `cherry-pick`, `tag`, `log`, `show`, `diff`,
   `status`.
 - Refused outright: `reset --hard`, `clean`, `config`, `filter-branch`,
-  `gc`, `prune`, `update-ref`, `reflog expire`, and any option that runs a
-  program (`--exec`, `-x`, `--upload-pack`, `--receive-pack`).
+  `gc`, `prune`, `update-ref`, `reflog expire`, any option that runs a
+  program (`--exec`, `-x`, `--upload-pack`, `--receive-pack`) or writes a file
+  (`--output`), and a push whose refspec force-pushes or deletes (`+ref`,
+  `:ref`, any argument with `:`). Bundled short flags count letter by letter
+  (`-fu` is `-f -u`).
 
 ### Attribution
 

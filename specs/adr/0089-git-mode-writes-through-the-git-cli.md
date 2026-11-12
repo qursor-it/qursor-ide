@@ -1,7 +1,7 @@
 # ADR-0089 — Git mode writes through the `git` CLI
 
 Date: 2026-11-12
-Status: Proposed. Supersedes the read-only clause of ADR-0009 and F18's "a
+Status: Accepted. Supersedes the read-only clause of ADR-0009 and F18's "a
 viewer, not a git client" for Git mode (F35). Extends ADR-0079, which already
 writes one worktree through the `git` CLI.
 
