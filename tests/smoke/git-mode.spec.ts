@@ -115,6 +115,17 @@ test.describe('git-mode', () => {
 		await expect(page.locator('.xterm:visible')).toBeVisible();
 	});
 
+	test('@smoke a folder that is no project opens as a repository tab', async ({ page }) => {
+		await installMockBridge(page, { ...fixtureWithRefs(), folderPick: '/home/me/other-repo' });
+		await page.goto('/');
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: 'Open Git tab' }).click();
+		await page.getByTestId('git-open-repository').click();
+		await expect(page.getByTestId('git-tabs').getByTestId('tab-group-chip')).toContainText(
+			'other-repo',
+		);
+	});
+
 	test('@smoke history rows render and double-clicking a branch checks it out', async ({
 		page,
 	}) => {

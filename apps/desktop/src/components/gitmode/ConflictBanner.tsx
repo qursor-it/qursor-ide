@@ -4,7 +4,7 @@ import { resolveConflictsPrompt } from '@lib/gitPrompts';
 import { relativeToRoot } from '@lib/paths';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
-import { useGitModeStore } from '@store/gitModeStore';
+import { isLooseRepo, useGitModeStore } from '@store/gitModeStore';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
@@ -84,20 +84,22 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 							{op === 'merge' ? 'Merge' : 'Rebase'} stopped: {state.conflicted.length} file
 							{state.conflicted.length === 1 ? '' : 's'} conflict.
 						</span>
-						<Button
-							size="sm"
-							className={SMALL}
-							onClick={() =>
-								void startAgent(
-									projectId,
-									dir,
-									`Resolve ${op} conflicts`,
-									resolveConflictsPrompt({ op, current, theirs, files: rel(state.conflicted) }),
-								)
-							}
-						>
-							✦ Resolve with agent
-						</Button>
+						{!isLooseRepo(projectId) && (
+							<Button
+								size="sm"
+								className={SMALL}
+								onClick={() =>
+									void startAgent(
+										projectId,
+										dir,
+										`Resolve ${op} conflicts`,
+										resolveConflictsPrompt({ op, current, theirs, files: rel(state.conflicted) }),
+									)
+								}
+							>
+								✦ Resolve with agent
+							</Button>
+						)}
 						{abort}
 					</div>
 					<ul className="mt-1">

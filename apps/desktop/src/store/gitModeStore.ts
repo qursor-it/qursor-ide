@@ -9,6 +9,11 @@ export interface GitTab {
 	dir: string;
 }
 
+/** A repository opened from a folder, not a project: its tab's `projectId`. It
+ *  has no sessions, so nothing that starts or asks an agent is offered on it. */
+export const looseRepoId = (dir: string) => `repo:${dir}`;
+export const isLooseRepo = (projectId: string) => projectId.startsWith('repo:');
+
 interface GitModeState {
 	mode: AppMode;
 	tabs: GitTab[];

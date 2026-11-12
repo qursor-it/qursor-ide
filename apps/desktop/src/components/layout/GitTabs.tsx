@@ -5,13 +5,14 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 	IconButton,
 } from '@factorai/ui';
 import { queryKeys } from '@lib/queryKeys';
 import { groupSortId } from '@lib/tabGroups';
-import { cmd } from '@lib/tauri';
-import { type GitTab, useGitModeStore } from '@store/gitModeStore';
+import { cmd, pickFolder } from '@lib/tauri';
+import { type GitTab, isLooseRepo, looseRepoId, useGitModeStore } from '@store/gitModeStore';
 import { useQuery } from '@tanstack/react-query';
 import { GitBranch, Plus, X } from 'lucide-react';
 import { useState } from 'react';
@@ -27,7 +28,10 @@ export function GitTabs() {
 	const openTab = useGitModeStore((s) => s.openTab);
 	const projectsQ = useQuery({ queryKey: queryKeys.projects(), queryFn: () => cmd.listProjects() });
 	const projects = projectsQ.data ?? [];
-	const nameOf = (id: string) => projects.find((p) => p.id === id)?.displayName ?? id;
+	const nameOf = (id: string) =>
+		isLooseRepo(id)
+			? (id.split(/[\\/]/).filter(Boolean).pop() ?? id)
+			: (projects.find((p) => p.id === id)?.displayName ?? id);
 	// Groups in first-seen order, tabs keeping theirs.
 	const groups = [...new Set(tabs.map((t) => t.projectId))].map((projectId) => ({
 		projectId,
@@ -80,14 +84,22 @@ export function GitTabs() {
 			</DndContext>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<IconButton size="md" aria-label="Open Git tab" title="Open a project's Git tab">
+					<IconButton size="md" aria-label="Open Git tab" title="Open a Git tab">
 						<Plus />
 					</IconButton>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="start">
-					{projects.length === 0 && (
-						<DropdownMenuItem disabled>No projects yet: add one from the sidebar</DropdownMenuItem>
-					)}
+					<DropdownMenuItem
+						data-testid="git-open-repository"
+						onSelect={() =>
+							void pickFolder('Open repository').then((dir) => {
+								if (dir) openTab(looseRepoId(dir), dir);
+							})
+						}
+					>
+						Open repository…
+					</DropdownMenuItem>
+					{projects.length > 0 && <DropdownMenuSeparator />}
 					{projects.map((p) => (
 						<DropdownMenuItem key={p.id} onSelect={() => openTab(p.id, p.realPath)}>
 							{p.displayName}

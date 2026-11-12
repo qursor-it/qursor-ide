@@ -1,7 +1,7 @@
 import type { GitAgentTask } from '@factorai/types';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
-import { useGitModeStore } from '@store/gitModeStore';
+import { isLooseRepo, useGitModeStore } from '@store/gitModeStore';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { create } from 'zustand';
@@ -100,5 +100,6 @@ export function useQuickAgent(dir: string): QuickAgent {
 		[ask, dir],
 	);
 	const cancel = useCallback(() => void cmd.gitAskCancel(dir), [dir]);
-	return { enabled: defaultQ.data !== 'codex', busy, ask, show, cancel };
+	const enabled = defaultQ.data !== 'codex' && !isLooseRepo(projectId ?? '');
+	return { enabled, busy, ask, show, cancel };
 }
