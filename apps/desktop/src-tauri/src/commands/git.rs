@@ -1,7 +1,12 @@
 use crate::commands::off_main;
-use crate::error::AppResult;
-use crate::models::{FileContents, GitCommitDetail, GitGraph, GitRev, GitStatus, GitWorktree};
+use crate::error::{AppError, AppResult};
+use crate::models::{
+	FileContents, GitCommitDetail, GitGraph, GitRefs, GitRepoState, GitRev, GitStatus, GitWorktree,
+};
 use crate::services::git;
+use crate::services::git_agent::{self, GitAgentTask};
+use crate::services::git_ops::{self, GitOp, GitOpResult};
+use crate::services::git_proposed;
 
 /// Repository state for the Changes tab and the tree's decorations (F13).
 ///
@@ -75,4 +80,83 @@ pub async fn git_blob_at(
 #[tauri::command]
 pub async fn git_worktrees(project_path: String) -> AppResult<Vec<GitWorktree>> {
 	off_main(move || git::worktrees(&project_path)).await
+}
+
+/// One Git-mode write, run through the system `git` (F35, ADR-0089).
+///
+/// A non-zero exit is `Ok` with `ok: false` (a conflict is a state to show);
+/// a missing `git`, a spawn failure or a timeout is an error.
+#[tauri::command]
+pub async fn git_op(project_path: String, op: GitOp) -> AppResult<GitOpResult> {
+	git_ops::run_op(&project_path, op).await
+}
+
+/// Why each proposed line may not run, `None` where it may (F35). The view
+/// hides `Run` unless every entry is `None`.
+#[tauri::command]
+pub fn git_check_proposed(lines: Vec<String>) -> Vec<Option<String>> {
+	lines.iter().map(|l| git_proposed::check_line(l).err()).collect()
+}
+
+/// Runs agent-proposed `git` lines in order under `-C <project>`.
+///
+/// **Every line is validated before the first runs**, so a bad last line cannot
+/// leave the earlier ones applied. Stops at the first failing command.
+#[tauri::command]
+pub async fn git_run_proposed(
+	project_path: String,
+	lines: Vec<String>,
+) -> AppResult<Vec<GitOpResult>> {
+	let mut argvs = Vec::with_capacity(lines.len());
+	for line in &lines {
+		let argv = git_proposed::check_line(line).map_err(AppError::InvalidInput)?;
+		argvs.push(argv[1..].to_vec());
+	}
+	let mut results = Vec::with_capacity(argvs.len());
+	for argv in argvs {
+		let result =
+			git_ops::run_argv(&project_path, argv, None, git_ops::PROPOSED_TIMEOUT).await?;
+		let failed = !result.ok;
+		results.push(result);
+		if failed {
+			break;
+		}
+	}
+	Ok(results)
+}
+
+/// Branches, remotes, tags and stashes for the Git view's sidebar (F35).
+#[tauri::command]
+pub async fn git_refs(project_path: String) -> AppResult<GitRefs> {
+	off_main(move || git::refs(&project_path)).await
+}
+
+/// Merge / rebase / cherry-pick / revert in progress, and the conflicted files.
+#[tauri::command]
+pub async fn git_repo_state(project_path: String) -> AppResult<GitRepoState> {
+	off_main(move || git::repo_state(&project_path)).await
+}
+
+/// Unified diff text of one file (absolute `path`), staged or not, for hunk
+/// staging.
+#[tauri::command]
+pub async fn git_file_patch(project_path: String, path: String, staged: bool) -> AppResult<String> {
+	off_main(move || git::file_patch(&project_path, &path, staged)).await
+}
+
+/// A one-shot `claude -p` answer for a quick action (F35). Claude projects only.
+#[tauri::command]
+pub async fn git_ask_agent(
+	state: tauri::State<'_, crate::state::AppState>,
+	project_id: String,
+	dir: String,
+	task: GitAgentTask,
+) -> AppResult<String> {
+	git_agent::ask(&state.db, &project_id, &dir, task).await
+}
+
+/// Ends the quick action running in `dir`, if any.
+#[tauri::command]
+pub fn git_ask_cancel(dir: String) {
+	git_agent::cancel(&dir);
 }

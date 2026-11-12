@@ -377,7 +377,8 @@ media-queried. Density is constant across widths; what changes is how much a
 truncating string shows, which is capped in proportion to its own column rather
 than by a constant.
 
-**Chrome heights are explicit, never derived.** Top bar 42px (`h-10.5`); file
+**Chrome heights are explicit, never derived.** Top bar in two rows (F35): tools
+row 42px (`h-10.5`), work row 36px (`h-9`, the tab strip); file
 panel header, sidebar footer and the session's shell footer 36px (`h-9`);
 session tab 30px (`h-7.5`); **status bar 24px (`h-6`)**, full width under
 every column; menu row 28px; sidebar rows 26–28px; **collapsed

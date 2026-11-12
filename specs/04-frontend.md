@@ -296,6 +296,24 @@ back to Files rather than rendering a panel with no body. `MIN_PANEL_WIDTH` is 2
 (it was 256), measured with the fourth label: the Files tab's header, the widest,
 overflows below 280px. See Q18.
 
+### `gitModeStore` (F35)
+
+`store/gitModeStore.ts`, persisted under `factorai.gitmode` (version 1) in plain
+synchronous `localStorage`.
+
+```ts
+type GitModeState = {
+  mode: "sessions" | "git";          // the window's mode
+  tabs: { projectId: string; dir: string }[];  // open Git tabs, one per checkout
+  activeDir: string | null;          // the selected Git tab
+  setMode(m): void; openTab(projectId, dir): void; // dedupes by dir, activates
+  closeTab(dir): void; activate(dir): void;        // closing the active one picks a neighbour
+};
+```
+
+`AppShell` keeps the sessions body mounted and hides it in Git mode, so terminals
+keep running; the Git view mounts only in Git mode.
+
 ### `reviewDraftStore` (F31, P3)
 
 Review drafts, one per pull request. **Persisted** as `factorai.reviewDrafts`

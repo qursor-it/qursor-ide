@@ -807,6 +807,105 @@ export interface GitWorktree {
 	exists: boolean;
 }
 
+/** A quick `✦` question for a one-shot `claude -p` (F35). Mirrors Rust `GitAgentTask`. */
+export type GitAgentTask =
+	| { kind: 'commitMessage' }
+	| { kind: 'explainCommit'; sha: string }
+	| { kind: 'findBugs'; sha: string }
+	| { kind: 'releaseNote'; sha: string }
+	| { kind: 'undoCommit'; sha: string }
+	| { kind: 'summariseBranch'; branch: string; against: string }
+	| { kind: 'explainConflict'; path: string }
+	| { kind: 'request'; text: string };
+
+/** One Git-mode write (F35, ADR-0089). Mirrors Rust `GitOp`; every write runs
+ *  the system `git`, never `git2`. */
+export type GitOp =
+	| { kind: 'stage'; paths: string[] }
+	| { kind: 'unstage'; paths: string[] }
+	| { kind: 'discard'; paths: string[] }
+	| { kind: 'applyPatch'; patch: string; cached: boolean; reverse: boolean }
+	/** An empty `message` concludes a merge with git's prepared message. */
+	| { kind: 'commit'; message: string; amend: boolean }
+	| { kind: 'checkout'; branch: string }
+	| { kind: 'createBranch'; name: string; at: string; checkout: boolean }
+	| { kind: 'renameBranch'; from: string; to: string }
+	| { kind: 'deleteBranch'; name: string }
+	| { kind: 'merge'; branch: string }
+	| { kind: 'rebase'; onto: string }
+	| { kind: 'mergeAbort' }
+	| { kind: 'rebaseAbort' }
+	| { kind: 'rebaseContinue' }
+	/** Only for "Undo rebase"; needs the full 40-character SHA. */
+	| { kind: 'resetHardTo'; sha: string }
+	| { kind: 'checkoutSide'; path: string; theirs: boolean }
+	| { kind: 'fetch' }
+	| { kind: 'pull' }
+	| { kind: 'push'; setUpstream: boolean }
+	| { kind: 'stashPush'; message: string | null }
+	| { kind: 'stashApply'; index: number }
+	| { kind: 'stashPop'; index: number }
+	| { kind: 'stashDrop'; index: number };
+
+/** What a write ran and said. Mirrors Rust `GitOpResult`. A non-zero exit
+ *  resolves with `ok: false` (a conflict is a state, not an error); a missing
+ *  `git`, a spawn failure or a timeout rejects. */
+export interface GitOpResult {
+	/** The command line as run, without the `-C <project>` the app adds. */
+	command: string;
+	ok: boolean;
+	stdout: string;
+	stderr: string;
+}
+
+/** One local branch. Mirrors Rust `GitBranch` (F35). */
+export interface GitBranch {
+	name: string;
+	/** Full SHA of the branch tip. */
+	sha: string;
+	/** The remote-tracking branch it follows, e.g. `origin/main`. */
+	upstream: string | null;
+	ahead: number;
+	behind: number;
+	current: boolean;
+}
+
+/** The branches of one remote, without the `<remote>/` prefix. */
+export interface GitRemoteBranches {
+	remote: string;
+	branches: string[];
+}
+
+export interface GitStash {
+	index: number;
+	message: string;
+}
+
+/** The Git view's sidebar lists. Mirrors Rust `GitRefs`. A project outside a
+ *  repository, or a repository without commits, resolves with empty lists. */
+export interface GitRefs {
+	/** Branch HEAD is on; null when detached or unborn. */
+	head: string | null;
+	headSha: string | null;
+	local: GitBranch[];
+	remotes: GitRemoteBranches[];
+	tags: string[];
+	stashes: GitStash[];
+}
+
+/** What a repository is in the middle of. */
+export type GitRepoOp = 'none' | 'merge' | 'rebase' | 'cherryPick' | 'revert';
+
+/** Mirrors Rust `GitRepoState`. */
+export interface GitRepoState {
+	op: GitRepoOp;
+	/** Absolute paths of files with unresolved conflicts, like `GitChange.path`. */
+	conflicted: string[];
+	/** Full SHA of `MERGE_HEAD` during a merge, or of the commit being rebased
+	 *  onto; null otherwise. */
+	theirs: string | null;
+}
+
 export interface GitStatus {
 	/** Working directory of the repository, null when the project isn't in one.
 	 *  That is a success, not an error: "not versioned" is something the panel

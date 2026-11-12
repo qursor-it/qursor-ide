@@ -7,8 +7,13 @@ import type {
 	FileChangedEvent,
 	FileContents,
 	GhStatus,
+	GitAgentTask,
 	GitCommitDetail,
 	GitGraph,
+	GitOp,
+	GitOpResult,
+	GitRefs,
+	GitRepoState,
 	GitRev,
 	GitStatus,
 	GitWorktree,
@@ -297,6 +302,38 @@ export const cmd = {
 	 *  Separate from `gitBlob` rather than widening `GitRev` to carry a SHA. */
 	gitBlobAt: (path: string, commit: string, maxBytes?: number | null) =>
 		invoke<FileContents | null>('git_blob_at', { path, commit, maxBytes }),
+
+	/** One Git-mode write through the system `git` (F35, ADR-0089). Resolves
+	 *  with `ok: false` on a non-zero exit (a conflict is a state); rejects when
+	 *  `git` is missing or does not finish. Re-read state after it settles. */
+	gitOp: (projectPath: string, op: GitOp) => invoke<GitOpResult>('git_op', { projectPath, op }),
+
+	/** Why each agent-proposed `git` line may not run, null where it may (F35).
+	 *  The view offers `Run` only when every entry is null. */
+	gitCheckProposed: (lines: string[]) => invoke<(string | null)[]>('git_check_proposed', { lines }),
+	/** Runs agent-proposed `git` lines in order. All lines are validated before
+	 *  the first runs; execution stops at the first one that fails, so the result
+	 *  can be shorter than `lines`. */
+	gitRunProposed: (projectPath: string, lines: string[]) =>
+		invoke<GitOpResult[]>('git_run_proposed', { projectPath, lines }),
+
+	/** A one-shot `claude -p` answer for a quick `✦` action (F35). Rejects for a
+	 *  Codex project, on timeout (60 s) and when cancelled. */
+	gitAskAgent: (projectId: string, dir: string, task: GitAgentTask) =>
+		invoke<string>('git_ask_agent', { projectId, dir, task }),
+	/** Ends the quick action running in `dir`. */
+	gitAskCancel: (dir: string) => invoke<void>('git_ask_cancel', { dir }),
+
+	/** Branches, remotes, tags and stashes for the Git view (F35). Empty lists
+	 *  for a project outside a repository or without commits. */
+	gitRefs: (projectPath: string) => invoke<GitRefs>('git_refs', { projectPath }),
+	/** Merge / rebase / cherry-pick / revert in progress and the conflicted
+	 *  files (F35). `op: 'none'` outside a repository. */
+	gitRepoState: (projectPath: string) => invoke<GitRepoState>('git_repo_state', { projectPath }),
+	/** One file's unified diff (absolute `path`), working tree against the index
+	 *  or, with `staged`, the index against HEAD. Empty string when unchanged. */
+	gitFilePatch: (projectPath: string, path: string, staged: boolean) =>
+		invoke<string>('git_file_patch', { projectPath, path, staged }),
 
 	/** Whether this project can show pull requests, and if not, why (F31,
 	 *  ADR-0077). **Never rejects**: a missing `gh`, no login or no `origin` is a
@@ -875,6 +912,15 @@ interface TestFixture {
 	/** Commit graph keyed by project path, for the F18 Graph tab. The mock pages
 	 *  it by slicing `commits`, so one fixture exercises "Load more" too. */
 	gitGraphs?: Record<string, GitGraph>;
+	/** Branches and tags keyed by project path, for the F35 Git view. Absent means
+	 *  a repository without commits (empty lists). */
+	gitRefs?: Record<string, GitRefs>;
+	/** Merge/rebase state keyed by project path (F35). Absent means `none`. */
+	gitRepoStates?: Record<string, GitRepoState>;
+	/** What `git_ask_agent` answers (F35). Absent makes it reject. */
+	gitAskAgent?: string;
+	/** Makes `git_op` reject with this error, as a missing `git` does. */
+	gitOpFails?: AppError;
 	/** Checkouts per project path (F21). Absent means "one checkout, the project
 	 *  itself" — the shape almost every project has, so a fixture only declares
 	 *  this when the worktree behaviour is what it is testing. */
@@ -1652,6 +1698,55 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			const key = `${String(args?.commit ?? '')}:${String(args?.path ?? '')}`;
 			return (fx?.gitBlobs?.[key] ?? null) as unknown as T;
 		}
+		case 'git_op': {
+			// The call is recorded above with its arguments; a spec asserts on that.
+			if (fx?.gitOpFails) throw fx.gitOpFails;
+			const kind = String((args?.op as GitOp | undefined)?.kind ?? '');
+			return { command: `git ${kind}`, ok: true, stdout: '', stderr: '' } as unknown as T;
+		}
+		case 'git_ask_agent':
+			if (fx?.gitAskAgent === undefined) throw new Error('no agent in the mock');
+			return fx.gitAskAgent as unknown as T;
+		case 'git_ask_cancel':
+			return undefined as unknown as T;
+		case 'git_check_proposed': {
+			// The browser has no allowlist to run; a line is refused only if it
+			// is not a plain `git <subcommand>` line, which is enough for the UI.
+			const lines = (Array.isArray(args?.lines) ? args.lines : []) as string[];
+			return lines.map((l) =>
+				/^git\s+[a-z]/.test(l) && !/[|&;<>$`()]|reset|--force/.test(l) ? null : 'not a git command',
+			) as unknown as T;
+		}
+		case 'git_run_proposed': {
+			const lines = (Array.isArray(args?.lines) ? args.lines : []) as string[];
+			return lines.map((command) => ({
+				command,
+				ok: true,
+				stdout: '',
+				stderr: '',
+			})) as unknown as T;
+		}
+		case 'git_refs': {
+			const projectPath = String(args?.projectPath ?? '');
+			return (fx?.gitRefs?.[projectPath] ?? {
+				head: null,
+				headSha: null,
+				local: [],
+				remotes: [],
+				tags: [],
+				stashes: [],
+			}) as unknown as T;
+		}
+		case 'git_repo_state': {
+			const projectPath = String(args?.projectPath ?? '');
+			return (fx?.gitRepoStates?.[projectPath] ?? {
+				op: 'none',
+				conflicted: [],
+				theirs: null,
+			}) as unknown as T;
+		}
+		case 'git_file_patch':
+			return '' as unknown as T;
 		case 'gh_status': {
 			// No `gh` in a browser: a fixture declares the answer per project, and
 			// absent is the honest "not installed" the panel's empty state is for.

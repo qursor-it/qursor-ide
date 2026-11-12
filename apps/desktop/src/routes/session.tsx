@@ -16,6 +16,7 @@ import {
 import { useState } from 'react';
 import { CloseSessionConfirm, needsCloseConfirm } from '@components/dialog/CloseSessionConfirm';
 import { StatusDot } from '@components/layout/StatusDot';
+import { GitOriginStrip } from '@components/session/GitOriginStrip';
 import { CheckoutMenu } from '@components/session/CheckoutMenu';
 import { SubAgentTranscript } from '@components/session/SubAgentTranscript';
 import { disposeTerminal, restartSession, Terminal } from '@components/terminal/Terminal';
@@ -241,6 +242,7 @@ function SessionView() {
 
 	return (
 		<main className="flex h-full flex-col bg-terminal">
+			<GitOriginStrip sessionId={sessionId} />
 			<header className="flex items-center gap-3 border-b border-border bg-card px-4 py-2">
 				{/* The only animated dot in the app: one per screen, describing the
 				    session you are actually looking at (see StatusDot). A sub-agent

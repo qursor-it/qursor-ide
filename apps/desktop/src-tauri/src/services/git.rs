@@ -28,9 +28,10 @@ use git2::{
 
 use crate::error::{AppError, AppResult};
 use crate::models::{
-	FileContents, GitChange, GitChangeKind, GitCommitDetail, GitCommitFile, GitGraph,
-	GitGraphCommit, GitGraphEdge, GitGraphEdgeKind, GitGroup, GitRef, GitRefKind, GitRev,
-	GitStatus, GitWorktree, RemoteHost,
+	FileContents, GitBranch, GitChange, GitChangeKind, GitCommitDetail, GitCommitFile, GitGraph,
+	GitGraphCommit, GitGraphEdge, GitGraphEdgeKind, GitGroup, GitRef, GitRefKind, GitRefs,
+	GitRemoteBranches, GitRepoOp, GitRepoState, GitRev, GitStash, GitStatus, GitWorktree,
+	RemoteHost,
 };
 use crate::services::files;
 use parking_lot::Mutex;
@@ -1091,6 +1092,155 @@ pub fn worktrees(project_path: &str) -> AppResult<Vec<GitWorktree>> {
 		return Ok(Vec::new());
 	};
 	Ok(worktrees_of(&repo))
+}
+
+/// Branches, remotes, tags and stashes for the Git view's sidebar (F35).
+///
+/// No repository, or one without commits, is an empty success — the view
+/// renders its own state for it. Detached HEAD reports `head: None` with a SHA.
+pub fn refs(project_path: &str) -> AppResult<GitRefs> {
+	let Some(mut repo) = discover(project_path) else {
+		return Ok(GitRefs::default());
+	};
+	let detached = repo.head_detached().unwrap_or(false);
+	let mut refs = GitRefs {
+		head: if detached { None } else { branch_name(&repo) },
+		head_sha: head_sha(&repo),
+		..GitRefs::default()
+	};
+
+	for entry in repo.branches(Some(BranchType::Local)).map_err(git_err)? {
+		let (branch, _) = entry.map_err(git_err)?;
+		let (Ok(Some(name)), Some(tip)) = (branch.name(), branch.get().target()) else {
+			continue;
+		};
+		let upstream = branch.upstream().ok();
+		let (ahead, behind) = upstream
+			.as_ref()
+			.and_then(|u| u.get().target())
+			.and_then(|up| repo.graph_ahead_behind(tip, up).ok())
+			.unwrap_or((0, 0));
+		refs.local.push(GitBranch {
+			name: name.to_string(),
+			sha: tip.to_string(),
+			upstream: upstream.and_then(|u| u.name().ok().flatten().map(str::to_string)),
+			ahead: ahead as u32,
+			behind: behind as u32,
+			current: branch.is_head(),
+		});
+	}
+
+	let mut remotes: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+	for entry in repo.branches(Some(BranchType::Remote)).map_err(git_err)? {
+		let (branch, _) = entry.map_err(git_err)?;
+		let Ok(Some(full)) = branch.name() else { continue };
+		// `origin/HEAD` is a pointer, not a branch to offer.
+		if let Some((remote, name)) = full.split_once('/').filter(|(_, n)| *n != "HEAD") {
+			remotes.entry(remote.to_string()).or_default().push(name.to_string());
+		}
+	}
+	refs.remotes = remotes
+		.into_iter()
+		.map(|(remote, branches)| GitRemoteBranches { remote, branches })
+		.collect();
+
+	if let Ok(tags) = repo.tag_names(None) {
+		refs.tags = tags.iter().filter_map(|t| t.ok().flatten().map(str::to_string)).collect();
+	}
+	let mut stashes = Vec::new();
+	repo.stash_foreach(|index, message, _| {
+		stashes.push(GitStash { index, message: message.to_string() });
+		true
+	})
+	.map_err(git_err)?;
+	refs.stashes = stashes;
+	Ok(refs)
+}
+
+/// Whether a merge, rebase, cherry-pick or revert is underway, and which files
+/// still conflict (F35). Not a repository reads as `none`.
+pub fn repo_state(project_path: &str) -> AppResult<GitRepoState> {
+	let none = GitRepoState { op: GitRepoOp::None, conflicted: Vec::new(), theirs: None };
+	let Some(mut repo) = discover(project_path) else {
+		return Ok(none);
+	};
+	use git2::RepositoryState as S;
+	let op = match repo.state() {
+		S::Merge => GitRepoOp::Merge,
+		S::Rebase | S::RebaseInteractive | S::RebaseMerge => GitRepoOp::Rebase,
+		S::CherryPick | S::CherryPickSequence => GitRepoOp::CherryPick,
+		S::Revert | S::RevertSequence => GitRepoOp::Revert,
+		_ => GitRepoOp::None,
+	};
+
+	let workdir = repo.workdir().map(workdir_path);
+	let mut index = repo.index().map_err(git_err)?;
+	// The CLI may have written the index since libgit2 cached it.
+	index.read(true).map_err(git_err)?;
+	let mut conflicted = Vec::new();
+	if let Some(workdir) = &workdir {
+		for conflict in index.conflicts().map_err(git_err)?.flatten() {
+			let entry = conflict.our.or(conflict.their).or(conflict.ancestor);
+			if let Some(entry) = entry {
+				let rel = String::from_utf8_lossy(&entry.path).into_owned();
+				conflicted.push(workdir.join(rel).to_string_lossy().into_owned());
+			}
+		}
+	}
+	conflicted.sort();
+	conflicted.dedup();
+
+	let theirs = match op {
+		GitRepoOp::Merge => {
+			let mut first = None;
+			repo.mergehead_foreach(|oid| {
+				first.get_or_insert(*oid);
+				true
+			})
+			.map_err(git_err)?;
+			first.map(|oid| oid.to_string())
+		}
+		GitRepoOp::Rebase => ["rebase-merge", "rebase-apply"].iter().find_map(|dir| {
+			let text = std::fs::read_to_string(repo.path().join(dir).join("onto")).ok()?;
+			Some(text.trim().to_string()).filter(|t| !t.is_empty())
+		}),
+		_ => None,
+	};
+	Ok(GitRepoState { op, conflicted, theirs })
+}
+
+/// One file's unified diff text: index to working tree, or HEAD to index when
+/// `staged` (F35). `path` is absolute, as for [`blob`]; a file with no change on
+/// that side gives an empty string.
+pub fn file_patch(project_path: &str, path: &str, staged: bool) -> AppResult<String> {
+	let Some(repo) = discover(project_path) else {
+		return Ok(String::new());
+	};
+	let Some(workdir) = repo.workdir().map(workdir_path) else {
+		return Ok(String::new());
+	};
+	let Ok(rel) = canonical(path).strip_prefix(&workdir).map(Path::to_path_buf) else {
+		return Ok(String::new());
+	};
+	let mut opts = DiffOptions::new();
+	opts.pathspec(rel.to_string_lossy().replace('\\', "/"))
+		.include_untracked(true)
+		.show_untracked_content(true);
+	let diff = if staged {
+		let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+		repo.diff_tree_to_index(head.as_ref(), None, Some(&mut opts))
+	} else {
+		repo.diff_index_to_workdir(None, Some(&mut opts))
+	}
+	.map_err(git_err)?;
+	if diff.deltas().len() == 0 {
+		return Ok(String::new());
+	}
+	let Some(mut patch) = Patch::from_diff(&diff, 0).map_err(git_err)? else {
+		return Ok(String::new());
+	};
+	let buf = patch.to_buf().map_err(git_err)?;
+	Ok(buf.as_str().unwrap_or_default().to_string())
 }
 
 /// The paths in [`worktrees`], for callers that only need the scope.
@@ -2329,5 +2479,98 @@ mod tests {
 		);
 		assert_eq!(relative_from(base, Path::new("/repo")), "../..");
 		assert_eq!(relative_from(base, base), ".");
+	}
+
+	fn current_branch(repo: &Repository) -> String {
+		repo.head().unwrap().shorthand().unwrap().to_string()
+	}
+
+	#[test]
+	fn refs_lists_current_branch_with_ahead_count() {
+		let (dir, repo) = repo_with_commit();
+		let name = current_branch(&repo);
+		let tip = repo.head().unwrap().target().unwrap();
+		repo.remote("origin", "https://example.invalid/x.git").unwrap();
+		repo.reference(&format!("refs/remotes/origin/{name}"), tip, true, "test").unwrap();
+		repo.find_branch(&name, BranchType::Local)
+			.unwrap()
+			.set_upstream(Some(&format!("origin/{name}")))
+			.unwrap();
+		write(dir.path(), "tracked.txt", "one\ntwo\nthree\nfour\n");
+		commit_all(&repo, "local only");
+
+		let refs = refs(&root(&dir)).unwrap();
+		assert_eq!(refs.head.as_deref(), Some(name.as_str()));
+		let branch = refs.local.iter().find(|b| b.current).unwrap();
+		assert_eq!((branch.ahead, branch.behind), (1, 0));
+		assert_eq!(branch.upstream.as_deref(), Some(format!("origin/{name}").as_str()));
+		assert_eq!(refs.remotes[0].remote, "origin");
+		assert_eq!(refs.remotes[0].branches, vec![name]);
+	}
+
+	#[test]
+	fn detached_head_has_no_branch() {
+		let (dir, repo) = repo_with_commit();
+		let tip = repo.head().unwrap().target().unwrap();
+		repo.set_head_detached(tip).unwrap();
+
+		let refs = refs(&root(&dir)).unwrap();
+		assert_eq!(refs.head, None);
+		assert_eq!(refs.head_sha.as_deref(), Some(tip.to_string().as_str()));
+	}
+
+	#[test]
+	fn repo_without_commits_has_empty_refs() {
+		let dir = tempdir().unwrap();
+		Repository::init(dir.path()).unwrap();
+
+		assert_eq!(refs(&root(&dir)).unwrap(), GitRefs::default());
+		let not_a_repo = tempdir().unwrap();
+		assert_eq!(refs(&root(&not_a_repo)).unwrap(), GitRefs::default());
+		assert_eq!(repo_state(&root(&dir)).unwrap().op, GitRepoOp::None);
+	}
+
+	#[test]
+	fn repo_state_reports_conflicted_files() {
+		let (dir, repo) = repo_with_commit();
+		let name = current_branch(&repo);
+		let base = repo.head().unwrap().peel_to_commit().unwrap();
+		repo.branch("other", &base, false).unwrap();
+		write(dir.path(), "tracked.txt", "main\ntwo\nthree\n");
+		commit_all(&repo, "main side");
+		repo.set_head("refs/heads/other").unwrap();
+		repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).unwrap();
+		write(dir.path(), "tracked.txt", "other\ntwo\nthree\n");
+		commit_all(&repo, "other side");
+		repo.set_head(&format!("refs/heads/{name}")).unwrap();
+		repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).unwrap();
+
+		let other = repo.find_branch("other", BranchType::Local).unwrap();
+		let annotated = repo.reference_to_annotated_commit(other.get()).unwrap();
+		repo.merge(&[&annotated], None, None).unwrap();
+
+		let state = repo_state(&root(&dir)).unwrap();
+		assert_eq!(state.op, GitRepoOp::Merge);
+		assert_eq!(state.conflicted.len(), 1);
+		assert!(state.conflicted[0].ends_with("tracked.txt"), "{:?}", state.conflicted);
+		assert_eq!(
+			state.theirs.as_deref(),
+			Some(other.get().target().unwrap().to_string().as_str())
+		);
+	}
+
+	#[test]
+	fn file_patch_contains_hunk_header() {
+		let (dir, repo) = repo_with_commit();
+		write(dir.path(), "tracked.txt", "one\nTWO\nthree\n");
+		let abs = dir.path().join("tracked.txt").to_string_lossy().into_owned();
+
+		let unstaged = file_patch(&root(&dir), &abs, false).unwrap();
+		assert!(unstaged.contains("@@ -1,3 +1,3 @@"), "{unstaged}");
+		assert!(unstaged.contains("+TWO"));
+		assert_eq!(file_patch(&root(&dir), &abs, true).unwrap(), "");
+
+		stage(&repo, "tracked.txt");
+		assert!(file_patch(&root(&dir), &abs, true).unwrap().contains("@@ -1,3 +1,3 @@"));
 	}
 }

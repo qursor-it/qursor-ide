@@ -355,3 +355,29 @@ export const CHIP_SHAPE =
 export function chipMaxWidth(textWidthPx: number): number {
 	return Math.round(Math.min(220, Math.max(64, textWidthPx * 0.55)));
 }
+
+/**
+ * How many loaded commits are reachable from `from` but not from `without`:
+ * what a merge brings in (`from` = their tip) or a rebase replays (`from` = our
+ * tip). Walks only the commits it was given, so on a page boundary it is a lower
+ * bound.
+ */
+export function commitsOnlyIn(
+	commits: readonly { sha: string; parents: string[] }[],
+	from: string,
+	without: string,
+): number {
+	const bySha = new Map(commits.map((c) => [c.sha, c]));
+	const reach = (tip: string) => {
+		const seen = new Set<string>();
+		const stack = [tip];
+		for (let sha = stack.pop(); sha; sha = stack.pop()) {
+			if (seen.has(sha) || !bySha.has(sha)) continue;
+			seen.add(sha);
+			stack.push(...(bySha.get(sha)?.parents ?? []));
+		}
+		return seen;
+	};
+	const excluded = reach(without);
+	return [...reach(from)].filter((sha) => !excluded.has(sha)).length;
+}

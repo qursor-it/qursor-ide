@@ -92,6 +92,14 @@ export const queryKeys = {
 	 *  loaded pages stay cached independently, and its own namespace rather than
 	 *  a `gitStatus` variant because the two poll at different cadences. */
 	gitGraph: (projectPath: string, page: number) => ['git-graph', projectPath, page] as const,
+	/** Branches, remotes, tags and stashes for the Git view (F35). Own namespace:
+	 *  it is re-read after every write, unlike the 30s graph poll. */
+	gitRefs: (projectPath: string) => ['git-refs', projectPath] as const,
+	/** In-progress merge/rebase and its conflicted files (F35). */
+	gitRepoState: (projectPath: string) => ['git-repo-state', projectPath] as const,
+	/** One file's diff text for hunk staging (F35). */
+	gitFilePatch: (projectPath: string, path: string, staged: boolean) =>
+		['git-file-patch', projectPath, path, staged] as const,
 	/** One commit's detail, for the pane below the graph. */
 	gitCommit: (projectPath: string, sha: string) => ['git-commit', projectPath, sha] as const,
 	/** One setting Rust reads (F11). Keyed by the setting so a second key does

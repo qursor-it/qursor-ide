@@ -1,0 +1,156 @@
+import { CommitDetail } from '@components/graph/CommitDetail';
+import { CommitRow } from '@components/graph/CommitRow';
+import { PanelEmpty } from '@components/layout/PanelEmpty';
+import { PanelResizer } from '@components/layout/PanelResizer';
+import {
+	Button,
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from '@factorai/ui';
+import { useGitHistory } from '@hooks/useGitHistory';
+import { lanePitch, railWidth, ROW_PAD_LEFT } from '@lib/gitGraph';
+import { clampDetailHeight, usePanelStore } from '@store/panelStore';
+import { useCallback, useState } from 'react';
+import { useQuickAgent } from './useQuickAgent';
+
+/** The width the rail and ref chips are laid out for; the table is wider than
+ *  the panel the graph was designed in, but its rows are still one line. */
+const LAYOUT_WIDTH = 600;
+
+/**
+ * The F18 graph at full width, with the selected commit below it (F35). Reuses
+ * `CommitRow` (with its author, date and sha columns on) and `CommitDetail`.
+ */
+export function GitHistory({ dir }: { dir: string }) {
+	const { commits, laneCount, graph, isPending, hasMore, isLoadingMore, loadMore } =
+		useGitHistory(dir);
+	const detailHeight = usePanelStore((s) => s.detailHeight);
+	const setDetailHeight = usePanelStore((s) => s.setDetailHeight);
+	const [selected, select] = useState<string | null>(null);
+	const quick = useQuickAgent(dir);
+	// The row the context menu was opened on, found from the event target.
+	const [menuSha, setMenuSha] = useState<string | null>(null);
+	const [carded, setCarded] = useState<string | null>(null);
+	const onCardOpen = useCallback((sha: string, open: boolean) => {
+		setCarded((current) => (open ? sha : current === sha ? null : current));
+	}, []);
+	const onSelect = useCallback((sha: string) => select(sha), []);
+
+	if (isPending) return <PanelEmpty>Loading…</PanelEmpty>;
+	if (!graph?.repoRoot) return <PanelEmpty>Not a git repository.</PanelEmpty>;
+	if (commits.length === 0) return <PanelEmpty>No commits yet.</PanelEmpty>;
+
+	const pitch = lanePitch(laneCount, LAYOUT_WIDTH);
+	const rail = railWidth(laneCount, pitch);
+	const textWidth = Math.max(0, LAYOUT_WIDTH - rail - ROW_PAD_LEFT - 24);
+
+	return (
+		<div data-testid="git-history" className="flex min-h-0 flex-1 flex-col">
+			<div className="min-h-0 flex-1 overflow-auto py-1">
+				<ContextMenu>
+					<ContextMenuTrigger asChild disabled={!quick.enabled}>
+						<ul
+							aria-label="Commits"
+							onContextMenu={(e) =>
+								setMenuSha(
+									(e.target as HTMLElement).closest<HTMLElement>('[data-sha]')?.dataset.sha ?? null,
+								)
+							}
+						>
+							{commits.map((commit, index) => (
+								<CommitRow
+									key={commit.sha}
+									commit={commit}
+									pitch={pitch}
+									railWidth={rail}
+									textWidth={textWidth}
+									selected={commit.sha === selected}
+									tabbable={selected ? commit.sha === selected : index === 0}
+									remoteHost={graph.remoteHost}
+									dirty={false}
+									cardOpen={commit.sha === carded}
+									onCardOpen={onCardOpen}
+									onSelect={onSelect}
+									columns
+								/>
+							))}
+						</ul>
+					</ContextMenuTrigger>
+					<ContextMenuContent>
+						{menuSha && (
+							<>
+								<ContextMenuItem
+									disabled={quick.busy}
+									onSelect={() =>
+										void quick.show('Explain this commit', { kind: 'explainCommit', sha: menuSha })
+									}
+								>
+									✦ Explain this commit
+								</ContextMenuItem>
+								<ContextMenuItem
+									disabled={quick.busy}
+									onSelect={() =>
+										void quick.show('Find bugs introduced here', { kind: 'findBugs', sha: menuSha })
+									}
+								>
+									✦ Find bugs introduced here
+								</ContextMenuItem>
+								<ContextMenuItem
+									disabled={quick.busy}
+									onSelect={() =>
+										void quick.show('Write a release note', { kind: 'releaseNote', sha: menuSha })
+									}
+								>
+									✦ Write a release note
+								</ContextMenuItem>
+								<ContextMenuSeparator />
+								<ContextMenuItem
+									disabled={quick.busy}
+									onSelect={() =>
+										void quick.show(
+											'Undo this commit safely',
+											{ kind: 'undoCommit', sha: menuSha },
+											{
+												request: `Undo commit ${menuSha} safely, without rewriting shared history.`,
+											},
+										)
+									}
+								>
+									✦ Undo this commit safely
+								</ContextMenuItem>
+							</>
+						)}
+					</ContextMenuContent>
+				</ContextMenu>
+				{hasMore && (
+					<div className="px-3 py-2">
+						<Button variant="secondary" size="sm" disabled={isLoadingMore} onClick={loadMore}>
+							{isLoadingMore ? 'Loading…' : 'Load more'}
+						</Button>
+					</div>
+				)}
+			</div>
+			{selected && (
+				<>
+					<PanelResizer
+						size={detailHeight}
+						onSize={setDetailHeight}
+						edge="top"
+						label="Resize commit detail"
+						clamp={clampDetailHeight}
+					/>
+					<div
+						data-testid="commit-detail"
+						style={{ height: detailHeight }}
+						className="shrink-0 overflow-hidden"
+					>
+						<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} />
+					</div>
+				</>
+			)}
+		</div>
+	);
+}
