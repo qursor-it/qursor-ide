@@ -98,13 +98,27 @@ pub fn validate_proposed(argv: &[String]) -> Result<(), String> {
 	}) {
 		return Err(format!("{o} runs a program and is not allowed"));
 	}
+	if let Some(o) = rest.iter().find(|a| a.starts_with("--output")) {
+		return Err(format!("{o} writes a file and is not allowed"));
+	}
 	let has = |names: &[&str]| rest.iter().any(|a| names.contains(&a.as_str()));
-	if sub == "rebase" && has(&["-i", "--interactive"]) {
+	// `-fu` is `-f -u`: a bundle of short flags counts as each of its letters.
+	let has_short = |letter: char| {
+		rest.iter().any(|a| {
+			a.len() > 1 && a.starts_with('-') && !a.starts_with("--") && a.contains(letter)
+		})
+	};
+	if sub == "rebase" && (has(&["--interactive"]) || has_short('i')) {
 		return Err("interactive rebase is not allowed".into());
 	}
+	// `+ref` force-pushes and `:ref` deletes, without any flag.
 	if sub == "push"
-		&& (has(FORCE_OPTIONS) || rest.iter().any(|a| a.starts_with("--force-with-lease=")))
-	{
+		&& (has(FORCE_OPTIONS)
+			|| has_short('f')
+			|| has_short('d')
+			|| rest.iter().any(|a| {
+				a.starts_with("--force-with-lease=") || a.starts_with('+') || a.contains(":")
+			})) {
 		return Err("force, mirror and delete pushes are not allowed".into());
 	}
 	Ok(())
@@ -155,6 +169,21 @@ mod tests {
 			assert!(check(&format!("git push {flag} origin main")).is_err(), "{flag}");
 		}
 		assert_eq!(check("git push origin main"), Ok(()));
+	}
+
+	#[test]
+	fn refuses_force_and_delete_without_flags() {
+		for line in [
+			"git push origin +main",
+			"git push origin :old",
+			"git push -fu origin main",
+			"git push -d origin x",
+			"git rebase -ir main",
+			"git log --output=/tmp/x",
+		] {
+			assert!(check(line).is_err(), "{line}");
+		}
+		assert_eq!(check("git push -u origin main"), Ok(()));
 	}
 
 	#[test]
