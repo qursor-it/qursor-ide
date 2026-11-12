@@ -2,6 +2,7 @@ use crate::commands::off_main;
 use crate::error::AppResult;
 use crate::models::{FileContents, GitCommitDetail, GitGraph, GitRev, GitStatus, GitWorktree};
 use crate::services::git;
+use crate::services::git_ops::{self, GitOp, GitOpResult};
 
 /// Repository state for the Changes tab and the tree's decorations (F13).
 ///
@@ -75,4 +76,13 @@ pub async fn git_blob_at(
 #[tauri::command]
 pub async fn git_worktrees(project_path: String) -> AppResult<Vec<GitWorktree>> {
 	off_main(move || git::worktrees(&project_path)).await
+}
+
+/// One Git-mode write, run through the system `git` (F35, ADR-0089).
+///
+/// A non-zero exit is `Ok` with `ok: false` (a conflict is a state to show);
+/// a missing `git`, a spawn failure or a timeout is an error.
+#[tauri::command]
+pub async fn git_op(project_path: String, op: GitOp) -> AppResult<GitOpResult> {
+	git_ops::run_op(&project_path, op).await
 }

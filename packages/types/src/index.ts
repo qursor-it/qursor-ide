@@ -807,6 +807,46 @@ export interface GitWorktree {
 	exists: boolean;
 }
 
+/** One Git-mode write (F35, ADR-0089). Mirrors Rust `GitOp`; every write runs
+ *  the system `git`, never `git2`. */
+export type GitOp =
+	| { kind: 'stage'; paths: string[] }
+	| { kind: 'unstage'; paths: string[] }
+	| { kind: 'discard'; paths: string[] }
+	| { kind: 'applyPatch'; patch: string; cached: boolean; reverse: boolean }
+	/** An empty `message` concludes a merge with git's prepared message. */
+	| { kind: 'commit'; message: string; amend: boolean }
+	| { kind: 'checkout'; branch: string }
+	| { kind: 'createBranch'; name: string; at: string; checkout: boolean }
+	| { kind: 'renameBranch'; from: string; to: string }
+	| { kind: 'deleteBranch'; name: string }
+	| { kind: 'merge'; branch: string }
+	| { kind: 'rebase'; onto: string }
+	| { kind: 'mergeAbort' }
+	| { kind: 'rebaseAbort' }
+	| { kind: 'rebaseContinue' }
+	/** Only for "Undo rebase"; needs the full 40-character SHA. */
+	| { kind: 'resetHardTo'; sha: string }
+	| { kind: 'checkoutSide'; path: string; theirs: boolean }
+	| { kind: 'fetch' }
+	| { kind: 'pull' }
+	| { kind: 'push'; setUpstream: boolean }
+	| { kind: 'stashPush'; message: string | null }
+	| { kind: 'stashApply'; index: number }
+	| { kind: 'stashPop'; index: number }
+	| { kind: 'stashDrop'; index: number };
+
+/** What a write ran and said. Mirrors Rust `GitOpResult`. A non-zero exit
+ *  resolves with `ok: false` (a conflict is a state, not an error); a missing
+ *  `git`, a spawn failure or a timeout rejects. */
+export interface GitOpResult {
+	/** The command line as run, without the `-C <project>` the app adds. */
+	command: string;
+	ok: boolean;
+	stdout: string;
+	stderr: string;
+}
+
 export interface GitStatus {
 	/** Working directory of the repository, null when the project isn't in one.
 	 *  That is a success, not an error: "not versioned" is something the panel

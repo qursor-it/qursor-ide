@@ -9,6 +9,8 @@ import type {
 	GhStatus,
 	GitCommitDetail,
 	GitGraph,
+	GitOp,
+	GitOpResult,
 	GitRev,
 	GitStatus,
 	GitWorktree,
@@ -297,6 +299,11 @@ export const cmd = {
 	 *  Separate from `gitBlob` rather than widening `GitRev` to carry a SHA. */
 	gitBlobAt: (path: string, commit: string, maxBytes?: number | null) =>
 		invoke<FileContents | null>('git_blob_at', { path, commit, maxBytes }),
+
+	/** One Git-mode write through the system `git` (F35, ADR-0089). Resolves
+	 *  with `ok: false` on a non-zero exit (a conflict is a state); rejects when
+	 *  `git` is missing or does not finish. Re-read state after it settles. */
+	gitOp: (projectPath: string, op: GitOp) => invoke<GitOpResult>('git_op', { projectPath, op }),
 
 	/** Whether this project can show pull requests, and if not, why (F31,
 	 *  ADR-0077). **Never rejects**: a missing `gh`, no login or no `origin` is a
@@ -1651,6 +1658,11 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			// Same store as `git_blob`, keyed by SHA instead of `head`/`index`.
 			const key = `${String(args?.commit ?? '')}:${String(args?.path ?? '')}`;
 			return (fx?.gitBlobs?.[key] ?? null) as unknown as T;
+		}
+		case 'git_op': {
+			// The call is recorded above with its arguments; a spec asserts on that.
+			const kind = String((args?.op as GitOp | undefined)?.kind ?? '');
+			return { command: `git ${kind}`, ok: true, stdout: '', stderr: '' } as unknown as T;
 		}
 		case 'gh_status': {
 			// No `gh` in a browser: a fixture declares the answer per project, and

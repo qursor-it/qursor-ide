@@ -516,6 +516,7 @@ pub fn run() {
 			commands::git::git_graph,
 			commands::git::git_commit,
 			commands::git::git_blob_at,
+			commands::git::git_op,
 			commands::gh::gh_status,
 			commands::gh::gh_pr_list,
 			commands::gh::gh_pr_detail,

@@ -6,6 +6,8 @@ pub mod file_watch;
 pub mod files;
 pub mod gh;
 pub mod git;
+pub mod git_cli;
+pub mod git_ops;
 pub mod ide;
 pub mod indexer;
 pub mod intelligence;
