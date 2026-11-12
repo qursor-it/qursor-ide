@@ -134,6 +134,9 @@ interface CommitRowProps {
 	 *  referentially stable and `memo` below can do its job across 300 rows. */
 	onCardOpen: (sha: string, open: boolean) => void;
 	onSelect: (sha: string) => void;
+	/** Git mode's table: author, date and short sha as fixed right-aligned
+	 *  columns after the subject (F35). The panel's Graph tab leaves it off. */
+	columns?: boolean;
 }
 
 /**
@@ -155,6 +158,7 @@ export const CommitRow = memo(function CommitRow({
 	cardOpen,
 	onCardOpen,
 	onSelect,
+	columns = false,
 }: CommitRowProps) {
 	const chips = foldRefs(commit.refs);
 	const { shown, hiddenCount } = fitRefs(chips, textWidth);
@@ -228,6 +232,19 @@ export const CommitRow = memo(function CommitRow({
 						>
 							{commit.subject}
 						</span>
+						{columns && (
+							<>
+								<span className="w-32 shrink-0 truncate text-right text-muted-foreground text-xs">
+									{commit.authorName}
+								</span>
+								<span className="w-24 shrink-0 truncate text-right text-muted-foreground text-xs">
+									{formatRelative(commit.authorTime)}
+								</span>
+								<span className="w-16 shrink-0 text-right font-mono text-muted-foreground text-xs">
+									{commit.shortSha}
+								</span>
+							</>
+						)}
 					</button>
 				</HoverCardTrigger>
 				{/* **Beside the row, not under it — back to `side="left"` on 2026-08-18.**

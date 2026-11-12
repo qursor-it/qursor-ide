@@ -14,8 +14,7 @@ const LAYOUT_WIDTH = 600;
 
 /**
  * The F18 graph at full width, with the selected commit below it (F35). Reuses
- * `CommitRow` and `CommitDetail`; author, date and sha are on the row's hover
- * card rather than in columns of their own.
+ * `CommitRow` (with its author, date and sha columns on) and `CommitDetail`.
  */
 export function GitHistory({ dir }: { dir: string }) {
 	const { commits, laneCount, graph, isPending, hasMore, isLoadingMore, loadMore } =
@@ -55,6 +54,7 @@ export function GitHistory({ dir }: { dir: string }) {
 							cardOpen={commit.sha === carded}
 							onCardOpen={onCardOpen}
 							onSelect={onSelect}
+							columns
 						/>
 					))}
 				</ul>
