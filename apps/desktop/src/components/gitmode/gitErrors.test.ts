@@ -81,6 +81,14 @@ describe('explainGitError', () => {
 			expect(explainGitError({ kind: 'merge', branch: 'x' }, fail('', s))).toBeNull();
 	});
 
+	it('a_conflicted_stash_pop_still_opens_a_dialog', () => {
+		const info = explainGitError(
+			{ kind: 'stashPop', index: 0 },
+			fail('', 'CONFLICT (content): Merge conflict in a.ts'),
+		);
+		expect(info).not.toBeNull();
+	});
+
 	it('ok_results_never_open_a_dialog', () => {
 		expect(
 			explainGitError(push, { command: 'git push', ok: true, stdout: '', stderr: '' }),

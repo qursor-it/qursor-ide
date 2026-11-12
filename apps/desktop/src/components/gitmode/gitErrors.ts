@@ -28,7 +28,10 @@ function opLabel(kind: GitOp['kind']): string {
 export function explainGitError(op: GitOp, result: GitOpResult): GitErrorInfo | null {
 	if (result.ok) return null;
 	const text = `${result.stderr}\n${result.stdout}`.toLowerCase();
-	if (has(text, ['conflict', 'automatic merge failed', 'could not apply'])) return null;
+	// Only these leave a merge or rebase in progress, which the banner shows; a
+	// conflicted stash pop has no banner, so it gets the dialog.
+	const banner = ['merge', 'rebase', 'rebaseContinue', 'pull'].includes(op.kind);
+	if (banner && has(text, ['conflict', 'automatic merge failed', 'could not apply'])) return null;
 	const copy: GitErrorAction = { kind: 'copy' };
 	if (has(text, ['[rejected]', 'non-fast-forward', 'fetch first', 'updates were rejected']))
 		return {
