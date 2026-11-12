@@ -419,7 +419,7 @@ export function SessionTabs() {
 					// `overflow-x-auto` with the bar hidden: at 42px tall a scrollbar
 					// would eat a third of the strip. The wheel handler below is what
 					// makes it reachable without one.
-					className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1"
+					className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5"
 					onWheel={(e) => {
 						// A vertical wheel over a horizontal strip does nothing by default,
 						// which reads as "these tabs are stuck".

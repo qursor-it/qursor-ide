@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 import { ImportProjects } from '@components/dialog/ImportProjects';
 import { FileTreePanel } from '@components/files/FileTreePanel';
+import { GitModeView } from '@components/gitmode/GitModeView';
 import { ShellDock } from '@components/terminal/ShellDock';
 import { ViewerPane } from '@components/viewer/ViewerPane';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
@@ -17,6 +18,7 @@ import {
 	resolveViewerHost,
 	type ViewerHost,
 } from '@lib/viewerLayout';
+import { useGitModeStore } from '@store/gitModeStore';
 import { useAddProjectStore } from '@store/addProjectStore';
 import { usePanelStore } from '@store/panelStore';
 import {
@@ -58,6 +60,7 @@ export function AppShell({ children }: AppShellProps) {
 	// it now fits. Same shape as `effectivePanelWidth` two lines down.
 	const sidebarWidth = effectiveSidebarWidth(storedSidebarWidth, sidebarCollapsed);
 	const panelOpen = usePanelStore((s) => s.open);
+	const gitMode = useGitModeStore((s) => s.mode === 'git');
 	const panelWidth = usePanelStore((s) => s.width);
 	const viewerWidth = usePanelStore((s) => s.viewerWidth);
 	const setViewerWidth = usePanelStore((s) => s.setViewerWidth);
@@ -217,7 +220,9 @@ export function AppShell({ children }: AppShellProps) {
 			}`}
 		>
 			<TopBar />
-			<div ref={row} className="flex min-h-0 flex-1">
+			{/* Git mode hides this body rather than unmounting it: the terminals in
+			    it must keep running (F35). */}
+			<div ref={row} className={gitMode ? 'hidden' : 'flex min-h-0 flex-1'}>
 				<aside
 					data-testid="sidebar"
 					style={{ width: sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : storedSidebarWidth }}
@@ -284,6 +289,7 @@ export function AppShell({ children }: AppShellProps) {
 				{/* Renders nothing when collapsed; follows the route's project. */}
 				<FileTreePanel />
 			</div>
+			{gitMode && <GitModeView />}
 			{/* Plan limits and the session's cost (usage monitor): full width, under
 			    every column, so it belongs to the window rather than to a panel.
 			    Renders nothing when the user has turned it off. */}
