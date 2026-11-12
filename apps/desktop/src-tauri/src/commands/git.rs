@@ -1,6 +1,8 @@
 use crate::commands::off_main;
 use crate::error::{AppError, AppResult};
-use crate::models::{FileContents, GitCommitDetail, GitGraph, GitRev, GitStatus, GitWorktree};
+use crate::models::{
+	FileContents, GitCommitDetail, GitGraph, GitRefs, GitRepoState, GitRev, GitStatus, GitWorktree,
+};
 use crate::services::git;
 use crate::services::git_ops::{self, GitOp, GitOpResult};
 use crate::services::git_proposed;
@@ -120,4 +122,23 @@ pub async fn git_run_proposed(
 		}
 	}
 	Ok(results)
+}
+
+/// Branches, remotes, tags and stashes for the Git view's sidebar (F35).
+#[tauri::command]
+pub async fn git_refs(project_path: String) -> AppResult<GitRefs> {
+	off_main(move || git::refs(&project_path)).await
+}
+
+/// Merge / rebase / cherry-pick / revert in progress, and the conflicted files.
+#[tauri::command]
+pub async fn git_repo_state(project_path: String) -> AppResult<GitRepoState> {
+	off_main(move || git::repo_state(&project_path)).await
+}
+
+/// Unified diff text of one file (absolute `path`), staged or not, for hunk
+/// staging.
+#[tauri::command]
+pub async fn git_file_patch(project_path: String, path: String, staged: bool) -> AppResult<String> {
+	off_main(move || git::file_patch(&project_path, &path, staged)).await
 }

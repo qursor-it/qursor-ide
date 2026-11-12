@@ -19,6 +19,8 @@ import type {
 	GitChange,
 	GitCommitDetail,
 	GitGraph,
+	GitRefs,
+	GitRepoState,
 	GitGraphCommit,
 	GitRef,
 	GitStatus,
@@ -120,6 +122,11 @@ export interface TestFixture {
 	 *  project itself — the shape almost every project has, so a spec only
 	 *  declares this when worktrees are what it is testing. */
 	gitWorktrees?: Record<string, GitWorktree[]>;
+	/** Branches and tags keyed by project path (F35 Git view). Absent means a
+	 *  repository without commits. */
+	gitRefs?: Record<string, GitRefs>;
+	/** Merge/rebase state keyed by project path (F35). Absent means `none`. */
+	gitRepoStates?: Record<string, GitRepoState>;
 	gitGraphs?: Record<string, GitGraph>;
 	gitCommits?: Record<string, GitCommitDetail>;
 	/** Version to report as downloaded and staged, for the F14 update badge. */

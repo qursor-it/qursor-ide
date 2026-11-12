@@ -563,6 +563,72 @@ pub struct GitChange {
 	pub is_binary: bool,
 }
 
+/// One local branch (F35).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranch {
+	pub name: String,
+	/// Full SHA of the branch tip.
+	pub sha: String,
+	/// The remote-tracking branch it follows (`origin/main`), if any.
+	pub upstream: Option<String>,
+	pub ahead: u32,
+	pub behind: u32,
+	pub current: bool,
+}
+
+/// The branches of one remote, names without the `<remote>/` prefix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRemoteBranches {
+	pub remote: String,
+	pub branches: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStash {
+	pub index: usize,
+	pub message: String,
+}
+
+/// Everything the Git view's sidebar lists (F35). A project outside a
+/// repository, or a repository without commits, is a success with empty lists.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRefs {
+	/// Branch name HEAD is on; `None` when detached or unborn.
+	pub head: Option<String>,
+	pub head_sha: Option<String>,
+	pub local: Vec<GitBranch>,
+	pub remotes: Vec<GitRemoteBranches>,
+	pub tags: Vec<String>,
+	pub stashes: Vec<GitStash>,
+}
+
+/// The operation a repository is in the middle of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitRepoOp {
+	None,
+	Merge,
+	Rebase,
+	CherryPick,
+	Revert,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRepoState {
+	pub op: GitRepoOp,
+	/// Absolute paths of the files with unresolved conflicts, like
+	/// `GitChange::path`.
+	pub conflicted: Vec<String>,
+	/// Full SHA of `MERGE_HEAD` during a merge, or of the commit being rebased
+	/// onto; `None` otherwise.
+	pub theirs: Option<String>,
+}
+
 /// The repository's state for one project, or the absence of a repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

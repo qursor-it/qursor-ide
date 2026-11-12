@@ -847,6 +847,54 @@ export interface GitOpResult {
 	stderr: string;
 }
 
+/** One local branch. Mirrors Rust `GitBranch` (F35). */
+export interface GitBranch {
+	name: string;
+	/** Full SHA of the branch tip. */
+	sha: string;
+	/** The remote-tracking branch it follows, e.g. `origin/main`. */
+	upstream: string | null;
+	ahead: number;
+	behind: number;
+	current: boolean;
+}
+
+/** The branches of one remote, without the `<remote>/` prefix. */
+export interface GitRemoteBranches {
+	remote: string;
+	branches: string[];
+}
+
+export interface GitStash {
+	index: number;
+	message: string;
+}
+
+/** The Git view's sidebar lists. Mirrors Rust `GitRefs`. A project outside a
+ *  repository, or a repository without commits, resolves with empty lists. */
+export interface GitRefs {
+	/** Branch HEAD is on; null when detached or unborn. */
+	head: string | null;
+	headSha: string | null;
+	local: GitBranch[];
+	remotes: GitRemoteBranches[];
+	tags: string[];
+	stashes: GitStash[];
+}
+
+/** What a repository is in the middle of. */
+export type GitRepoOp = 'none' | 'merge' | 'rebase' | 'cherryPick' | 'revert';
+
+/** Mirrors Rust `GitRepoState`. */
+export interface GitRepoState {
+	op: GitRepoOp;
+	/** Absolute paths of files with unresolved conflicts, like `GitChange.path`. */
+	conflicted: string[];
+	/** Full SHA of `MERGE_HEAD` during a merge, or of the commit being rebased
+	 *  onto; null otherwise. */
+	theirs: string | null;
+}
+
 export interface GitStatus {
 	/** Working directory of the repository, null when the project isn't in one.
 	 *  That is a success, not an error: "not versioned" is something the panel
