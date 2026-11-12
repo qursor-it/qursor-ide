@@ -1,6 +1,9 @@
 import type { GitOp, GitOpResult } from '@factorai/types';
+import { isWithin } from '@lib/paths';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
+import { useGitModeStore } from '@store/gitModeStore';
+import { useTerminalStore } from '@store/terminalStore';
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 import { create } from 'zustand';
@@ -78,10 +81,32 @@ export async function runGitOp(
 			['git-graph', dir],
 			queryKeys.gitRefs(dir),
 			queryKeys.gitRepoState(dir),
+			['git-file-patch', dir],
 		]) {
 			void queryClient.invalidateQueries({ queryKey: key });
 		}
 	}
+}
+
+/** Is a live agent of this project working in `dir`? (F35 "same checkout".) */
+async function agentWorkingIn(dir: string, queryClient: QueryClient): Promise<boolean> {
+	const projectId = useGitModeStore.getState().tabs.find((t) => t.dir === dir)?.projectId;
+	if (!projectId) return false;
+	const working = Object.entries(useTerminalStore.getState().bySession).filter(
+		([, t]) => t.projectId === projectId && t.status === 'working',
+	);
+	if (working.length === 0) return false;
+	const sessions = await queryClient
+		.fetchQuery({
+			queryKey: queryKeys.sessions(projectId),
+			queryFn: () => cmd.listSessions(projectId),
+			staleTime: 5_000,
+		})
+		.catch(() => []);
+	return working.some(([id]) => {
+		const cwd = sessions.find((s) => s.id === id)?.cwd;
+		return cwd != null && isWithin(cwd, dir) && isWithin(dir, cwd);
+	});
 }
 
 export interface UseGitOp {
@@ -96,7 +121,15 @@ export function useGitOp(dir: string): UseGitOp {
 	const [running, setRunning] = useState(false);
 	const last = useGitUi((s) => s.logs[dir] ?? null);
 	const run = useCallback(
-		(op: GitOp, opts?: { confirm?: string }) => runGitOp(dir, op, opts, queryClient, setRunning),
+		async (op: GitOp, opts?: { confirm?: string }) => {
+			// One question, not two: the agent warning leads the op's own.
+			const warn =
+				op.kind !== 'fetch' && (await agentWorkingIn(dir, queryClient))
+					? 'An agent is working in this checkout. Continue?'
+					: null;
+			const confirm = warn ? [warn, opts?.confirm].filter(Boolean).join(' ') : opts?.confirm;
+			return runGitOp(dir, op, { confirm }, queryClient, setRunning);
+		},
 		[dir, queryClient],
 	);
 	return { run, running, last };

@@ -44,4 +44,13 @@ describe('gitModeStore', () => {
 		expect(saved.state.mode).toBe('git');
 		expect(saved.version).toBe(1);
 	});
+
+	it('preRebase_and_origin_are_not_persisted', async () => {
+		const store = await freshStore();
+		store.getState().setPreRebase('/a', 'abc');
+		store.getState().setOrigin('s1', { dir: '/a', title: 't' });
+		const saved = JSON.parse(data.get('factorai.gitmode') ?? '{}');
+		expect(saved.state.preRebase).toBeUndefined();
+		expect(saved.state.origin).toBeUndefined();
+	});
 });

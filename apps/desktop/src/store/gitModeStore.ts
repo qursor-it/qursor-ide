@@ -18,6 +18,12 @@ interface GitModeState {
 	openTab: (projectId: string, dir: string) => void;
 	closeTab: (dir: string) => void;
 	activate: (dir: string) => void;
+	/** HEAD before a rebase, per directory, for "Undo rebase". Memory only. */
+	preRebase: Record<string, string | undefined>;
+	setPreRebase: (dir: string, sha: string | null) => void;
+	/** Sessions started from Git mode, for the origin strip. Memory only. */
+	origin: Record<string, { dir: string; title: string } | undefined>;
+	setOrigin: (sessionId: string, origin: { dir: string; title: string }) => void;
 }
 
 /**
@@ -53,6 +59,11 @@ export const useGitModeStore = create<GitModeState>()(
 					return { tabs, activeDir };
 				}),
 			activate: (dir) => set((s) => (s.tabs.some((t) => t.dir === dir) ? { activeDir: dir } : s)),
+			preRebase: {},
+			setPreRebase: (dir, sha) =>
+				set((s) => ({ preRebase: { ...s.preRebase, [dir]: sha ?? undefined } })),
+			origin: {},
+			setOrigin: (sessionId, origin) => set((s) => ({ origin: { ...s.origin, [sessionId]: origin } })),
 		}),
 		{
 			name: 'factorai.gitmode',

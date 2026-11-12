@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	AVATAR_RADIUS,
 	AVATAR_RING,
+	commitsOnlyIn,
 	fitRefs,
 	foldRefs,
 	LANE_COUNT,
@@ -327,5 +328,21 @@ describe('stitchPages', () => {
 
 	it('handles being asked about no pages at all', () => {
 		expect(stitchPages([])).toEqual({ commits: [], laneCount: 0, hasMore: false, stale: false });
+	});
+});
+
+describe('commitsOnlyIn', () => {
+	// m merges side (s2 -> s1) into main (m1 -> base).
+	const log = [
+		{ sha: 'm', parents: ['m1', 's2'] },
+		{ sha: 'm1', parents: ['base'] },
+		{ sha: 's2', parents: ['s1'] },
+		{ sha: 's1', parents: ['base'] },
+		{ sha: 'base', parents: [] },
+	];
+	it('counts_what_a_branch_has_that_the_other_lacks', () => {
+		expect(commitsOnlyIn(log, 's2', 'm1')).toBe(2);
+		expect(commitsOnlyIn(log, 'm1', 's2')).toBe(1);
+		expect(commitsOnlyIn(log, 'm1', 'm')).toBe(0);
 	});
 });

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { GitActionBar } from './GitActionBar';
 import { GitHistory } from './GitHistory';
 import { type GitSection, GitSidebar } from './GitSidebar';
+import { LocalChanges } from './LocalChanges';
 import { GitConfirmHost, OpLog } from './OpLog';
 
 /** The full-window view of the selected Git tab (specs/05-features.md F35). */
@@ -33,12 +34,7 @@ function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 			<div className="flex min-h-0 flex-1">
 				<GitSidebar dir={dir} projectId={projectId} section={section} onSection={setSection} />
 				<main className="flex min-w-0 flex-1 flex-col">
-					{section === 'history' ? (
-						<GitHistory dir={dir} />
-					) : (
-						// Stage, hunks and commit arrive with the next step.
-						<PanelEmpty>Local changes</PanelEmpty>
-					)}
+					{section === 'history' ? <GitHistory dir={dir} /> : <LocalChanges dir={dir} />}
 				</main>
 			</div>
 			<OpLog dir={dir} />

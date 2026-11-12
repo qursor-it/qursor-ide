@@ -43,6 +43,52 @@ function fixtureWithRefs(extra: Partial<TestFixture> = {}): TestFixture {
 	};
 }
 
+/** `fixtureWithRefs` plus a status with these changes, and the project root. */
+function fixtureWithChanges(
+	changes: { rel: string; group: 'staged' | 'unstaged' }[],
+	extra: Partial<TestFixture> = {},
+): { fx: TestFixture; root: string } {
+	const base = fixtureWithRefs(extra);
+	const root = base.projects?.[0]?.realPath ?? '';
+	return {
+		root,
+		fx: {
+			...base,
+			gitStatuses: {
+				[root]: {
+					repoRoot: root,
+					branch: 'main',
+					head: 'a'.repeat(40),
+					total: changes.length,
+					truncated: false,
+					changes: changes.map((c) => ({
+						path: `${root}/${c.rel}`,
+						relPath: c.rel,
+						group: c.group,
+						kind: 'modified' as const,
+						oldRelPath: null,
+						additions: 1,
+						deletions: 0,
+						isBinary: false,
+					})),
+				},
+			},
+		},
+	};
+}
+
+const gitOps = (page: import('@playwright/test').Page) =>
+	page.evaluate(() =>
+		(window.__FACTORAI_TEST_CALLS__ ?? [])
+			.filter((c) => c.name === 'git_op')
+			.map((c) => (c.args as { op: unknown }).op),
+	);
+const callCount = (page: import('@playwright/test').Page, name: string) =>
+	page.evaluate(
+		(n) => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === n).length,
+		name,
+	);
+
 test.describe('git-mode', () => {
 	test('@smoke switching modes hides the session strip and keeps the terminal', async ({
 		page,
@@ -110,5 +156,46 @@ test.describe('git-mode', () => {
 		await expect(page.getByTestId('op-log')).toContainText('git not found on PATH');
 		// History still works.
 		await expect(page.getByTestId('commit-row')).toHaveCount(5);
+	});
+});
+
+test.describe('git-mode local changes', () => {
+	test('@smoke staging a file records a stage op', async ({ page }) => {
+		const { fx, root } = fixtureWithChanges([{ rel: 'a.ts', group: 'unstaged' }]);
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('git-local-changes').click();
+		await page
+			.getByTestId('unstaged-list')
+			.getByRole('button', { name: 'Stage', exact: true })
+			.click();
+		await expect.poll(() => gitOps(page)).toEqual([{ kind: 'stage', paths: [`${root}/a.ts`] }]);
+	});
+
+	test('@smoke committing records the message', async ({ page }) => {
+		const { fx } = fixtureWithChanges([{ rel: 'a.ts', group: 'staged' }]);
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('git-local-changes').click();
+		await page.getByLabel('Commit subject').fill('fix: x');
+		await page.getByRole('button', { name: 'Commit on main' }).click();
+		await expect
+			.poll(() => gitOps(page))
+			.toEqual([{ kind: 'commit', message: 'fix: x', amend: false }]);
+	});
+
+	test('@smoke a cancelled discard records nothing', async ({ page }) => {
+		const { fx } = fixtureWithChanges([{ rel: 'a.ts', group: 'unstaged' }]);
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('git-local-changes').click();
+		await page.getByRole('button', { name: 'Discard' }).click();
+		await expect(page.getByText('Are you sure?')).toBeVisible();
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		await expect(page.getByText('Are you sure?')).toBeHidden();
+		expect(await callCount(page, 'git_op')).toBe(0);
 	});
 });
