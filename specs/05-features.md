@@ -8288,3 +8288,202 @@ a reset drops its `· resets in …`) / `Codex 5h 18% · wk 16%` in the tooltip.
 macOS and Linux taskbar or menu-bar widgets, secondary monitors' taskbars,
 anything while factorai is closed, notifications or sounds near a limit, and
 daily or per-block cost reports.
+
+## F35 — Git mode: a full-window git client per project, with agents for the hard parts
+
+**Specified 2026-11-12, not built yet; decisions in
+[ADR-0089](adr/0089-git-mode-writes-through-the-git-cli.md).** Mockups from the
+design conversation are attached to the PR that adds this section.
+
+**Why.** The user pays for a desktop git client and keeps it open beside the
+app to do what F18 deliberately left out: stage, commit, switch branches,
+merge, rebase, push. F18's premise was that the agent in the terminal does all
+of that better; in practice the routine operations are faster with a button and
+the hard ones (conflicts) are where the agent earns its place. F35 is that
+split: plain git for the routine, a spawned agent session for the judgement
+calls. Success is the user no longer opening the other client.
+
+**What does not change.** Sessions, the right-hand panel and its
+`Files | Changes | Graph | PRs` tabs (F13, F18, F31) stay exactly as they are.
+Git mode is added beside them, not instead of them.
+
+### Placement
+
+**The top bar becomes two rows.**
+
+- **Row 1, the tools row** (`h-10.5`, the bar's current height): brand and DEV
+  badge, the **`Sessions | Git` switch**, then search, settings and the panel
+  toggle on the right. Nothing in it belongs to one project; the switch changes
+  the mode of the whole window.
+- **Row 2, the work row** (`h-9`): in Sessions mode, **the session tab strip
+  exactly as it is today** — tabs of every open project, grouped under each
+  project's coloured chip (F16, ADR-0080), dragging, folding and all. It only
+  moves down one row. In Git mode the same strip shows **Git tabs** instead,
+  grouped under the same project chips: one tab for the project's checkout
+  (labelled with its branch and ahead/behind) and one per worktree opened from
+  the sidebar's Worktrees list. `+` opens the Git tab of another project.
+
+Git mode replaces the session area and the right-hand panel with the
+full-window view of the selected Git tab; Sessions brings them back, untouched
+and still running. Each mode remembers its own selected tab. While a merge or
+rebase is in progress the `Git` half of the switch carries a count of the files
+still in conflict, and in Sessions mode it carries the count of sessions
+working, so each mode is visible from the other.
+
+Each Git tab is bound to its directory through `Repository::discover()`, as F13
+and F18 are. `DESIGN.md`'s chrome heights change with this (one more row,
+`h-9`).
+
+### Layout
+
+Three zones, the layout of desktop git clients the user already knows:
+
+- **Action bar** — Fetch, Pull, Push (with the count of commits ahead), Branch,
+  Merge, Rebase, Stash, then the `✦` request field (§ Agents) and a search
+  field (message, author, sha).
+- **Sidebar** — `Local changes` (with the count), `All commits`, then local
+  branches (current one marked, ahead/behind counts), remote branches per
+  remote, tags, stashes, worktrees.
+- **Main area** — either the history or the local changes, as picked in the
+  sidebar.
+
+**History.** The F18 graph at full width as a table: graph rail, ref badges and
+subject, author, date, short sha. Selecting a branch in the sidebar filters to
+it; `All commits` shows every ref. Below the table, the selected commit: header
+(subject, sha, author, date, parents), its files with `+N −M`, and the diff of
+the selected file (the existing Monaco diff, side by side or inline). Reuses
+`GraphRail`, `CommitDetail` and the diff viewer; only the hosting is new, which
+is the "phase 2" F18 already deferred.
+
+**Local changes.** Two lists, `Unstaged` and `Staged`, each with stage-all /
+unstage-all. The diff of the selected file with a per-hunk `Stage hunk` /
+`Unstage hunk`. Discard (a file or a hunk) asks for confirmation every time. A
+commit box under the lists: subject, optional body, `Amend`, `✦ Write message`,
+and a `Commit on <branch>` button.
+
+### v1 operations
+
+Each runs the `git` CLI (ADR-0089) and refreshes the view when it returns.
+Every operation shows the git command it ran; a failure shows git's own error
+text, unedited.
+
+| Area | Operations |
+|---|---|
+| Changes | stage / unstage a file or a hunk, discard a file or a hunk (confirmed), commit, amend |
+| Branches | checkout (double-click), new branch from the selected commit, rename, delete (confirmed) |
+| Integrate | merge a branch into the current one, rebase the current branch onto another (non-interactive) |
+| Remote | fetch, pull, push, set upstream on the first push |
+| Stash | create, apply, pop, drop (confirmed) |
+
+**Merge and rebase.** Reachable from the action bar and from a branch's context
+menu ("Merge feat/x into develop", "Rebase develop onto main"). A short
+confirmation says what will happen ("3 commits from feat/x enter develop").
+With uncommitted changes present, nothing runs; the dialog offers `Stash and
+continue`. Without conflicts it is plain git, no agent involved. With conflicts,
+see § Conflicts.
+
+**Not in v1:** force push (v2, only as `--force-with-lease`), cherry-pick,
+revert and reset from the menu, tag management, blame and file history,
+conflict resolution in a three-way editor, worktree actions. **Never:**
+interactive rebase (the agent in a session does it better), submodules, LFS,
+bisect, remote or credential management (the system git's configuration is
+used as is), a file editor.
+
+### Agents
+
+Two levels, both explicit — nothing reaches an agent without a click.
+
+**Quick (inline, no session).** Each runs the project's own agent CLI once,
+non-interactively, in the project root, with the project's profile — `claude -p`
+for a Claude project, `codex exec` for a Codex one (F30's seam) — and shows its
+answer. The data goes where the project's sessions already send it, so the
+click is the consent: there is no per-run preview, unlike F33. Timeout 60 s,
+cancellable, output shown as text and never executed except through `Run`.
+- `✦ Write message` in the commit box: a message proposed from the staged diff,
+  editable, with `Regenerate`. It never adds a `Co-Authored-By` or any other
+  attribution trailer.
+- The `✦` request field in the action bar: the user writes what they want in
+  plain words; the answer is the git command(s) the agent would run, with a
+  one-line explanation, and three buttons: `Cancel`, `Open in a session`,
+  `Run`. `Run` executes exactly the commands shown, under the § Running proposed
+  commands rules; anything those rules refuse offers only `Open in a session`.
+- Commit context menu: `✦ Explain this commit`, `✦ Find bugs introduced here`,
+  `✦ Write a release note`, answered in a popover. `✦ Undo this commit safely`
+  proposes commands as the request field does.
+- Branch context menu: `✦ Summarise this branch against <current>`.
+
+**Session (for long work).** A new agent session in the project, started with a
+prepared first message (`initial_prompt`, which `services/terminal.rs` already
+supports), in a new tab titled after the job, and the view switches to
+Sessions. A strip above that session shows where it came from (`✦ started from
+Git`), the live progress the view can read from the repository (files still in
+conflict), and a `Back to Git` button. When the user returns, Git re-reads the
+repository; it needs nothing from the session itself.
+
+### Conflicts
+
+When a merge or rebase stops on conflicts, the view shows a banner: "Merge of
+feat/x into develop: N files in conflict", with `Abort merge` (or `Abort
+rebase`) and **`✦ Resolve with agent`**. **The agent never starts by itself**;
+the user presses the button. Under the banner the conflicted files are listed
+and can be resolved by hand **per file** (`Use mine` / `Use theirs`, which run
+`git checkout --ours|--theirs` then `git add`), or explained (`✦ Explain this
+conflict`). Per-block choices are not in v1: they would mean the app writing the
+working file itself, which is the three-way editor deferred above.
+
+`✦ Resolve with agent` opens a session whose first message names the operation,
+the two branches and the conflicted files, and asks the agent to keep the
+intent of both sides, run the tests the files touch, and `git add` what it
+resolves. Then:
+
+- **Merge:** the agent stops before the merge commit. Back in Git, a green
+  banner lists the files that were in conflict and are now resolved (marked
+  `✦`, derived by comparing the conflict list before and after; the app reads
+  nothing from the session) with the diff of each, and the user presses
+  `Confirm merge commit`, or `Abort merge`, or `Open the session` to read the
+  agent's own explanation there.
+- **Rebase:** the agent resolves each stopped commit and continues until the
+  rebase finishes, since stopping at every step would make the button useless.
+  The green banner then offers `Undo rebase`, which resets the branch to the
+  sha it had when the app started the rebase. That sha is kept in memory for
+  the app run only; the button exists only for rebases the app started, and it
+  refuses (saying why) while there are uncommitted changes.
+
+**Sessions working in the same checkout.** Before any write, if a session whose
+working directory is the project root is currently working (F32's state), Git
+mode warns ("an agent is working in this checkout") and asks to continue. A
+`index.lock` failure is shown as git's error, with a `Retry`.
+
+### Running proposed commands
+
+Commands proposed by an agent (request field, `✦ Undo this commit safely`) are
+run by `Run` only if every one of them passes these rules; otherwise `Run` is
+not offered.
+
+- Each is parsed into argv by the app and spawned directly, never through a
+  shell; the first word must be `git`.
+- No global options before the subcommand (`-c`, `-C`, `--exec-path`,
+  `--git-dir`, `--work-tree`): the app adds `-C <project root>` itself.
+- The subcommand is one of the v1 operations' own: `add`, `restore`, `commit`,
+  `switch`, `checkout`, `branch`, `merge`, `rebase` (not `-i`), `fetch`,
+  `pull`, `push` (not `--force` / `-f` / `--force-with-lease` / `--mirror` /
+  `--delete`), `stash`, `revert`, `cherry-pick`, `tag`, `log`, `show`, `diff`,
+  `status`.
+- Refused outright: `reset --hard`, `clean`, `config`, `filter-branch`,
+  `gc`, `prune`, `update-ref`, `reflog expire`, and any option that runs a
+  program (`--exec`, `-x`, `--upload-pack`, `--receive-pack`).
+
+### Attribution
+
+Commits made from Git mode carry only the user's identity. The app adds no
+`Co-Authored-By` trailer and no "generated with" line, whether the message was
+typed or written by `✦ Write message`. Sessions the view spawns run with the
+user's own Claude Code settings, so what they commit follows those settings.
+
+### Open for the plan
+
+- The switch's keyboard shortcut (F28's map), and whether the usage readout
+  moves from the status bar into the tools row.
+- How hunk staging is fed to `git apply --cached` (a patch built from the diff
+  the view already shows).
+- Polling cadence while Git mode is open (F18 polls at 30 s, Changes at 3 s).
