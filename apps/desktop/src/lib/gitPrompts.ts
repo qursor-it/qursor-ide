@@ -1,19 +1,25 @@
 /** The first message of an agent session started from Git mode (F35). */
 export function resolveConflictsPrompt(args: {
-	op: 'merge' | 'rebase';
+	op: 'merge' | 'rebase' | 'cherryPick' | 'revert';
 	current: string;
 	theirs: string;
 	files: string[];
 }): string {
 	const { op, current, theirs, files } = args;
-	const head =
-		op === 'merge'
-			? `A merge of ${theirs} into ${current} stopped with conflicts.`
-			: `A rebase of ${current} onto ${theirs} stopped with conflicts.`;
-	const tail =
-		op === 'merge'
-			? 'Do NOT create the merge commit; the user confirms it.'
-			: 'Continue the rebase (`git rebase --continue`) until it finishes.';
+	const heads = {
+		merge: `A merge of ${theirs} into ${current} stopped with conflicts.`,
+		rebase: `A rebase of ${current} onto ${theirs} stopped with conflicts.`,
+		cherryPick: `A cherry-pick of ${theirs} onto ${current} stopped with conflicts.`,
+		revert: `A revert of ${theirs} on ${current} stopped with conflicts.`,
+	};
+	const tails = {
+		merge: 'Do NOT create the merge commit; the user confirms it.',
+		rebase: 'Continue the rebase (`git rebase --continue`) until it finishes.',
+		cherryPick: 'Do NOT commit; the user continues the cherry-pick.',
+		revert: 'Do NOT commit; the user continues the revert.',
+	};
+	const head = heads[op];
+	const tail = tails[op];
 	return [
 		head,
 		'Conflicted files:',

@@ -8390,6 +8390,7 @@ text, unedited.
 | Changes | stage / unstage a file or a hunk, discard a file or a hunk (confirmed), commit, amend |
 | Branches | checkout (double-click), new branch from the selected commit, rename, delete (confirmed) |
 | Integrate | merge a branch into the current one, rebase the current branch onto another (non-interactive) |
+| Commit (history context menu) | checkout the commit (detached, confirmed), new branch here, new tag here, cherry-pick, revert, merge it into the current branch, rebase the current branch onto it, reset the current branch to it (soft / mixed / hard; hard confirmed), copy SHA, copy message |
 | Remote | fetch, pull, push, set upstream on the first push |
 | Stash | create, apply, pop, drop (confirmed) |
 
@@ -8400,8 +8401,8 @@ With uncommitted changes present, nothing runs; the dialog offers `Stash and
 continue`. Without conflicts it is plain git, no agent involved. With conflicts,
 see § Conflicts.
 
-**Not in v1:** force push (v2, only as `--force-with-lease`), cherry-pick,
-revert and reset from the menu, tag management, blame and file history,
+**Not in v1:** force push (v2, only as `--force-with-lease`), deleting or
+pushing tags, blame and file history,
 conflict resolution in a three-way editor, worktree actions. **Never:**
 interactive rebase (the agent in a session does it better), submodules, LFS,
 bisect, remote or credential management (the system git's configuration is
@@ -8466,6 +8467,11 @@ resolves. Then:
   sha it had when the app started the rebase. That sha is kept in memory for
   the app run only; the button exists only for rebases the app started, and it
   refuses (saying why) while there are uncommitted changes.
+- **Cherry-pick and revert:** the same banner (`Cherry-pick stopped: N files
+  conflict`, `Abort cherry-pick` / `Abort revert`, `Use mine` / `Use theirs`,
+  `✦ Resolve with agent`). The agent stops before the commit, as for a merge;
+  the green banner offers `Continue cherry-pick` (or `Continue revert`), which
+  runs `git cherry-pick --continue` with git's prepared message.
 
 **Sessions working in the same checkout.** Before any write, if a session whose
 working directory is the project root is currently working (F32's state), Git

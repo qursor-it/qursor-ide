@@ -1157,6 +1157,11 @@ pub fn refs(project_path: &str) -> AppResult<GitRefs> {
 	Ok(refs)
 }
 
+fn read_head_file(repo: &Repository, name: &str) -> Option<String> {
+	let text = std::fs::read_to_string(repo.path().join(name)).ok()?;
+	Some(text.trim().to_string()).filter(|t| !t.is_empty())
+}
+
 /// Whether a merge, rebase, cherry-pick or revert is underway, and which files
 /// still conflict (F35). Not a repository reads as `none`.
 pub fn repo_state(project_path: &str) -> AppResult<GitRepoState> {
@@ -1204,7 +1209,9 @@ pub fn repo_state(project_path: &str) -> AppResult<GitRepoState> {
 			let text = std::fs::read_to_string(repo.path().join(dir).join("onto")).ok()?;
 			Some(text.trim().to_string()).filter(|t| !t.is_empty())
 		}),
-		_ => None,
+		GitRepoOp::CherryPick => read_head_file(&repo, "CHERRY_PICK_HEAD"),
+		GitRepoOp::Revert => read_head_file(&repo, "REVERT_HEAD"),
+		GitRepoOp::None => None,
 	};
 	Ok(GitRepoState { op, conflicted, theirs })
 }

@@ -8,17 +8,44 @@ import {
 	ContextMenuContent,
 	ContextMenuItem,
 	ContextMenuSeparator,
+	ContextMenuSub,
+	ContextMenuSubContent,
+	ContextMenuSubTrigger,
 	ContextMenuTrigger,
 } from '@factorai/ui';
 import { useGitHistory } from '@hooks/useGitHistory';
 import { lanePitch, railWidth, ROW_PAD_LEFT } from '@lib/gitGraph';
+import { queryKeys } from '@lib/queryKeys';
+import { cmd, copyText } from '@lib/tauri';
 import { clampDetailHeight, usePanelStore } from '@store/panelStore';
+import { useQuery } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
+import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
+import { PromptDialog } from './PromptDialog';
+import { useGitOp } from './useGitOp';
 import { useQuickAgent } from './useQuickAgent';
 
 /** The width the rail and ref chips are laid out for; the table is wider than
  *  the panel the graph was designed in, but its rows are still one line. */
 const LAYOUT_WIDTH = 600;
+
+const RESET_MODES = [
+	{
+		mode: 'soft',
+		label: 'Soft — keep changes staged',
+		warning: 'The branch moves; later commits stay staged.',
+	},
+	{
+		mode: 'mixed',
+		label: 'Mixed — keep changes unstaged',
+		warning: 'The branch moves; later commits stay as unstaged changes.',
+	},
+	{
+		mode: 'hard',
+		label: 'Hard — discard changes…',
+		warning: 'Uncommitted changes and the commits after it are lost from the branch.',
+	},
+] as const;
 
 /**
  * The F18 graph at full width, with the selected commit below it (F35). Reuses
@@ -31,6 +58,11 @@ export function GitHistory({ dir }: { dir: string }) {
 	const setDetailHeight = usePanelStore((s) => s.setDetailHeight);
 	const [selected, select] = useState<string | null>(null);
 	const quick = useQuickAgent(dir);
+	const { run, running } = useGitOp(dir);
+	const refsQ = useQuery({ queryKey: queryKeys.gitRefs(dir), queryFn: () => cmd.gitRefs(dir) });
+	const current = refsQ.data?.head ?? 'HEAD';
+	const [naming, setNaming] = useState<{ kind: 'branch' | 'tag'; sha: string } | null>(null);
+	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 	// The row the context menu was opened on, found from the event target.
 	const [menuSha, setMenuSha] = useState<string | null>(null);
 	const [carded, setCarded] = useState<string | null>(null);
@@ -38,6 +70,8 @@ export function GitHistory({ dir }: { dir: string }) {
 		setCarded((current) => (open ? sha : current === sha ? null : current));
 	}, []);
 	const onSelect = useCallback((sha: string) => select(sha), []);
+
+	const short = menuSha?.slice(0, 8) ?? '';
 
 	if (isPending) return <PanelEmpty>Loading…</PanelEmpty>;
 	if (!graph?.repoRoot) return <PanelEmpty>Not a git repository.</PanelEmpty>;
@@ -51,7 +85,7 @@ export function GitHistory({ dir }: { dir: string }) {
 		<div data-testid="git-history" className="flex min-h-0 flex-1 flex-col">
 			<div className="min-h-0 flex-1 overflow-auto py-1">
 				<ContextMenu>
-					<ContextMenuTrigger asChild disabled={!quick.enabled}>
+					<ContextMenuTrigger asChild>
 						<ul
 							aria-label="Commits"
 							onContextMenu={(e) =>
@@ -83,44 +117,139 @@ export function GitHistory({ dir }: { dir: string }) {
 						{menuSha && (
 							<>
 								<ContextMenuItem
-									disabled={quick.busy}
+									disabled={running}
 									onSelect={() =>
-										void quick.show('Explain this commit', { kind: 'explainCommit', sha: menuSha })
-									}
-								>
-									✦ Explain this commit
-								</ContextMenuItem>
-								<ContextMenuItem
-									disabled={quick.busy}
-									onSelect={() =>
-										void quick.show('Find bugs introduced here', { kind: 'findBugs', sha: menuSha })
-									}
-								>
-									✦ Find bugs introduced here
-								</ContextMenuItem>
-								<ContextMenuItem
-									disabled={quick.busy}
-									onSelect={() =>
-										void quick.show('Write a release note', { kind: 'releaseNote', sha: menuSha })
-									}
-								>
-									✦ Write a release note
-								</ContextMenuItem>
-								<ContextMenuSeparator />
-								<ContextMenuItem
-									disabled={quick.busy}
-									onSelect={() =>
-										void quick.show(
-											'Undo this commit safely',
-											{ kind: 'undoCommit', sha: menuSha },
+										void run(
+											{ kind: 'checkoutCommit', sha: menuSha },
 											{
-												request: `Undo commit ${menuSha} safely, without rewriting shared history.`,
+												confirm: `Check out ${short}? HEAD will be detached: new commits will not be on any branch.`,
 											},
 										)
 									}
 								>
-									✦ Undo this commit safely
+									Checkout this commit…
 								</ContextMenuItem>
+								<ContextMenuItem
+									disabled={running}
+									onSelect={() => setNaming({ kind: 'branch', sha: menuSha })}
+								>
+									New branch here…
+								</ContextMenuItem>
+								<ContextMenuItem
+									disabled={running}
+									onSelect={() => setNaming({ kind: 'tag', sha: menuSha })}
+								>
+									New tag here…
+								</ContextMenuItem>
+								<ContextMenuSeparator />
+								<ContextMenuItem
+									disabled={running}
+									onSelect={() => void run({ kind: 'cherryPick', sha: menuSha })}
+								>
+									Cherry-pick into {current}
+								</ContextMenuItem>
+								<ContextMenuItem
+									disabled={running}
+									onSelect={() => void run({ kind: 'revert', sha: menuSha })}
+								>
+									Revert this commit
+								</ContextMenuItem>
+								<ContextMenuItem
+									disabled={running}
+									onSelect={() => setIntegrate({ kind: 'merge', target: menuSha })}
+								>
+									Merge into {current}…
+								</ContextMenuItem>
+								<ContextMenuItem
+									disabled={running}
+									onSelect={() => setIntegrate({ kind: 'rebase', target: menuSha })}
+								>
+									Rebase {current} onto here…
+								</ContextMenuItem>
+								<ContextMenuSub>
+									<ContextMenuSubTrigger disabled={running}>
+										Reset {current} to here
+									</ContextMenuSubTrigger>
+									<ContextMenuSubContent>
+										{RESET_MODES.map(({ mode, label, warning }) => (
+											<ContextMenuItem
+												key={mode}
+												onSelect={() =>
+													void run(
+														{ kind: 'resetTo', sha: menuSha, mode },
+														{ confirm: `Reset ${current} to ${short}? ${warning}` },
+													)
+												}
+											>
+												{label}
+											</ContextMenuItem>
+										))}
+									</ContextMenuSubContent>
+								</ContextMenuSub>
+								<ContextMenuSeparator />
+								<ContextMenuItem onSelect={() => void copyText(menuSha)}>Copy SHA</ContextMenuItem>
+								<ContextMenuItem
+									onSelect={() =>
+										void cmd.gitCommit(dir, menuSha).then((c) => {
+											if (c) void copyText(c.body ? `${c.subject}\n\n${c.body}` : c.subject);
+										})
+									}
+								>
+									Copy message
+								</ContextMenuItem>
+								{quick.enabled && (
+									<>
+										<ContextMenuSeparator />
+										<ContextMenuItem
+											disabled={quick.busy}
+											onSelect={() =>
+												void quick.show('Explain this commit', {
+													kind: 'explainCommit',
+													sha: menuSha,
+												})
+											}
+										>
+											✦ Explain this commit
+										</ContextMenuItem>
+										<ContextMenuItem
+											disabled={quick.busy}
+											onSelect={() =>
+												void quick.show('Find bugs introduced here', {
+													kind: 'findBugs',
+													sha: menuSha,
+												})
+											}
+										>
+											✦ Find bugs introduced here
+										</ContextMenuItem>
+										<ContextMenuItem
+											disabled={quick.busy}
+											onSelect={() =>
+												void quick.show('Write a release note', {
+													kind: 'releaseNote',
+													sha: menuSha,
+												})
+											}
+										>
+											✦ Write a release note
+										</ContextMenuItem>
+										<ContextMenuSeparator />
+										<ContextMenuItem
+											disabled={quick.busy}
+											onSelect={() =>
+												void quick.show(
+													'Undo this commit safely',
+													{ kind: 'undoCommit', sha: menuSha },
+													{
+														request: `Undo commit ${menuSha} safely, without rewriting shared history.`,
+													},
+												)
+											}
+										>
+											✦ Undo this commit safely
+										</ContextMenuItem>
+									</>
+								)}
 							</>
 						)}
 					</ContextMenuContent>
@@ -132,6 +261,24 @@ export function GitHistory({ dir }: { dir: string }) {
 						</Button>
 					</div>
 				)}
+				<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
+				<PromptDialog
+					title={naming?.kind === 'tag' ? 'New tag here' : 'New branch here'}
+					initial={naming ? '' : null}
+					confirmLabel={naming?.kind === 'tag' ? 'Create tag' : 'Create branch'}
+					onCancel={() => setNaming(null)}
+					onSubmit={(name) => {
+						const at = naming?.sha;
+						const kind = naming?.kind;
+						setNaming(null);
+						if (!at) return;
+						void run(
+							kind === 'tag'
+								? { kind: 'createTag', name, at }
+								: { kind: 'createBranch', name, at, checkout: true },
+						);
+					}}
+				/>
 			</div>
 			{selected && (
 				<>

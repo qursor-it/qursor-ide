@@ -445,9 +445,9 @@ git_worktrees(project_path: String) -> Vec<GitWorktree>
 // Git mode (F35, ADR-0089). Reads on git2 like the rest; writes through the
 // system `git` CLI (services/git_cli.rs), argv only, `-C <dir>`.
 git_refs(project_path: String) -> GitRefs                 // branches + ahead/behind, remotes, tags, stashes
-git_repo_state(project_path: String) -> GitRepoState      // merge/rebase in progress, conflicted files
+git_repo_state(project_path: String) -> GitRepoState      // merge/rebase/cherry-pick/revert in progress, conflicted files
 git_file_patch(project_path: String, path: String, staged: bool) -> String
-git_op(project_path: String, op: GitOp) -> GitOpResult    // non-zero exit is ok:false, not an error
+git_op(project_path: String, op: GitOp) -> GitOpResult    // non-zero exit is ok:false, not an error; kinds incl. checkoutCommit, createTag, cherryPick, revert, resetTo{soft|mixed|hard}, cherryPick/revert Abort/Continue
 git_check_proposed(lines: Vec<String>) -> Vec<Option<String>>          // None = allowed, Some(reason)
 git_run_proposed(project_path: String, lines: Vec<String>) -> Vec<GitOpResult>
 git_ask_agent(project_id: String, dir: String, task: GitAgentTask) -> String  // one-shot `claude -p`

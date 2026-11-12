@@ -44,10 +44,15 @@ export function IntegrateDialog({ dir, request, onClose }: IntegrateDialogProps)
 	const refs = refsQ.data;
 	const dirty = (statusQ.data?.changes.length ?? 0) > 0;
 
+	// A commit picked in the history comes as a full SHA; show it short.
+	const isSha = /^[0-9a-f]{40}$/.test(request?.target ?? '');
+	const target = isSha ? (request?.target ?? '').slice(0, 8) : request?.target;
 	let text = '';
 	if (request && refs) {
 		const current = refs.head ?? 'HEAD';
-		const targetSha = refs.local.find((b) => b.name === request.target)?.sha;
+		const targetSha = isSha
+			? request.target
+			: refs.local.find((b) => b.name === request.target)?.sha;
 		const headSha = refs.headSha;
 		const n =
 			targetSha && headSha
@@ -58,8 +63,8 @@ export function IntegrateDialog({ dir, request, onClose }: IntegrateDialogProps)
 		const count = n === null ? 'Commits' : `${n} commit${n === 1 ? '' : 's'}`;
 		text =
 			request.kind === 'merge'
-				? `${count} from ${request.target} enter ${current}.`
-				: `${count} of ${current} are replayed onto ${request.target}.`;
+				? `${count} from ${target} enter ${current}.`
+				: `${count} of ${current} are replayed onto ${target}.`;
 	}
 
 	async function go(stash: boolean) {
@@ -83,7 +88,7 @@ export function IntegrateDialog({ dir, request, onClose }: IntegrateDialogProps)
 			<DialogContent>
 				<DialogHeader>
 					<DialogTitle>
-						{label} {request?.target}
+						{label} {target}
 					</DialogTitle>
 					<DialogDescription>
 						{text}

@@ -624,8 +624,8 @@ pub struct GitRepoState {
 	/// Absolute paths of the files with unresolved conflicts, like
 	/// `GitChange::path`.
 	pub conflicted: Vec<String>,
-	/// Full SHA of `MERGE_HEAD` during a merge, or of the commit being rebased
-	/// onto; `None` otherwise.
+	/// Full SHA of `MERGE_HEAD` during a merge, of the commit being rebased onto,
+	/// of `CHERRY_PICK_HEAD` or `REVERT_HEAD` during those; `None` otherwise.
 	pub theirs: Option<String>,
 }
 

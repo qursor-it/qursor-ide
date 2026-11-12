@@ -838,6 +838,15 @@ export type GitOp =
 	| { kind: 'rebaseContinue' }
 	/** Only for "Undo rebase"; needs the full 40-character SHA. */
 	| { kind: 'resetHardTo'; sha: string }
+	| { kind: 'checkoutCommit'; sha: string }
+	| { kind: 'createTag'; name: string; at: string }
+	| { kind: 'cherryPick'; sha: string }
+	| { kind: 'revert'; sha: string }
+	| { kind: 'resetTo'; sha: string; mode: 'soft' | 'mixed' | 'hard' }
+	| { kind: 'cherryPickAbort' }
+	| { kind: 'cherryPickContinue' }
+	| { kind: 'revertAbort' }
+	| { kind: 'revertContinue' }
 	| { kind: 'checkoutSide'; path: string; theirs: boolean }
 	| { kind: 'fetch' }
 	| { kind: 'pull' }
@@ -901,8 +910,8 @@ export interface GitRepoState {
 	op: GitRepoOp;
 	/** Absolute paths of files with unresolved conflicts, like `GitChange.path`. */
 	conflicted: string[];
-	/** Full SHA of `MERGE_HEAD` during a merge, or of the commit being rebased
-	 *  onto; null otherwise. */
+	/** Full SHA of `MERGE_HEAD` during a merge, of the commit being rebased onto,
+	 *  of `CHERRY_PICK_HEAD` or `REVERT_HEAD` during those; null otherwise. */
 	theirs: string | null;
 }
 

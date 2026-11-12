@@ -67,6 +67,27 @@ pub enum GitOp {
 	ResetHardTo {
 		sha: String,
 	},
+	CheckoutCommit {
+		sha: String,
+	},
+	CreateTag {
+		name: String,
+		at: String,
+	},
+	CherryPick {
+		sha: String,
+	},
+	Revert {
+		sha: String,
+	},
+	ResetTo {
+		sha: String,
+		mode: ResetMode,
+	},
+	CherryPickAbort,
+	CherryPickContinue,
+	RevertAbort,
+	RevertContinue,
 	/// Takes one side of a conflicted file, then stages it.
 	CheckoutSide {
 		path: String,
@@ -91,6 +112,14 @@ pub enum GitOp {
 	},
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResetMode {
+	Soft,
+	Mixed,
+	Hard,
+}
+
 /// A non-zero exit is a result, not an error: a conflict is a state to show.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +141,21 @@ pub fn validate_ref_name(name: &str) -> AppResult<()> {
 		return Err(AppError::InvalidInput(format!("not a usable branch or ref name: {name:?}")));
 	}
 	Ok(())
+}
+
+/// An abbreviated or full object name: 7 to 40 hex digits, never an option.
+fn validate_sha(sha: &str) -> AppResult<()> {
+	if !(7..=40).contains(&sha.len()) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+		return Err(AppError::InvalidInput(format!("not a commit SHA: {sha:?}")));
+	}
+	Ok(())
+}
+
+fn with_sha(head: &[&str], sha: &str) -> AppResult<Vec<String>> {
+	validate_sha(sha)?;
+	let mut argv = strings(head);
+	argv.push(sha.to_string());
+	Ok(argv)
 }
 
 fn strings(parts: &[&str]) -> Vec<String> {
@@ -185,6 +229,31 @@ pub fn args_for(op: &GitOp) -> AppResult<Vec<String>> {
 		GitOp::RebaseAbort => Ok(strings(&["rebase", "--abort"])),
 		// No editor may open: nobody could answer it.
 		GitOp::RebaseContinue => Ok(strings(&["-c", "core.editor=true", "rebase", "--continue"])),
+		GitOp::CheckoutCommit { sha } => with_sha(&["switch", "--detach"], sha),
+		GitOp::CreateTag { name, at } => {
+			validate_ref_name(name)?;
+			validate_ref_name(at)?;
+			Ok(strings(&["tag", name, at]))
+		}
+		GitOp::CherryPick { sha } => with_sha(&["cherry-pick"], sha),
+		GitOp::Revert { sha } => with_sha(&["revert", "--no-edit"], sha),
+		GitOp::ResetTo { sha, mode } => with_sha(
+			&[
+				"reset",
+				match mode {
+					ResetMode::Soft => "--soft",
+					ResetMode::Mixed => "--mixed",
+					ResetMode::Hard => "--hard",
+				},
+			],
+			sha,
+		),
+		GitOp::CherryPickAbort => Ok(strings(&["cherry-pick", "--abort"])),
+		GitOp::CherryPickContinue => {
+			Ok(strings(&["-c", "core.editor=true", "cherry-pick", "--continue"]))
+		}
+		GitOp::RevertAbort => Ok(strings(&["revert", "--abort"])),
+		GitOp::RevertContinue => Ok(strings(&["-c", "core.editor=true", "revert", "--continue"])),
 		GitOp::ResetHardTo { sha } => {
 			if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
 				return Err(AppError::InvalidInput("a full 40-character SHA is required".into()));
@@ -330,6 +399,51 @@ mod tests {
 			args_for(&GitOp::ResetHardTo { sha: sha.into() }).unwrap(),
 			s(&["reset", "--hard", sha])
 		);
+	}
+
+	#[test]
+	fn commit_actions_build_their_argv() {
+		let sha = "abc1234";
+		let args = |op| args_for(&op).unwrap();
+		assert_eq!(
+			args(GitOp::CheckoutCommit { sha: sha.into() }),
+			s(&["switch", "--detach", sha])
+		);
+		assert_eq!(
+			args(GitOp::CreateTag { name: "v1".into(), at: sha.into() }),
+			s(&["tag", "v1", sha])
+		);
+		assert_eq!(args(GitOp::CherryPick { sha: sha.into() }), s(&["cherry-pick", sha]));
+		assert_eq!(args(GitOp::Revert { sha: sha.into() }), s(&["revert", "--no-edit", sha]));
+		for (mode, flag) in [
+			(ResetMode::Soft, "--soft"),
+			(ResetMode::Mixed, "--mixed"),
+			(ResetMode::Hard, "--hard"),
+		] {
+			assert_eq!(args(GitOp::ResetTo { sha: sha.into(), mode }), s(&["reset", flag, sha]));
+		}
+		assert_eq!(args(GitOp::CherryPickAbort), s(&["cherry-pick", "--abort"]));
+		assert_eq!(
+			args(GitOp::CherryPickContinue),
+			s(&["-c", "core.editor=true", "cherry-pick", "--continue"])
+		);
+		assert_eq!(args(GitOp::RevertAbort), s(&["revert", "--abort"]));
+		assert_eq!(
+			args(GitOp::RevertContinue),
+			s(&["-c", "core.editor=true", "revert", "--continue"])
+		);
+	}
+
+	#[test]
+	fn commit_actions_refuse_anything_but_a_hex_sha() {
+		for bad in ["-x", "HEAD", "abc", "abc123g", ""] {
+			assert!(args_for(&GitOp::CherryPick { sha: bad.into() }).is_err(), "{bad:?}");
+			assert!(args_for(&GitOp::Revert { sha: bad.into() }).is_err(), "{bad:?}");
+			assert!(args_for(&GitOp::CheckoutCommit { sha: bad.into() }).is_err(), "{bad:?}");
+			let reset = GitOp::ResetTo { sha: bad.into(), mode: ResetMode::Hard };
+			assert!(args_for(&reset).is_err(), "{bad:?}");
+		}
+		assert!(args_for(&GitOp::CreateTag { name: "-x".into(), at: "abc1234".into() }).is_err());
 	}
 
 	#[test]
