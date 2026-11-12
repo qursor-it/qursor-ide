@@ -37,6 +37,24 @@ describe('gitModeStore', () => {
 		expect(store.getState().activeDir).toBeNull();
 	});
 
+	it('ensureTabs_appends_missing_without_moving_selection', async () => {
+		const store = await freshStore();
+		store.getState().ensureTabs([
+			{ projectId: 'p1', dir: '/a' },
+			{ projectId: 'p2', dir: '/b' },
+			{ projectId: 'p2', dir: '/b' },
+		]);
+		expect(store.getState().tabs.map((t) => t.dir)).toEqual(['/a', '/b']);
+		expect(store.getState().activeDir).toBe('/a');
+		store.getState().activate('/b');
+		store.getState().ensureTabs([
+			{ projectId: 'p1', dir: '/a' },
+			{ projectId: 'p3', dir: '/c' },
+		]);
+		expect(store.getState().tabs.map((t) => t.dir)).toEqual(['/a', '/b', '/c']);
+		expect(store.getState().activeDir).toBe('/b');
+	});
+
 	it('mode_persists_under_factorai_gitmode', async () => {
 		const store = await freshStore();
 		store.getState().setMode('git');

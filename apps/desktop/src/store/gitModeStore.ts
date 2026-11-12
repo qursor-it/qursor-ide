@@ -18,6 +18,9 @@ interface GitModeState {
 	openTab: (projectId: string, dir: string) => void;
 	closeTab: (dir: string) => void;
 	activate: (dir: string) => void;
+	/** Appends the tabs not open yet, in order, without moving the selection
+	 *  (the first one is selected only when nothing is). */
+	ensureTabs: (tabs: GitTab[]) => void;
 	/** HEAD before a rebase, per directory, for "Undo rebase". Memory only. */
 	preRebase: Record<string, string | undefined>;
 	setPreRebase: (dir: string, sha: string | null) => void;
@@ -45,6 +48,17 @@ export const useGitModeStore = create<GitModeState>()(
 					tabs: s.tabs.some((t) => t.dir === dir) ? s.tabs : [...s.tabs, { projectId, dir }],
 					activeDir: dir,
 				})),
+			ensureTabs: (wanted) =>
+				set((s) => {
+					const missing = wanted.filter(
+						(w, i) =>
+							!s.tabs.some((t) => t.dir === w.dir) &&
+							wanted.findIndex((x) => x.dir === w.dir) === i,
+					);
+					if (missing.length === 0 && s.activeDir) return s;
+					const tabs = [...s.tabs, ...missing];
+					return { tabs, activeDir: s.activeDir ?? tabs[0]?.dir ?? null };
+				}),
 			closeTab: (dir) =>
 				set((s) => {
 					const index = s.tabs.findIndex((t) => t.dir === dir);

@@ -3,7 +3,8 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { type AppMode, useGitModeStore } from '@store/gitModeStore';
 import { useTerminalStore } from '@store/terminalStore';
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 
 /** Conflicts appear when a merge or rebase stops, not per keystroke. */
 const REPO_STATE_POLL_MS = 10_000;
@@ -17,7 +18,14 @@ export function ModeSwitch() {
 	const setMode = useGitModeStore((s) => s.setMode);
 	const tabs = useGitModeStore((s) => s.tabs);
 	const openTab = useGitModeStore((s) => s.openTab);
+	const ensureTabs = useGitModeStore((s) => s.ensureTabs);
 	const { project, root } = useActiveProject();
+	const projectsQ = useQuery({ queryKey: queryKeys.projects(), queryFn: () => cmd.listProjects() });
+	const sessionTabs = useTerminalStore((s) => s.tabs);
+	const sessionProjectIds = useMemo(
+		() => [...new Set(sessionTabs.map((t) => t.projectId))],
+		[sessionTabs],
+	);
 
 	const working = useTerminalStore(
 		(s) => Object.values(s.bySession).filter((t) => t.status === 'working').length,
@@ -32,8 +40,17 @@ export function ModeSwitch() {
 	});
 
 	const pick = (next: AppMode) => {
-		// The first visit has nothing to show, so it opens the project in view.
-		if (next === 'git' && tabs.length === 0 && project && root) openTab(project.id, root);
+		if (next === 'git') {
+			// Git opens on every project you have a session tab in, so the two strips
+			// list the same projects (F35). Closed Git tabs come back on the next switch.
+			const byId = new Map((projectsQ.data ?? []).map((p) => [p.id, p.realPath]));
+			const fromSessions = sessionProjectIds.flatMap((id) => {
+				const dir = byId.get(id);
+				return dir ? [{ projectId: id, dir }] : [];
+			});
+			if (tabs.length === 0 && project && root) openTab(project.id, root);
+			ensureTabs(fromSessions);
+		}
 		setMode(next);
 	};
 
