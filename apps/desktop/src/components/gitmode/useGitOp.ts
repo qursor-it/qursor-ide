@@ -9,7 +9,7 @@ import { useCallback, useState } from 'react';
 import { create } from 'zustand';
 
 /** What the OpLog shows: the command as run and git's own words. */
-export type OpLogEntry = GitOpResult;
+type OpLogEntry = GitOpResult;
 
 interface GitUiState {
 	/** The last op per directory, success or not. */
@@ -109,7 +109,7 @@ async function agentWorkingIn(dir: string, queryClient: QueryClient): Promise<bo
 	});
 }
 
-export interface UseGitOp {
+interface UseGitOp {
 	run: (op: GitOp, opts?: { confirm?: string }) => Promise<GitOpResult | null>;
 	running: boolean;
 	last: GitOpResult | null;

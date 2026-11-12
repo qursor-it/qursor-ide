@@ -7,7 +7,7 @@ import { useCallback } from 'react';
 import { create } from 'zustand';
 
 /** An answer waiting in the popover. `propose` answers carry git lines to run. */
-export interface AgentAnswer {
+interface AgentAnswer {
 	title: string;
 	text: string;
 	propose: boolean;
@@ -49,7 +49,7 @@ export function parseProposal(text: string): { explanation: string; lines: strin
 	};
 }
 
-export interface QuickAgent {
+interface QuickAgent {
 	/** False for a Codex project: every quick `✦` button is hidden. */
 	enabled: boolean;
 	busy: boolean;
