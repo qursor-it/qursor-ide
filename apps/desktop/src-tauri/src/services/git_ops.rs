@@ -12,6 +12,8 @@ use crate::error::{AppError, AppResult};
 use crate::services::git_cli::{git_binary, run_git_stdin};
 
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
+/// Proposed commands may fetch or push, so they get the network budget.
+pub const PROPOSED_TIMEOUT: Duration = NETWORK_TIMEOUT;
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

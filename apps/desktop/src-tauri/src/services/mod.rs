@@ -8,6 +8,7 @@ pub mod gh;
 pub mod git;
 pub mod git_cli;
 pub mod git_ops;
+pub mod git_proposed;
 pub mod ide;
 pub mod indexer;
 pub mod intelligence;

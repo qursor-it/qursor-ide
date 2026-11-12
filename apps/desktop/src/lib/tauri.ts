@@ -305,6 +305,16 @@ export const cmd = {
 	 *  `git` is missing or does not finish. Re-read state after it settles. */
 	gitOp: (projectPath: string, op: GitOp) => invoke<GitOpResult>('git_op', { projectPath, op }),
 
+	/** Why each agent-proposed `git` line may not run, null where it may (F35).
+	 *  The view offers `Run` only when every entry is null. */
+	gitCheckProposed: (lines: string[]) =>
+		invoke<(string | null)[]>('git_check_proposed', { lines }),
+	/** Runs agent-proposed `git` lines in order. All lines are validated before
+	 *  the first runs; execution stops at the first one that fails, so the result
+	 *  can be shorter than `lines`. */
+	gitRunProposed: (projectPath: string, lines: string[]) =>
+		invoke<GitOpResult[]>('git_run_proposed', { projectPath, lines }),
+
 	/** Whether this project can show pull requests, and if not, why (F31,
 	 *  ADR-0077). **Never rejects**: a missing `gh`, no login or no `origin` is a
 	 *  `state`. `refresh` re-probes `gh` and forgets the cached login — the
@@ -1663,6 +1673,23 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			// The call is recorded above with its arguments; a spec asserts on that.
 			const kind = String((args?.op as GitOp | undefined)?.kind ?? '');
 			return { command: `git ${kind}`, ok: true, stdout: '', stderr: '' } as unknown as T;
+		}
+		case 'git_check_proposed': {
+			// The browser has no allowlist to run; a line is refused only if it
+			// is not a plain `git <subcommand>` line, which is enough for the UI.
+			const lines = (Array.isArray(args?.lines) ? args.lines : []) as string[];
+			return lines.map((l) =>
+				/^git\s+[a-z]/.test(l) && !/[|&;<>$`()]/.test(l) ? null : 'not a git command',
+			) as unknown as T;
+		}
+		case 'git_run_proposed': {
+			const lines = (Array.isArray(args?.lines) ? args.lines : []) as string[];
+			return lines.map((command) => ({
+				command,
+				ok: true,
+				stdout: '',
+				stderr: '',
+			})) as unknown as T;
 		}
 		case 'gh_status': {
 			// No `gh` in a browser: a fixture declares the answer per project, and

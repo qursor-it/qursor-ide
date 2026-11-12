@@ -517,6 +517,8 @@ pub fn run() {
 			commands::git::git_commit,
 			commands::git::git_blob_at,
 			commands::git::git_op,
+			commands::git::git_check_proposed,
+			commands::git::git_run_proposed,
 			commands::gh::gh_status,
 			commands::gh::gh_pr_list,
 			commands::gh::gh_pr_detail,

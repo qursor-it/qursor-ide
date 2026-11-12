@@ -1,8 +1,9 @@
 use crate::commands::off_main;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::models::{FileContents, GitCommitDetail, GitGraph, GitRev, GitStatus, GitWorktree};
 use crate::services::git;
 use crate::services::git_ops::{self, GitOp, GitOpResult};
+use crate::services::git_proposed;
 
 /// Repository state for the Changes tab and the tree's decorations (F13).
 ///
@@ -85,4 +86,38 @@ pub async fn git_worktrees(project_path: String) -> AppResult<Vec<GitWorktree>> 
 #[tauri::command]
 pub async fn git_op(project_path: String, op: GitOp) -> AppResult<GitOpResult> {
 	git_ops::run_op(&project_path, op).await
+}
+
+/// Why each proposed line may not run, `None` where it may (F35). The view
+/// hides `Run` unless every entry is `None`.
+#[tauri::command]
+pub fn git_check_proposed(lines: Vec<String>) -> Vec<Option<String>> {
+	lines.iter().map(|l| git_proposed::check_line(l).err()).collect()
+}
+
+/// Runs agent-proposed `git` lines in order under `-C <project>`.
+///
+/// **Every line is validated before the first runs**, so a bad last line cannot
+/// leave the earlier ones applied. Stops at the first failing command.
+#[tauri::command]
+pub async fn git_run_proposed(
+	project_path: String,
+	lines: Vec<String>,
+) -> AppResult<Vec<GitOpResult>> {
+	let mut argvs = Vec::with_capacity(lines.len());
+	for line in &lines {
+		let argv = git_proposed::check_line(line).map_err(AppError::InvalidInput)?;
+		argvs.push(argv[1..].to_vec());
+	}
+	let mut results = Vec::with_capacity(argvs.len());
+	for argv in argvs {
+		let result =
+			git_ops::run_argv(&project_path, argv, None, git_ops::PROPOSED_TIMEOUT).await?;
+		let failed = !result.ok;
+		results.push(result);
+		if failed {
+			break;
+		}
+	}
+	Ok(results)
 }
