@@ -63,7 +63,8 @@ export const useGitModeStore = create<GitModeState>()(
 			setPreRebase: (dir, sha) =>
 				set((s) => ({ preRebase: { ...s.preRebase, [dir]: sha ?? undefined } })),
 			origin: {},
-			setOrigin: (sessionId, origin) => set((s) => ({ origin: { ...s.origin, [sessionId]: origin } })),
+			setOrigin: (sessionId, origin) =>
+				set((s) => ({ origin: { ...s.origin, [sessionId]: origin } })),
 		}),
 		{
 			name: 'factorai.gitmode',
