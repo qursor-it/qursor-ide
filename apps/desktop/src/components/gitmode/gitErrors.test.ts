@@ -81,6 +81,17 @@ describe('explainGitError', () => {
 			expect(explainGitError({ kind: 'merge', branch: 'x' }, fail('', s))).toBeNull();
 	});
 
+	it('cherry_pick_and_revert_conflicts_are_left_to_the_banner', () => {
+		const f = fail('', 'CONFLICT (content): Merge conflict in a.ts');
+		for (const op of [
+			{ kind: 'cherryPick', sha: 'abc1234' },
+			{ kind: 'revert', sha: 'abc1234' },
+			{ kind: 'cherryPickContinue' },
+			{ kind: 'revertContinue' },
+		] as const)
+			expect(explainGitError(op, f)).toBeNull();
+	});
+
 	it('a_conflicted_stash_pop_still_opens_a_dialog', () => {
 		const info = explainGitError(
 			{ kind: 'stashPop', index: 0 },

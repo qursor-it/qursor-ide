@@ -149,6 +149,17 @@ test.describe('git-mode', () => {
 		await expect(page.getByTestId('op-log')).toContainText('$ git checkout');
 	});
 
+	test('@smoke the history menu cherry-picks the commit under the cursor', async ({ page }) => {
+		await installMockBridge(page, fixtureWithRefs());
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		const row = page.getByTestId('commit-row').nth(1);
+		const sha = await row.evaluate((el) => el.closest<HTMLElement>('[data-sha]')?.dataset.sha);
+		await row.click({ button: 'right' });
+		await page.getByRole('menuitem', { name: /^Cherry-pick into/ }).click();
+		await expect.poll(() => gitOps(page)).toEqual([{ kind: 'cherryPick', sha }]);
+	});
+
 	test('@smoke a project that is not a repository says so', async ({ page }) => {
 		await installMockBridge(page, fixtureOneProjectOneSession());
 		await page.goto(PROJECT);

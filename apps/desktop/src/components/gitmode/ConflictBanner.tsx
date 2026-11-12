@@ -12,6 +12,17 @@ import { useGitOp } from './useGitOp';
 import { useQuickAgent } from './useQuickAgent';
 
 const SMALL = 'h-6 px-2 text-xs';
+const ABORT = {
+	merge: 'mergeAbort',
+	rebase: 'rebaseAbort',
+	cherryPick: 'cherryPickAbort',
+	revert: 'revertAbort',
+} as const;
+const CONTINUE = {
+	rebase: 'rebaseContinue',
+	cherryPick: 'cherryPickContinue',
+	revert: 'revertContinue',
+} as const;
 
 /**
  * In-progress merge or rebase: red while files conflict, green once they are
@@ -48,8 +59,17 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 	if (state.op === 'none') seen.current = { op: 'none', files: [] };
 	else if (state.conflicted.length > 0) seen.current = { op: state.op, files: state.conflicted };
 
-	if (state.op === 'merge' || state.op === 'rebase') {
+	if (
+		state.op === 'merge' ||
+		state.op === 'rebase' ||
+		state.op === 'cherryPick' ||
+		state.op === 'revert'
+	) {
 		const op = state.op;
+		const name = { merge: 'merge', rebase: 'rebase', cherryPick: 'cherry-pick', revert: 'revert' }[
+			op
+		];
+		const label = name.charAt(0).toUpperCase() + name.slice(1);
 		const current = refsQ.data?.head ?? 'HEAD';
 		const theirs =
 			refsQ.data?.local.find((b) => b.sha === state.theirs)?.name ??
@@ -64,12 +84,12 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 				disabled={running}
 				onClick={() =>
 					run(
-						{ kind: op === 'merge' ? 'mergeAbort' : 'rebaseAbort' },
-						{ confirm: `Abort the ${op}? Everything it did so far is undone.` },
+						{ kind: ABORT[op] },
+						{ confirm: `Abort the ${name}? Everything it did so far is undone.` },
 					)
 				}
 			>
-				Abort {op}
+				Abort {name}
 			</Button>
 		);
 
@@ -81,7 +101,7 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 				>
 					<div className="flex items-center gap-2">
 						<span className="min-w-0 flex-1 text-destructive">
-							{op === 'merge' ? 'Merge' : 'Rebase'} stopped: {state.conflicted.length} file
+							{label} stopped: {state.conflicted.length} file
 							{state.conflicted.length === 1 ? '' : 's'} conflict.
 						</span>
 						{!isLooseRepo(projectId) && (
@@ -92,7 +112,7 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 									void startAgent(
 										projectId,
 										dir,
-										`Resolve ${op} conflicts`,
+										`Resolve ${name} conflicts`,
 										resolveConflictsPrompt({ op, current, theirs, files: rel(state.conflicted) }),
 									)
 								}
@@ -140,7 +160,7 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 									size="sm"
 									className={SMALL}
 									disabled={running}
-									onClick={() => run({ kind: 'checkoutSide', path: f, theirs: op === 'merge' })}
+									onClick={() => run({ kind: 'checkoutSide', path: f, theirs: op !== 'rebase' })}
 								>
 									Use theirs
 								</Button>
@@ -161,25 +181,20 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 						? `✦ Resolved: ${rel(seen.current.files).join(', ')}`
 						: 'No conflicts left.'}
 				</span>
-				{op === 'merge' ? (
-					<Button
-						size="sm"
-						className={SMALL}
-						disabled={running}
-						onClick={() => run({ kind: 'commit', message: '', amend: false })}
-					>
-						Confirm merge commit
-					</Button>
-				) : (
-					<Button
-						size="sm"
-						className={SMALL}
-						disabled={running}
-						onClick={() => run({ kind: 'rebaseContinue' })}
-					>
-						Continue rebase
-					</Button>
-				)}
+				<Button
+					size="sm"
+					className={SMALL}
+					disabled={running}
+					onClick={() =>
+						run(
+							op === 'merge'
+								? { kind: 'commit', message: '', amend: false }
+								: { kind: CONTINUE[op] },
+						)
+					}
+				>
+					{op === 'merge' ? 'Confirm merge commit' : `Continue ${name}`}
+				</Button>
 				{abort}
 				{sessionId && (
 					<Button
