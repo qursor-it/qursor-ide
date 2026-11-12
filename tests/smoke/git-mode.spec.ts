@@ -199,3 +199,61 @@ test.describe('git-mode local changes', () => {
 		expect(await callCount(page, 'git_op')).toBe(0);
 	});
 });
+
+test.describe('git-mode merge and conflicts', () => {
+	const conflicted = () => {
+		const { fx, root } = fixtureWithChanges([]);
+		return {
+			root,
+			fx: {
+				...fx,
+				gitRepoStates: {
+					[root]: { op: 'merge' as const, conflicted: [`${root}/a.ts`], theirs: 'b'.repeat(40) },
+				},
+			},
+		};
+	};
+
+	test('@smoke a conflicted merge shows the banner and never starts an agent on its own', async ({
+		page,
+	}) => {
+		await installMockBridge(page, conflicted().fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await expect(page.getByTestId('conflict-banner')).toContainText('a.ts');
+		await page.waitForTimeout(500);
+		expect(await callCount(page, 'start_session')).toBe(0);
+	});
+
+	test('@smoke resolve with agent starts a session, shows the origin strip and goes back', async ({
+		page,
+	}) => {
+		await installMockBridge(page, conflicted().fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: /Resolve with agent/ }).click();
+		await expect.poll(() => callCount(page, 'start_session')).toBe(1);
+		await expect(page.getByTestId('git-origin-strip')).toBeVisible();
+		await expect(page.getByTestId('git-mode-view')).toBeHidden();
+		await page.getByRole('button', { name: 'Back to Git' }).click();
+		await expect(page.getByTestId('git-mode-view')).toBeVisible();
+	});
+
+	test('@smoke merge asks first, and stash and continue stashes then merges', async ({ page }) => {
+		const { fx } = fixtureWithChanges([{ rel: 'a.ts', group: 'unstaged' }]);
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: /^Merge/ }).click();
+		await page.getByRole('menuitem', { name: 'side' }).click();
+		await expect(page.getByRole('dialog')).toContainText('from side enter main');
+		expect(await callCount(page, 'git_op')).toBe(0);
+		await page.getByRole('button', { name: 'Stash and continue' }).click();
+		await expect
+			.poll(() => gitOps(page))
+			.toEqual([
+				{ kind: 'stashPush', message: null },
+				{ kind: 'merge', branch: 'side' },
+			]);
+	});
+});

@@ -9,6 +9,7 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
 
@@ -23,6 +24,7 @@ export function GitActionBar({ dir }: { dir: string }) {
 	const current = local.find((b) => b.current);
 	const others = local.filter((b) => !b.current);
 	const [naming, setNaming] = useState(false);
+	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 
 	const branchMenu = (label: string, pick: (name: string) => void) => (
 		<DropdownMenu>
@@ -71,8 +73,8 @@ export function GitActionBar({ dir }: { dir: string }) {
 			<Button variant="outline" size="sm" disabled={running} onClick={() => setNaming(true)}>
 				Branch
 			</Button>
-			{branchMenu('Merge…', (name) => run({ kind: 'merge', branch: name }))}
-			{branchMenu('Rebase…', (name) => run({ kind: 'rebase', onto: name }))}
+			{branchMenu('Merge…', (target) => setIntegrate({ kind: 'merge', target }))}
+			{branchMenu('Rebase…', (target) => setIntegrate({ kind: 'rebase', target }))}
 			<Button
 				variant="outline"
 				size="sm"
@@ -81,6 +83,7 @@ export function GitActionBar({ dir }: { dir: string }) {
 			>
 				Stash
 			</Button>
+			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
 			<PromptDialog
 				title="New branch from HEAD"
 				initial={naming ? '' : null}

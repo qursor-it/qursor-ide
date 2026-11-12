@@ -12,6 +12,7 @@ import { useGitModeStore } from '@store/gitModeStore';
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
+import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
 
@@ -38,6 +39,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 	const refs = refsQ.data;
 	const changes = statusQ.data?.changes.length ?? 0;
 	const [renaming, setRenaming] = useState<string | null>(null);
+	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 
 	const row = (label: ReactNode, selected: boolean, onClick: () => void, testid: string) => (
 		<button
@@ -104,13 +106,13 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 						</ContextMenuItem>
 						<ContextMenuItem
 							disabled={b.current}
-							onSelect={() => run({ kind: 'merge', branch: b.name })}
+							onSelect={() => setIntegrate({ kind: 'merge', target: b.name })}
 						>
 							Merge into current
 						</ContextMenuItem>
 						<ContextMenuItem
 							disabled={b.current}
-							onSelect={() => run({ kind: 'rebase', onto: b.name })}
+							onSelect={() => setIntegrate({ kind: 'rebase', target: b.name })}
 						>
 							Rebase current onto it
 						</ContextMenuItem>
@@ -207,6 +209,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 				</>
 			)}
 
+			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
 			<PromptDialog
 				title="Rename branch"
 				initial={renaming}

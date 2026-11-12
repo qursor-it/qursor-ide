@@ -1,6 +1,7 @@
 import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { useGitModeStore } from '@store/gitModeStore';
 import { useState } from 'react';
+import { ConflictBanner } from './ConflictBanner';
 import { GitActionBar } from './GitActionBar';
 import { GitHistory } from './GitHistory';
 import { type GitSection, GitSidebar } from './GitSidebar';
@@ -31,6 +32,7 @@ function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 	return (
 		<>
 			<GitActionBar dir={dir} />
+			<ConflictBanner dir={dir} projectId={projectId} />
 			<div className="flex min-h-0 flex-1">
 				<GitSidebar dir={dir} projectId={projectId} section={section} onSection={setSection} />
 				<main className="flex min-w-0 flex-1 flex-col">
