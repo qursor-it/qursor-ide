@@ -8335,7 +8335,11 @@ Git mode is added beside them, not instead of them.
   moves down one row. In Git mode the same strip shows **Git tabs** instead,
   grouped under the same project chips: one tab for the project's checkout
   (labelled with its branch and ahead/behind) and one per worktree opened from
-  the sidebar's Worktrees list. `+` opens the Git tab of another project.
+  the sidebar's Worktrees list. `+` opens the Git tab of another project, or
+  `Open repository…` any folder, as a client like Fork does; such a repository
+  is no project, so it groups under its folder name and offers nothing that
+  starts or asks an agent. Entering Git mode opens a tab for every project
+  that has session tabs.
 
 Git mode replaces the session area and the right-hand panel with the
 full-window view of the selected Git tab; Sessions brings them back, untouched
