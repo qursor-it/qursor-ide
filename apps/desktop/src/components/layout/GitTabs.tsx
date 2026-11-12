@@ -85,6 +85,9 @@ export function GitTabs() {
 					</IconButton>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="start">
+					{projects.length === 0 && (
+						<DropdownMenuItem disabled>No projects yet: add one from the sidebar</DropdownMenuItem>
+					)}
 					{projects.map((p) => (
 						<DropdownMenuItem key={p.id} onSelect={() => openTab(p.id, p.realPath)}>
 							{p.displayName}
