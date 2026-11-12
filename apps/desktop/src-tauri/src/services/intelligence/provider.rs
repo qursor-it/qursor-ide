@@ -430,7 +430,7 @@ fn run_help(binary: &Path) -> Result<String, String> {
 /// The command, with the isolation that does not depend on flags: its own
 /// directory, the environment every child gets, the identity of the project's
 /// profile, and a process group of its own so it can be ended whole.
-fn base_command(
+pub(crate) fn base_command(
 	binary: &Path,
 	args: &[OsString],
 	cwd: &Path,

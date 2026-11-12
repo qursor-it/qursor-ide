@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import { useGitOp } from './useGitOp';
+import { useQuickAgent } from './useQuickAgent';
 
 const SMALL = 'h-6 px-2 text-xs';
 
@@ -20,6 +21,7 @@ const SMALL = 'h-6 px-2 text-xs';
 export function ConflictBanner({ dir, projectId }: { dir: string; projectId: string }) {
 	const { run, running } = useGitOp(dir);
 	const startAgent = useStartGitAgentSession();
+	const quick = useQuickAgent(dir);
 	const navigate = useNavigate();
 	const preRebase = useGitModeStore((s) => s.preRebase[dir]);
 	const setPreRebase = useGitModeStore((s) => s.setPreRebase);
@@ -104,6 +106,22 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 								<span className="min-w-0 flex-1 truncate font-mono text-secondary-foreground">
 									{relativeToRoot(f, dir)}
 								</span>
+								{quick.enabled && (
+									<Button
+										variant="ghost"
+										size="sm"
+										className={SMALL}
+										disabled={quick.busy}
+										onClick={() =>
+											void quick.show(`Explain ${relativeToRoot(f, dir)}`, {
+												kind: 'explainConflict',
+												path: relativeToRoot(f, dir),
+											})
+										}
+									>
+										✦ Explain this conflict
+									</Button>
+								)}
 								{/* In a rebase git's "ours" is the branch being rebased onto, so
 								    "mine" is git's --theirs there. */}
 								<Button

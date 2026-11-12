@@ -4,6 +4,7 @@ use crate::models::{
 	FileContents, GitCommitDetail, GitGraph, GitRefs, GitRepoState, GitRev, GitStatus, GitWorktree,
 };
 use crate::services::git;
+use crate::services::git_agent::{self, GitAgentTask};
 use crate::services::git_ops::{self, GitOp, GitOpResult};
 use crate::services::git_proposed;
 
@@ -141,4 +142,21 @@ pub async fn git_repo_state(project_path: String) -> AppResult<GitRepoState> {
 #[tauri::command]
 pub async fn git_file_patch(project_path: String, path: String, staged: bool) -> AppResult<String> {
 	off_main(move || git::file_patch(&project_path, &path, staged)).await
+}
+
+/// A one-shot `claude -p` answer for a quick action (F35). Claude projects only.
+#[tauri::command]
+pub async fn git_ask_agent(
+	state: tauri::State<'_, crate::state::AppState>,
+	project_id: String,
+	dir: String,
+	task: GitAgentTask,
+) -> AppResult<String> {
+	git_agent::ask(&state.db, &project_id, &dir, task).await
+}
+
+/// Ends the quick action running in `dir`, if any.
+#[tauri::command]
+pub fn git_ask_cancel(dir: String) {
+	git_agent::cancel(&dir);
 }

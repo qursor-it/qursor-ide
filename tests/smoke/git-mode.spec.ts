@@ -257,3 +257,56 @@ test.describe('git-mode merge and conflicts', () => {
 			]);
 	});
 });
+
+test.describe('git-mode quick agent actions', () => {
+	const undo = async (page: import('@playwright/test').Page, answer: string) => {
+		await installMockBridge(page, fixtureWithRefs({ gitAskAgent: answer }));
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('commit-row').first().click({ button: 'right' });
+		await page.getByRole('menuitem', { name: /Undo this commit safely/ }).click();
+	};
+
+	test('@smoke undo commit offers Run for an allowed proposal', async ({ page }) => {
+		await undo(page, '# undo it\ngit revert abc1234');
+		await expect(page.getByTestId('agent-popover')).toContainText('undo it');
+		await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeVisible();
+		await page.getByRole('button', { name: 'Run', exact: true }).click();
+		await expect.poll(() => callCount(page, 'git_run_proposed')).toBe(1);
+	});
+
+	test('@smoke undo commit hides Run for a refused line but keeps Open in a session', async ({
+		page,
+	}) => {
+		await undo(page, 'git reset --hard HEAD~1');
+		await expect(page.getByRole('button', { name: 'Open in a session' })).toBeVisible();
+		await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeHidden();
+	});
+
+	test('@smoke write message fills subject and body', async ({ page }) => {
+		const { fx } = fixtureWithChanges([{ rel: 'a.ts', group: 'staged' }], {
+			gitAskAgent: 'feat: add x\n\nbecause y',
+		});
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('git-local-changes').click();
+		await page.getByRole('button', { name: '✦ Write message' }).click();
+		await expect(page.getByLabel('Commit subject')).toHaveValue('feat: add x');
+		await expect(page.getByLabel('Commit body')).toHaveValue('because y');
+		await expect(page.getByRole('button', { name: '✦ Regenerate' })).toBeVisible();
+	});
+
+	test('@smoke quick buttons are hidden for a Codex project', async ({ page }) => {
+		const { fx } = fixtureWithChanges([{ rel: 'a.ts', group: 'staged' }], {
+			settings: { agentDefault: 'codex' },
+		});
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('git-local-changes').click();
+		await expect(page.getByTestId('commit-box')).toBeVisible();
+		await expect(page.getByRole('button', { name: '✦ Write message' })).toHaveCount(0);
+		await expect(page.getByLabel('Ask the agent')).toHaveCount(0);
+	});
+});

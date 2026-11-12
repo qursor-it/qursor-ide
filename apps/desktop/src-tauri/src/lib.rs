@@ -519,6 +519,8 @@ pub fn run() {
 			commands::git::git_op,
 			commands::git::git_check_proposed,
 			commands::git::git_run_proposed,
+			commands::git::git_ask_agent,
+			commands::git::git_ask_cancel,
 			commands::git::git_refs,
 			commands::git::git_repo_state,
 			commands::git::git_file_patch,

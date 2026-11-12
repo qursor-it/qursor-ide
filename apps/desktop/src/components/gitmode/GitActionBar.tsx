@@ -9,6 +9,7 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
+import { AskAgentField } from './AskAgentField';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
@@ -83,6 +84,7 @@ export function GitActionBar({ dir }: { dir: string }) {
 			>
 				Stash
 			</Button>
+			<AskAgentField dir={dir} />
 			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
 			<PromptDialog
 				title="New branch from HEAD"

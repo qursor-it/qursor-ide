@@ -1,6 +1,7 @@
 import { Button, Checkbox, Input, Textarea } from '@factorai/ui';
 import { useState } from 'react';
 import { useGitOp } from './useGitOp';
+import { useQuickAgent } from './useQuickAgent';
 
 /** Subject, body, amend and the commit button (F35). */
 export function CommitBox({
@@ -16,7 +17,18 @@ export function CommitBox({
 	const [subject, setSubject] = useState('');
 	const [body, setBody] = useState('');
 	const [amend, setAmend] = useState(false);
+	const quick = useQuickAgent(dir);
+	const [written, setWritten] = useState(false);
 	const canCommit = !running && subject.trim() !== '' && (staged > 0 || amend);
+
+	async function writeMessage() {
+		const text = await quick.ask('Writing the commit message', { kind: 'commitMessage' });
+		if (!text) return;
+		const [first = '', ...rest] = text.split('\n');
+		setSubject(first.trim());
+		setBody(rest.join('\n').trim());
+		setWritten(true);
+	}
 
 	async function commit() {
 		const message = subject.trim() + (body.trim() ? `\n\n${body.trim()}` : '');
@@ -25,6 +37,7 @@ export function CommitBox({
 			setSubject('');
 			setBody('');
 			setAmend(false);
+			setWritten(false);
 		}
 	}
 
@@ -51,10 +64,17 @@ export function CommitBox({
 				<label htmlFor="git-amend">Amend last commit</label>
 			</div>
 			<div className="flex gap-1.5">
-				{/* Wired with the quick actions. */}
-				<Button variant="outline" size="sm" disabled title="Arrives with quick actions">
-					✦ Write message
-				</Button>
+				{quick.enabled && (
+					<Button
+						variant="outline"
+						size="sm"
+						disabled={quick.busy || staged === 0}
+						title="Draft the message from the staged diff"
+						onClick={() => void writeMessage()}
+					>
+						{written ? '✦ Regenerate' : '✦ Write message'}
+					</Button>
+				)}
 				<Button
 					size="sm"
 					className="min-w-0 flex-1"

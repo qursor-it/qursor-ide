@@ -807,6 +807,17 @@ export interface GitWorktree {
 	exists: boolean;
 }
 
+/** A quick `✦` question for a one-shot `claude -p` (F35). Mirrors Rust `GitAgentTask`. */
+export type GitAgentTask =
+	| { kind: 'commitMessage' }
+	| { kind: 'explainCommit'; sha: string }
+	| { kind: 'findBugs'; sha: string }
+	| { kind: 'releaseNote'; sha: string }
+	| { kind: 'undoCommit'; sha: string }
+	| { kind: 'summariseBranch'; branch: string; against: string }
+	| { kind: 'explainConflict'; path: string }
+	| { kind: 'request'; text: string };
+
 /** One Git-mode write (F35, ADR-0089). Mirrors Rust `GitOp`; every write runs
  *  the system `git`, never `git2`. */
 export type GitOp =

@@ -7,6 +7,7 @@ import type {
 	FileChangedEvent,
 	FileContents,
 	GhStatus,
+	GitAgentTask,
 	GitCommitDetail,
 	GitGraph,
 	GitOp,
@@ -315,6 +316,13 @@ export const cmd = {
 	 *  can be shorter than `lines`. */
 	gitRunProposed: (projectPath: string, lines: string[]) =>
 		invoke<GitOpResult[]>('git_run_proposed', { projectPath, lines }),
+
+	/** A one-shot `claude -p` answer for a quick `✦` action (F35). Rejects for a
+	 *  Codex project, on timeout (60 s) and when cancelled. */
+	gitAskAgent: (projectId: string, dir: string, task: GitAgentTask) =>
+		invoke<string>('git_ask_agent', { projectId, dir, task }),
+	/** Ends the quick action running in `dir`. */
+	gitAskCancel: (dir: string) => invoke<void>('git_ask_cancel', { dir }),
 
 	/** Branches, remotes, tags and stashes for the Git view (F35). Empty lists
 	 *  for a project outside a repository or without commits. */
@@ -909,6 +917,8 @@ interface TestFixture {
 	gitRefs?: Record<string, GitRefs>;
 	/** Merge/rebase state keyed by project path (F35). Absent means `none`. */
 	gitRepoStates?: Record<string, GitRepoState>;
+	/** What `git_ask_agent` answers (F35). Absent makes it reject. */
+	gitAskAgent?: string;
 	/** Makes `git_op` reject with this error, as a missing `git` does. */
 	gitOpFails?: AppError;
 	/** Checkouts per project path (F21). Absent means "one checkout, the project
@@ -1694,12 +1704,17 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			const kind = String((args?.op as GitOp | undefined)?.kind ?? '');
 			return { command: `git ${kind}`, ok: true, stdout: '', stderr: '' } as unknown as T;
 		}
+		case 'git_ask_agent':
+			if (fx?.gitAskAgent === undefined) throw new Error('no agent in the mock');
+			return fx.gitAskAgent as unknown as T;
+		case 'git_ask_cancel':
+			return undefined as unknown as T;
 		case 'git_check_proposed': {
 			// The browser has no allowlist to run; a line is refused only if it
 			// is not a plain `git <subcommand>` line, which is enough for the UI.
 			const lines = (Array.isArray(args?.lines) ? args.lines : []) as string[];
 			return lines.map((l) =>
-				/^git\s+[a-z]/.test(l) && !/[|&;<>$`()]/.test(l) ? null : 'not a git command',
+				/^git\s+[a-z]/.test(l) && !/[|&;<>$`()]|reset|--force/.test(l) ? null : 'not a git command',
 			) as unknown as T;
 		}
 		case 'git_run_proposed': {

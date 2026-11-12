@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
+import { useQuickAgent } from './useQuickAgent';
 
 export type GitSection = 'history' | 'changes';
 
@@ -28,6 +29,7 @@ interface GitSidebarProps {
 /** Local changes, All commits, then the repository's refs (specs/05-features.md F35). */
 export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarProps) {
 	const { run } = useGitOp(dir);
+	const quick = useQuickAgent(dir);
 	const openTab = useGitModeStore((s) => s.openTab);
 	const refsQ = useQuery({ queryKey: queryKeys.gitRefs(dir), queryFn: () => cmd.gitRefs(dir) });
 	const statusQ = useQuery({
@@ -116,6 +118,20 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 						>
 							Rebase current onto it
 						</ContextMenuItem>
+						{quick.enabled && !b.current && refs.head && (
+							<ContextMenuItem
+								disabled={quick.busy}
+								onSelect={() =>
+									void quick.show(`Summarise ${b.name}`, {
+										kind: 'summariseBranch',
+										branch: b.name,
+										against: refs.head ?? 'HEAD',
+									})
+								}
+							>
+								✦ Summarise this branch against {refs.head}
+							</ContextMenuItem>
+						)}
 						<ContextMenuSeparator />
 						<ContextMenuItem onSelect={() => setRenaming(b.name)}>Rename…</ContextMenuItem>
 						<ContextMenuItem

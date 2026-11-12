@@ -1,6 +1,7 @@
 import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { useGitModeStore } from '@store/gitModeStore';
 import { useState } from 'react';
+import { AgentPopover } from './AgentPopover';
 import { ConflictBanner } from './ConflictBanner';
 import { GitActionBar } from './GitActionBar';
 import { GitHistory } from './GitHistory';
@@ -32,6 +33,7 @@ function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 	return (
 		<>
 			<GitActionBar dir={dir} />
+			<AgentPopover dir={dir} projectId={projectId} />
 			<ConflictBanner dir={dir} projectId={projectId} />
 			<div className="flex min-h-0 flex-1">
 				<GitSidebar dir={dir} projectId={projectId} section={section} onSection={setSection} />
