@@ -68,4 +68,47 @@ test.describe('git-mode', () => {
 		await expect(page.locator('.xterm')).not.toHaveCount(0);
 		await expect(page.locator('.xterm:visible')).toBeVisible();
 	});
+
+	test('@smoke history rows render and double-clicking a branch checks it out', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureWithRefs());
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+
+		await expect(page.getByTestId('commit-row')).toHaveCount(5);
+		await page.getByTestId('git-branch').filter({ hasText: 'main' }).dblclick();
+		await expect
+			.poll(() =>
+				page.evaluate(() =>
+					(window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === 'git_op'),
+				),
+			)
+			.toEqual([
+				expect.objectContaining({
+					args: expect.objectContaining({ op: { kind: 'checkout', branch: 'main' } }),
+				}),
+			]);
+		await expect(page.getByTestId('op-log')).toContainText('$ git checkout');
+	});
+
+	test('@smoke a project that is not a repository says so', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await expect(page.getByText('Not a git repository.')).toBeVisible();
+	});
+
+	test('@smoke a missing git is shown in the op log', async ({ page }) => {
+		await installMockBridge(
+			page,
+			fixtureWithRefs({ gitOpFails: { kind: 'NotFound', message: 'git not found on PATH' } }),
+		);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: 'Fetch' }).click();
+		await expect(page.getByTestId('op-log')).toContainText('git not found on PATH');
+		// History still works.
+		await expect(page.getByTestId('commit-row')).toHaveCount(5);
+	});
 });

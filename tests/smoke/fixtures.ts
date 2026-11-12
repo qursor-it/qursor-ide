@@ -127,6 +127,8 @@ export interface TestFixture {
 	gitRefs?: Record<string, GitRefs>;
 	/** Merge/rebase state keyed by project path (F35). Absent means `none`. */
 	gitRepoStates?: Record<string, GitRepoState>;
+	/** Makes `git_op` reject with this error, as a missing `git` does. */
+	gitOpFails?: AppError;
 	gitGraphs?: Record<string, GitGraph>;
 	gitCommits?: Record<string, GitCommitDetail>;
 	/** Version to report as downloaded and staged, for the F14 update badge. */

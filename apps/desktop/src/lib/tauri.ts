@@ -910,6 +910,8 @@ interface TestFixture {
 	gitRefs?: Record<string, GitRefs>;
 	/** Merge/rebase state keyed by project path (F35). Absent means `none`. */
 	gitRepoStates?: Record<string, GitRepoState>;
+	/** Makes `git_op` reject with this error, as a missing `git` does. */
+	gitOpFails?: AppError;
 	/** Checkouts per project path (F21). Absent means "one checkout, the project
 	 *  itself" — the shape almost every project has, so a fixture only declares
 	 *  this when the worktree behaviour is what it is testing. */
@@ -1689,6 +1691,7 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		}
 		case 'git_op': {
 			// The call is recorded above with its arguments; a spec asserts on that.
+			if (fx?.gitOpFails) throw fx.gitOpFails;
 			const kind = String((args?.op as GitOp | undefined)?.kind ?? '');
 			return { command: `git ${kind}`, ok: true, stdout: '', stderr: '' } as unknown as T;
 		}
