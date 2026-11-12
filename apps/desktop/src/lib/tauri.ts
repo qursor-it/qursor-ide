@@ -309,8 +309,7 @@ export const cmd = {
 
 	/** Why each agent-proposed `git` line may not run, null where it may (F35).
 	 *  The view offers `Run` only when every entry is null. */
-	gitCheckProposed: (lines: string[]) =>
-		invoke<(string | null)[]>('git_check_proposed', { lines }),
+	gitCheckProposed: (lines: string[]) => invoke<(string | null)[]>('git_check_proposed', { lines }),
 	/** Runs agent-proposed `git` lines in order. All lines are validated before
 	 *  the first runs; execution stops at the first one that fails, so the result
 	 *  can be shorter than `lines`. */
