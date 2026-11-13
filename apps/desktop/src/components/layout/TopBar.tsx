@@ -9,7 +9,8 @@ import { useChordLabel, useChordTitle } from '@hooks/useShortcuts';
 import { usePaletteStore } from '@store/paletteStore';
 import { useGitModeStore } from '@store/gitModeStore';
 import { usePanelStore } from '@store/panelStore';
-import { PanelRight, Search, Settings } from 'lucide-react';
+import { LayoutGrid, PanelRight, Search, Settings } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 
 /**
  * Full-window header. Deliberately spans above the sidebar too: this is the
@@ -27,6 +28,7 @@ export function TopBar() {
 	const panelTitle = useChordTitle('Toggle file tree', 'toggleFilePanel');
 	const paletteChord = useChordLabel('openPalette');
 	const openPalette = usePaletteStore((s) => s.setOpen);
+	const navigate = useNavigate();
 
 	return (
 		<div className="shrink-0 bg-chrome">
@@ -59,6 +61,16 @@ export function TopBar() {
 			    panel toggle, and item 6's window controls sit at the window's outer
 			    edge, so this moves once by a fixed offset when they land rather than
 			    competing for the same pixels. */}
+				{/* The Board (F38): every session by state, on one screen. */}
+				<IconButton
+					size="md"
+					aria-label="All sessions board"
+					title="All sessions board"
+					data-testid="open-board"
+					onClick={() => void navigate({ to: '/board' })}
+				>
+					<LayoutGrid />
+				</IconButton>
 				<IconButton
 					size="md"
 					aria-label="Settings"

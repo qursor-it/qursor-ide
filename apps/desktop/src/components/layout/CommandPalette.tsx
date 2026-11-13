@@ -1,8 +1,8 @@
 import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { StatusDot } from '@components/layout/StatusDot';
-import { restartSession } from '@components/terminal/Terminal';
 import { Dialog, DialogContent, DialogDescription, DialogTitle, Input } from '@factorai/ui';
 import { useActiveProject } from '@hooks/useActiveProject';
+import { useOpenSession } from '@hooks/useOpenSession';
 import { useSessionTitles } from '@hooks/useSessionTitles';
 import { useSettingsModal } from '@hooks/useSettingsModal';
 import { useStartSession } from '@hooks/useStartSession';
@@ -16,7 +16,7 @@ import { usePanelStore } from '@store/panelStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Inbox, PanelRight, Plus, Search, Settings } from 'lucide-react';
+import { Inbox, LayoutGrid, PanelRight, Plus, Search, Settings } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 interface Item {
@@ -44,6 +44,7 @@ export function CommandPalette() {
 	const [active, setActive] = useState(0);
 	const query = term.trim();
 	const navigate = useNavigate();
+	const goToSession = useOpenSession();
 	const { projectId } = useActiveProject();
 	const startSession = useStartSession();
 	const settings = useSettingsModal();
@@ -84,12 +85,7 @@ export function CommandPalette() {
 		const close = () => setOpen(false);
 		const openSession = (sessionId: string, pid: string) => {
 			close();
-			// A stopped session is a restart, as a stopped tab is (F16).
-			if (!useTerminalStore.getState().bySession[sessionId]) restartSession(sessionId);
-			void navigate({
-				to: '/projects/$projectId/sessions/$sessionId',
-				params: { projectId: pid, sessionId },
-			});
+			goToSession(sessionId, pid);
 		};
 		const q = query.toLowerCase();
 
@@ -158,6 +154,16 @@ export function CommandPalette() {
 						]
 					: []),
 				{
+					key: 'a:board',
+					group: 'Actions',
+					label: 'Open the board of all sessions',
+					icon: <LayoutGrid />,
+					run: () => {
+						close();
+						void navigate({ to: '/board' });
+					},
+				},
+				{
 					key: 'a:panel',
 					group: 'Actions',
 					label: 'Toggle the file panel',
@@ -192,6 +198,7 @@ export function CommandPalette() {
 		projectsQ.data,
 		projectId,
 		navigate,
+		goToSession,
 		setOpen,
 		startSession,
 		settings,

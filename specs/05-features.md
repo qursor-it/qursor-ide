@@ -8626,8 +8626,8 @@ results, and a footer naming the keys.
   eight, one row per session). Name matches lead because they are more specific
   than a hit in a transcript.
 - **Actions:** jump to the next session that needs you (only when one does), a
-  new session in the active project (only on a route with one), toggle the file
-  panel, open settings.
+  new session in the active project (only on a route with one), open the Board
+  (F38), toggle the file panel, open settings.
 
 **Keys.** `↑` / `↓` move and wrap, `Enter` runs the highlighted row, `Esc`
 closes. A row runs on click too. The field is a `combobox` whose
@@ -8638,3 +8638,30 @@ empty field.
 before it opens, as a stopped tab is (F16).
 
 **Not yet.** Files, commands typed with `>`, and Git actions.
+
+## F38 — The Board
+
+**Specified and built 2026-11-13**, the last slice of the layout redesign
+(ADR-0090). Code in `routes/board.tsx`; the columns come from F36's
+`inboxSections`.
+
+**Why.** The Inbox answers "who needs me next" in a sidebar's width. Supervising
+several agents at once also wants the whole picture on one screen: what is
+waiting, what is running and what has finished, across projects.
+
+**Door.** `/#/board`, from the grid button in the top bar's tools row (left of
+settings) and from the palette's "Open the board of all sessions".
+
+**Columns.** **Needs you** and **Working** exactly as the Inbox defines them,
+then **Stopped**: open tabs whose session is not running and that you have
+already seen. Each column has a count; a card is the project's 14px tile and
+name with the status dot at the right, then the session title on up to two
+lines. A click opens the session, restarting one that stopped (F16), through
+the same `useOpenSession` the Inbox and the palette use.
+
+**Empty.** With nothing open or live the page says so instead of drawing three
+empty columns.
+
+**Not yet.** The last line of output, the time in a state and the diff of each
+session on its card, and a "ready for review" column (stopped with uncommitted
+changes), which needs a per-session view of the checkout's status.

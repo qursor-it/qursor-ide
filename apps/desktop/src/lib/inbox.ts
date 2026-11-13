@@ -11,7 +11,7 @@ export interface InboxEntry {
  * then every session working, across all projects.
  *
  * Open tabs come first, in tab order, then live sessions with no tab (a
- * routine's, F22). A session wants you while it is `waiting_input` or carries an
+ * routine's, F22). `stopped` (the Board's, F38) is what is left. A session wants you while it is `waiting_input` or carries an
  * unseen mark (F32) — a `stopped` one you have seen asks nothing and stays out.
  *
  * Structural parameters, like the rest of `lib/`: no store imports.
@@ -20,7 +20,7 @@ export function inboxSections(
 	tabs: ReadonlyArray<{ sessionId: string; projectId: string }>,
 	bySession: Record<string, { projectId: string; status: TerminalStatus }>,
 	unseen: Record<string, true>,
-): { needsYou: InboxEntry[]; working: InboxEntry[] } {
+): { needsYou: InboxEntry[]; working: InboxEntry[]; stopped: InboxEntry[] } {
 	const seen = new Set<string>();
 	const all: InboxEntry[] = [];
 	const add = (sessionId: string, projectId: string) => {
@@ -35,5 +35,7 @@ export function inboxSections(
 	return {
 		needsYou: all.filter(wants),
 		working: all.filter((e) => e.status === 'working' && !wants(e)),
+		// Open, finished and already seen: the Board's last column, not the Inbox.
+		stopped: all.filter((e) => e.status === 'stopped' && !wants(e)),
 	};
 }

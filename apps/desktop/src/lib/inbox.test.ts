@@ -14,8 +14,9 @@ describe('inboxSections', () => {
 			b: { projectId: 'p1', status: 'waiting_input' as const },
 			r: { projectId: 'p3', status: 'working' as const }, // a routine, no tab
 		};
-		const { needsYou, working } = inboxSections(tabs, bySession, { d: true });
+		const { needsYou, working, stopped } = inboxSections(tabs, bySession, { d: true });
 		expect(needsYou.map((e) => e.sessionId)).toEqual(['b', 'd']);
+		expect(stopped.map((e) => e.sessionId)).toEqual(['c']);
 		expect(working.map((e) => e.sessionId)).toEqual(['a', 'r']);
 		expect(needsYou[1]).toEqual({ sessionId: 'd', projectId: 'p2', status: 'stopped' });
 	});

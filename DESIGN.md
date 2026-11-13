@@ -835,6 +835,14 @@ Three stat tiles in a row (12px radius, `secondary` at 60%, a 12px label over a
 12px-radius dashed hairline, the accent book glyph, a 14px medium title and a
 12px line under it, with its one action as an outline button.
 
+### Board Card
+
+On a `muted` 40% ground, three columns 16px apart, each headed by a 14px
+medium label and a full-round count tinted like the status pill it matches. A
+card is a 12px-radius `card` with a hairline and `shadow-sm`, lifted to
+`shadow-md` on hover: the project tile and name in 12px metadata with the
+status dot at the right, then the title at 14px medium on up to two lines.
+
 ### Command Palette
 
 A dialog (16px radius, `shadow-popover`) pinned 14% from the top rather than

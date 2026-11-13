@@ -1,7 +1,7 @@
 import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { StatusDot } from '@components/layout/StatusDot';
-import { restartSession } from '@components/terminal/Terminal';
 import { Button } from '@factorai/ui';
+import { useOpenSession } from '@hooks/useOpenSession';
 import { useSessionTitles } from '@hooks/useSessionTitles';
 import { type InboxEntry, inboxSections } from '@lib/inbox';
 import { queryKeys } from '@lib/queryKeys';
@@ -10,7 +10,7 @@ import { cmd } from '@lib/tauri';
 import { useAttentionStore } from '@store/attentionStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useParams } from '@tanstack/react-router';
 import { useMemo } from 'react';
 
 /**
@@ -25,7 +25,7 @@ export function Inbox() {
 	const unseen = useAttentionStore((s) => s.unseen);
 	const projectsQ = useQuery({ queryKey: queryKeys.projects(), queryFn: () => cmd.listProjects() });
 	const { sessionId: activeId } = useParams({ strict: false }) as { sessionId?: string };
-	const navigate = useNavigate();
+	const openSession = useOpenSession();
 
 	const { needsYou, working } = useMemo(() => {
 		const known = tabsInKnownProjects(tabs, projectsQ.data);
@@ -47,15 +47,7 @@ export function Inbox() {
 
 	if (needsYou.length === 0 && working.length === 0) return null;
 
-	const open = (e: InboxEntry) => {
-		// A session that stopped while you were away is a restart, as a stopped
-		// tab is (F16).
-		if (!useTerminalStore.getState().bySession[e.sessionId]) restartSession(e.sessionId);
-		void navigate({
-			to: '/projects/$projectId/sessions/$sessionId',
-			params: { projectId: e.projectId, sessionId: e.sessionId },
-		});
-	};
+	const open = (e: InboxEntry) => openSession(e.sessionId, e.projectId);
 
 	const section = (label: string, entries: InboxEntry[], testId: string) =>
 		entries.length > 0 && (
