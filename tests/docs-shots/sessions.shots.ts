@@ -62,11 +62,20 @@ test('sessions: tabs and the session header', async ({ page }) => {
 	await status(page, 'pty-stripe', 'working');
 	await agentWrites(page, 'pty-stripe', TRANSCRIPT);
 	await rest(page);
-	// The Inbox at the top of the sidebar, the session header beside it and the
-	// first lines of the agent's output (F36, ADR-0092).
+	// The Inbox beside the app rail, the session header and the first lines of
+	// the agent's output (F36, ADR-0093).
+	await page.getByTestId('mode-sessions').click();
+	await rest(page);
 	await shot(page, 'sessions-tabs', { x: 0, y: 0, width: 880, height: 330 });
-	// The README's picture of the same moment, the whole window (ADR-0071).
+	// The README's picture of the same moment, the whole window (ADR-0071),
+	// with the Review panel open beside the session as a new install has it.
+	await page.getByRole('button', { name: 'Toggle file tree' }).click();
+	await page.getByRole('tab', { name: 'Review' }).click();
+	await rest(page);
 	await windowShot(page, 'sessions');
+	await page.getByRole('button', { name: 'Toggle file tree' }).click();
+	await page.getByTestId('rail-projects').click();
+	await rest(page);
 	// Every dot the sidebar can show at once: working, waiting, stopped.
 	const sidebar = await around([page.getByTestId('sidebar')], 0);
 	await shot(page, 'sessions-status', { ...sidebar, y: 96, height: 520 });
