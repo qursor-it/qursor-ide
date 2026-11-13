@@ -55,6 +55,7 @@ import {
 	applyDrop,
 	dropTarget,
 	fileIntoGroup,
+	filterRows,
 	groupsOf,
 	flattenProjects,
 	indicatorFor as toIndicator,
@@ -254,7 +255,12 @@ export const Sidebar = memo(function Sidebar() {
 	// user cannot see, the gesture is not offered — no sensor listeners, no key
 	// handler, and no structural rows in the row's menu. Switching to Manual is
 	// one click away and says what it does.
-	const canReorder = sort === 'manual';
+	const [term, setTerm] = useState('');
+	// Typing in the search box narrows the list here too. Display only: every
+	// write keeps going through `rows`, so a drop can never save a filtered tree.
+	const filtering = term.trim().length > 0;
+	const shownRows = useMemo(() => filterRows(rows, term), [rows, term]);
+	const canReorder = sort === 'manual' && !filtering;
 	const applyTree = useApplyTree();
 
 	const queryClient = useQueryClient();
@@ -507,8 +513,8 @@ export const Sidebar = memo(function Sidebar() {
 	const addError = useAddProjectStore((s) => s.error);
 
 	// Debounced search: typing navigates to /search?q=… (the route runs the
-	// query). Empty input doesn't navigate, so clearing the box is harmless.
-	const [term, setTerm] = useState('');
+	// query) and filters the project list. Empty input doesn't navigate, so
+	// clearing the box is harmless.
 
 	// `Mod+K` and `Mod+F` land here (F28). The store bumps a counter rather than
 	// setting a flag, so pressing the key while the field already has focus
@@ -701,6 +707,11 @@ export const Sidebar = memo(function Sidebar() {
 				    buttons are the size of a decision, and a column this narrow gives
 				    them the size of a footnote. What stays here is only the fact, so
 				    the list does not read as one still loading. */}
+				{filtering && shownRows.length === 0 && rows.length > 0 && (
+					<p className="px-4 py-2 text-muted-foreground text-xs" data-testid="sidebar-no-match">
+						No project matches.
+					</p>
+				)}
 				{sidebarQ.data && sidebarQ.data.length === 0 && (
 					<p className="px-4 py-2 text-muted-foreground text-xs" data-testid="sidebar-empty">
 						No projects yet.
@@ -738,11 +749,12 @@ export const Sidebar = memo(function Sidebar() {
 					    draws a line where the drop will land instead. */}
 					<SortableContext items={rowIds} strategy={noDisplacement}>
 						<ul className="space-y-0.5" data-testid="projects">
-							{rows.map((row) =>
+							{shownRows.map((row) =>
 								row.kind === 'group' ? (
 									<SidebarGroup
 										key={row.rowId}
 										row={row}
+										forceExpanded={filtering}
 										canReorder={canReorder}
 										activeProjectId={activeProjectId}
 										statusByProject={statusByProject}

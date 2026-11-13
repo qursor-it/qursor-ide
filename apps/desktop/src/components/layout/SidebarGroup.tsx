@@ -21,6 +21,8 @@ type GroupRow = Extract<SidebarRow, { kind: 'group' }>;
 
 interface SidebarGroupProps {
 	row: GroupRow;
+	/** Drawn open regardless of the stored state, as while the list is filtered. */
+	forceExpanded?: boolean;
 	canReorder: boolean;
 	activeProjectId: string | undefined;
 	statusByProject: Map<string, TerminalStatus | undefined>;
@@ -91,8 +93,10 @@ export function SidebarGroup({
 	groups = [],
 	onMoveToGroup,
 	onRemoveFromGroup,
+	forceExpanded = false,
 }: SidebarGroupProps) {
-	const expanded = useSidebarStore((s) => s.expanded.includes(row.rowId));
+	const stored = useSidebarStore((s) => s.expanded.includes(row.rowId));
+	const expanded = stored || forceExpanded;
 	const toggle = useSidebarStore((s) => s.toggleProject);
 	// Keyed by the row id, like a project row — see `SidebarProject`'s `rowId`.
 	const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({

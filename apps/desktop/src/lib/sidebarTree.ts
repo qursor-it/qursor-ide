@@ -69,6 +69,24 @@ export function viewRows(rows: SidebarRow[], sort: ProjectSort): SidebarRow[] {
 }
 
 /**
+ * The rows whose project name or folder contains `term` (case-insensitive). A
+ * group stays when its own name matches (with every child) or when any child
+ * does (with only those). For display only: never hand the result to a write.
+ */
+export function filterRows(rows: SidebarRow[], term: string): SidebarRow[] {
+	const needle = term.trim().toLowerCase();
+	if (!needle) return rows;
+	const hit = (p: { displayName: string; realPath: string }) =>
+		p.displayName.toLowerCase().includes(needle) || p.realPath.toLowerCase().includes(needle);
+	return rows.flatMap((row): SidebarRow[] => {
+		if (row.kind === 'project') return hit(row.project) ? [row] : [];
+		if (row.name.toLowerCase().includes(needle)) return [row];
+		const children = row.children.filter((c) => hit(c.project));
+		return children.length > 0 ? [{ ...row, children }] : [];
+	});
+}
+
+/**
  * The row with this id, wherever it sits — top level or inside a group.
  *
  * A group's children are `SidebarChild`, not `SidebarRow`, so a plain

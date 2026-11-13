@@ -835,6 +835,10 @@ matched role. Click a hit → navigate to that session (opens its terminal).
 added project whose display name or folder contains the query (matched in the
 renderer over the already-loaded project list, case-insensitive); clicking one
 opens that project. The fields read `Search projects and sessions…`.
+The sidebar's own box also narrows its project list as you type, by the same
+match: a group stays when its name matches (with all its projects) or when
+some of its projects do (only those, the group drawn open). While the list is
+filtered, drag and keyboard reordering are off; clearing the box restores it.
 
 **A hit names its project, not just its session.** Results are workspace-wide,
 and a session title on its own doesn't place a conversation: two projects

@@ -3,6 +3,7 @@ import {
 	applyDrop,
 	dropTarget,
 	fileIntoGroup,
+	filterRows,
 	flattenProjects,
 	groupsOf,
 	indicatorFor,
@@ -528,5 +529,24 @@ describe('applyDrop', () => {
 		applyDrop(rows, 'r-a', { kind: 'end' });
 
 		expect(shape(rows)).toEqual(['Pro', '> a', '> b', 'loose', 'Perso']);
+	});
+});
+
+describe('filterRows', () => {
+	const rows = [projectRow('alpha'), groupRow('work', ['beta', 'gamma']), projectRow('delta')];
+
+	it('keeps_matching_projects_and_groups_with_only_their_matching_children', () => {
+		expect(shape(filterRows(rows, 'GAM'))).toEqual(shape([groupRow('work', ['gamma'])]));
+		expect(shape(filterRows(rows, 'alp'))).toEqual(shape([projectRow('alpha')]));
+	});
+
+	it('a_group_name_match_keeps_every_child', () => {
+		expect(shape(filterRows(rows, 'work'))).toEqual(shape([groupRow('work', ['beta', 'gamma'])]));
+	});
+
+	it('matches_the_folder_and_ignores_blank_terms', () => {
+		expect(shape(filterRows(rows, '/code/del'))).toEqual(shape([projectRow('delta')]));
+		expect(filterRows(rows, '  ')).toBe(rows);
+		expect(filterRows(rows, 'zzz')).toEqual([]);
 	});
 });

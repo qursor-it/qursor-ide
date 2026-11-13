@@ -1157,4 +1157,24 @@ test.describe('sidebar rail', () => {
 		await page.reload();
 		await expect(page.getByTestId('sidebar')).toHaveCSS('width', '48px');
 	});
+
+	test('@smoke typing in the search box filters the project list', async ({ page }) => {
+		await installMockBridge(page, fixtureGroupedProjects());
+		await page.goto('/');
+		const list = page.getByTestId('projects');
+		const search = page.getByPlaceholder('Search projects and sessions…');
+
+		// alpha sits inside the Pro group, which opens to show it.
+		await search.fill('alp');
+		await expect(list.getByText('alpha', { exact: true })).toBeVisible();
+		await expect(list.getByText('zulu', { exact: true })).toBeHidden();
+		await expect(list.getByText('Perso')).toBeHidden();
+
+		await search.fill('nothing-like-it');
+		await expect(page.getByTestId('sidebar-no-match')).toBeVisible();
+
+		await search.fill('');
+		await expect(list.getByText('zulu', { exact: true })).toBeVisible();
+		await expect(list.getByText('Perso')).toBeVisible();
+	});
 });
