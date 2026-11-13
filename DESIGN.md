@@ -294,7 +294,7 @@ chroma ~0.016, not pure grey, so the dark reads as soft rather than as black.
 
 ### Light Theme
 
-Selected in Settings → Appearance (`system` by default, following the OS). It is
+Selected in Settings → Appearance; **light (Paper) by default** since ADR-0096, with `system` following the OS and `dark` as the other choices. It is
 a translation of everything above, never a tint: every token has its own value
 on `[data-theme="light"]`.
 
