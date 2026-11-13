@@ -151,7 +151,7 @@ test('@smoke a session you are not looking at turns red everywhere until opened'
 	await emitStatus(page, 'working');
 
 	// Leave the session for the project's own page; its tab stays open.
-	await page.locator('aside').getByText('foo').click();
+	await page.locator('aside nav').getByText('foo').click();
 	await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(1);
 
 	// Not the active session, so going idle is news even in a focused window.
