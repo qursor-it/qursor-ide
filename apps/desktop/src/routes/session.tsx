@@ -21,7 +21,13 @@ import { ChangesChip, StatusPill } from '@components/session/HeaderChips';
 import { GitOriginStrip } from '@components/session/GitOriginStrip';
 import { CheckoutMenu } from '@components/session/CheckoutMenu';
 import { SubAgentTranscript } from '@components/session/SubAgentTranscript';
-import { disposeTerminal, restartSession, Terminal } from '@components/terminal/Terminal';
+import {
+	disposeTerminal,
+	focusTerminal,
+	restartSession,
+	Terminal,
+} from '@components/terminal/Terminal';
+import { ReplyBox, WaitingBanner } from '@components/session/AgentReply';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
 import { useGitBranch } from '@hooks/useGitBranch';
 import { useSetSessionPinned } from '@hooks/useSetSessionPinned';
@@ -474,20 +480,29 @@ function SessionView() {
 			{isSubAgent ? (
 				<SubAgentTranscript sessionId={sessionId} />
 			) : (
-				<div className="min-h-0 flex-1">
-					<Terminal
-						key={restartEpoch}
+				<>
+					<WaitingBanner
 						sessionId={sessionId}
-						projectId={projectId}
-						projectCwd={projectCwd}
-						// Where a relative path in the output resolves from (F19).
-						// Recorded in the transcript, so it is only ever different from
-						// the project root for a resumed session started in a
-						// subdirectory — which is exactly the case the fallback exists
-						// for.
-						sessionCwd={session?.cwd ?? null}
+						status={live?.status}
+						agent={agent}
+						focusTerminal={() => focusTerminal(sessionId)}
 					/>
-				</div>
+					<div className="min-h-0 flex-1">
+						<Terminal
+							key={restartEpoch}
+							sessionId={sessionId}
+							projectId={projectId}
+							projectCwd={projectCwd}
+							// Where a relative path in the output resolves from (F19).
+							// Recorded in the transcript, so it is only ever different from
+							// the project root for a resumed session started in a
+							// subdirectory — which is exactly the case the fallback exists
+							// for.
+							sessionCwd={session?.cwd ?? null}
+						/>
+					</div>
+					<ReplyBox sessionId={sessionId} live={Boolean(live)} agent={agent} />
+				</>
 			)}
 			{/* The same dialog the tab strip opens — one component, so the two
 			    call sites cannot drift apart. A dead session needs no confirm, so

@@ -8666,3 +8666,29 @@ empty columns.
 **Not yet.** The last line of output, the time in a state and the diff of each
 session on its card, and a "ready for review" column (stopped with uncommitted
 changes), which needs a per-session view of the checkout's status.
+
+## F39 — Answering the agent: the waiting banner and the reply box
+
+**Specified and built 2026-11-13** (ADR-0091). Code in
+`components/session/AgentReply.tsx`, `lib/permissionPrompt.ts`, and
+`readSessionTail` / `sendToSession` / `pressKey` in `components/terminal/Terminal.tsx`.
+
+**The waiting banner** sits between the session header and the terminal while
+the session's status is `waiting_input`, and goes the moment it is not. 150ms
+after the status flips it reads the last 24 lines of the terminal:
+
+- If they end in Claude Code's permission menu — a `Do you want to …?` line
+  followed by options numbered from 1, boxed or not — the banner shows the
+  question and a button per option (the first one primary, each with its number
+  as a `kbd`). A click presses that number in the terminal, unpasted, and puts
+  the caret back in the terminal. A trailing `(esc)` is dropped from the label.
+- Otherwise it says "<agent> is waiting for you".
+- Either way it offers "Answer in the terminal", which focuses it.
+
+**The reply box** sits under the terminal, above the project's shell footer,
+for every live session: a one-row field growing to 8rem, Enter sends the text
+followed by Enter, Shift+Enter is a new line, IME composition is respected.
+Disabled, and saying why, when the session is not running. Text is pasted into
+the terminal, so the agent sees what it would have seen typed.
+
+**Never** does anything here send input without a click or an Enter in the box.

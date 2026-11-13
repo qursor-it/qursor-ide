@@ -843,6 +843,15 @@ card is a 12px-radius `card` with a hairline and `shadow-sm`, lifted to
 `shadow-md` on hover: the project tile and name in 12px metadata with the
 status dot at the right, then the title at 14px medium on up to two lines.
 
+### Waiting Banner and Reply Box
+
+The banner is a 12px-radius strip inset 16px from the card's sides, the accent
+at 10% with a hairline of it at 30% — blue, because it is the human's move — a
+question glyph, the question at 14px medium, and its options as small buttons
+(the first primary) each carrying its number in a `kbd`. The reply box is a
+`card` strip under the terminal with a hairline above it: an auto-growing field
+and a primary send button with the return glyph.
+
 ### Command Palette
 
 A dialog (16px radius, `shadow-popover`) pinned 14% from the top rather than

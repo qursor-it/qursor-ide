@@ -128,7 +128,9 @@ describe('childPath', () => {
 	it('joins with the separator the root uses', () => {
 		expect(childPath('/home/ada/code/app', 'CLAUDE.md')).toBe('/home/ada/code/app/CLAUDE.md');
 		expect(childPath('C:\\Users\\ada\\app', 'CLAUDE.md')).toBe('C:\\Users\\ada\\app\\CLAUDE.md');
-		expect(childPath('\\\\server\\share\\app', 'CLAUDE.md')).toBe('\\\\server\\share\\app\\CLAUDE.md');
+		expect(childPath('\\\\server\\share\\app', 'CLAUDE.md')).toBe(
+			'\\\\server\\share\\app\\CLAUDE.md',
+		);
 	});
 
 	it('does not double a trailing separator', () => {
