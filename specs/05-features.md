@@ -8525,3 +8525,46 @@ user's own Claude Code settings, so what they commit follows those settings.
 - How hunk staging is fed to `git apply --cached` (a patch built from the diff
   the view already shows).
 - Polling cadence while Git mode is open (F18 polls at 30 s, Changes at 3 s).
+
+## F36 — The Inbox: who needs you, across every project
+
+**Specified and built 2026-11-13**, the second slice of the layout redesign
+that ADR-0090 started. Code in `components/layout/Inbox.tsx` and
+`lib/inbox.ts`.
+
+**Why.** `PRODUCT.md` says success is knowing, without hunting, which agent
+needs you next. Until now that answer was spread over 8px dots in the project
+tree and the tab strip, so a session waiting in a collapsed project, or in a
+tab scrolled off the strip, was invisible.
+
+**Placement.** At the top of the expanded sidebar, under the search box and
+above `PROJECTS`. Not in the collapsed rail (The Rail Rule: nothing in it is
+read as prose). Capped at 45% of the sidebar's height, scrolling inside itself,
+so the project tree always keeps room.
+
+**What it lists.** Two sections, each with a count, each absent when empty;
+the whole Inbox renders nothing when both are:
+
+- **Needs you** — every session whose status is `waiting_input`, or that
+  carries F32's unseen mark (it stopped or started waiting while you were not
+  looking). A blue edge on the left of the row: blue is *your move*.
+- **Working** — every session whose status is `working` and that is not in
+  *Needs you*.
+
+A stopped session you have already seen is in neither. Candidates are the open
+tabs, in tab order, then live sessions with no tab (a routine's, F22, whose dot
+takes the "no tab" modifier). Tabs and live sessions of a project that no longer
+exists are dropped, as the strip drops them (F16).
+
+**A row** is the session's status dot and title, and under it the project's
+tile at 14px and its name. The row of the session you are looking at is raised
+(`aria-current="page"`). A click opens the session; one that stopped is
+restarted first, exactly as a click on a stopped tab is (F16).
+
+**Rows are buttons, not links**, so they never compete with the project tree's
+session links for the same name, and they carry `inbox-row-<sessionId>`.
+
+**Not yet.** The tab strip stays: closing a tab is still how a session is
+killed, and pull request tabs live there. Replacing the strip with the Inbox,
+the time a session has been waiting, and the question the agent asked are later
+slices.

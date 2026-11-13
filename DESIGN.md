@@ -808,6 +808,17 @@ dot's right and none on its left, so the mark was off-centre in its own column;
 the gutter is a sibling of the row's link rather than its first child for that
 reason.
 
+### Inbox Row
+
+The sidebar's Inbox (F36) lists sessions from every project, two lines a row:
+the status dot and the title in the foreground colour, then the project's 14px
+tile and name in 12px metadata, indented to the title. 8px radius, no
+background at rest, `secondary` at 60% on hover; the active session's row is
+raised with the `background` fill and `shadow-sm`. A row in *Needs you* carries
+a 3px inset blue edge on its left — blue because it is the human's move. Section
+headers are the 12px uppercase tracked voice of `PROJECTS`, with the count in a
+`secondary` pill.
+
 ### Tab Chips
 
 Two or three sibling lists inside one route — the project page's

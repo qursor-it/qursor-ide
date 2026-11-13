@@ -1,3 +1,4 @@
+import { Inbox } from '@components/layout/Inbox';
 import { DragChip } from '@components/layout/DragChip';
 import { ImportMenuItems } from '@components/layout/ImportMenuItems';
 import { SidebarGroup } from '@components/layout/SidebarGroup';
@@ -608,6 +609,8 @@ export const Sidebar = memo(function Sidebar() {
 					/>
 				</div>
 			</div>
+
+			<Inbox />
 
 			{/* Outside the scroll container, not `position: sticky` inside it: the
 			    header then needs an opaque background and a z-index to stop rows
