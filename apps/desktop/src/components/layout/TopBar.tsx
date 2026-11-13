@@ -2,7 +2,6 @@ import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
 import { GitTabs } from '@components/layout/GitTabs';
 import { ModeSwitch } from '@components/layout/ModeSwitch';
-import { SessionTabs } from '@components/layout/SessionTabs';
 import { Button, IconButton } from '@factorai/ui';
 import { useSettingsModal } from '@hooks/useSettingsModal';
 import { useChordLabel, useChordTitle } from '@hooks/useShortcuts';
@@ -101,14 +100,13 @@ export function TopBar() {
 					</IconButton>
 				)}
 			</header>
-			{/* Row 2, the work row. Both strips stay mounted and the idle one is
-		    hidden, so a mode flip costs the session strip nothing. */}
-			<div className="flex h-9 items-center px-3">
-				<div className={gitMode ? 'hidden' : 'flex min-w-0 flex-1 items-center'}>
-					<SessionTabs />
+			{/* Row 2 is Git mode's own tab strip; in Sessions mode what is open lives
+			    in the sidebar's Inbox (F36, ADR-0092). */}
+			{gitMode && (
+				<div className="flex h-9 items-center px-3">
+					<GitTabs />
 				</div>
-				{gitMode && <GitTabs />}
-			</div>
+			)}
 		</div>
 	);
 }

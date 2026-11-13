@@ -71,7 +71,7 @@ test.describe('projects sidebar', () => {
 		);
 		// xterm host renders a div under the terminal panel. xterm injects
 		// the .xterm class on the host element it opens into. `:visible` because
-		// pooled terminals stay in the pane once shown — see session-tabs.spec.ts.
+		// pooled terminals stay in the pane once shown — see open-sessions.spec.ts.
 		await expect(page.locator('.xterm:visible')).toBeVisible();
 		// The mock bridge resolves terminal_spawn, so the session registers as
 		// live → the header exposes the close control (running lifecycle).

@@ -20,9 +20,10 @@ A session is one agent process (`claude` or `codex`) and its transcript; see [Ag
   project's right-click menu, or `Mod+N`. With both agents installed, the chevron beside `+` and
   **New session with ▸** pick one.
 - **Resume**: click any session.
-- **Close**: `×` in the session header (**Close session**) kills the process and closes the tab.
+- **Close**: `×` in the session header (**Close session**), or on its row in the sidebar, kills
+  the process and closes the session.
 - **Restart**: when the process exits on its own, its output stays and **Restart** replaces `×`.
-  Clicking a stopped tab also restarts it.
+  Clicking a stopped session in the sidebar also restarts it.
 
 ## Status
 
@@ -31,30 +32,41 @@ A session is one agent process (`claude` or `codex`) and its transcript; see [Ag
   alt="The sidebar with every project expanded: a green dot on the working billing-api session, amber on the docs-site session waiting for input, grey on the stopped homelab session, and the same colour badged on each project's avatar"
 />
 
-Shown on the session, its tab and its project's avatar.
+Shown on the session, its row in the sidebar's Inbox and its project's avatar.
 
 | Dot | Meaning |
 | --- | --- |
 | Green | Working. |
 | Amber | Waiting for you: a permission prompt, a question, a turn handed back. |
-| Blue | Working with no tab open: a routine running in the background. |
+| Blue | Working without being open: a routine running in the background. |
 | Grey | Stopped. |
 | Hollow grey | Live, but the agent has not said what it is doing yet: a Codex session in its first second. |
 
-## Tabs
+## Open sessions
 
 <Shot
   src={require('../../../assets/images/guide/sessions-tabs@2x.png').default}
-  alt="Three session tabs across the top bar, each with its project's avatar and status; the active tab's session header shows billing-api, the agent, a pin and the session title above the agent's terminal output"
+  alt="The sidebar's Inbox above the project tree: two sessions under Needs you, one under Working, each with its project; the open session's header shows its title, a Working pill and the agent's terminal output"
 />
 
-- Each open session is a tab; it stays after the process exits. Drag to reorder.
-- Tabs return, stopped, on relaunch (**off**: **Settings → Sessions → Restore open tabs on
-  launch**).
-- `Mod+W` closes the focused tab, `Mod+PageDown` / `Mod+PageUp` step through tabs, middle-click
-  closes a tab.
+- Everything you have open sits at the top of the sidebar, from every project: **Needs you**
+  (waiting for you, or finished while you were away), **Working**, **Open** (stopped) and
+  **Pull requests**. It stays after the process exits, until you close it.
+- Open sessions return, stopped, on relaunch (**off**: **Settings → Sessions → Restore open tabs
+  on launch**).
+- `Mod+W` closes the session you are on, `Mod+PageDown` / `Mod+PageUp` step through the list,
+  middle-click closes a row.
 - Closing a working session asks first. **Settings → Confirmations**: **Ask before closing
   a running session** and **Ask when a middle-click closes a tab**.
+- `Mod+K` opens the command palette: sessions, projects and actions in one field. The grid
+  button in the top bar opens the **Board**, every open session in a column per state.
+
+## Answering the agent
+
+- When the agent waits for you, a banner over its terminal says what it asks. For Claude's
+  permission menu it shows a button per option, each pressing that number for you.
+- The box under the terminal sends a reply: `Enter` sends it, `Shift+Enter` starts a new line.
+- Nothing is sent without your click or your `Enter`.
 
 ## Pinning
 
@@ -78,5 +90,5 @@ stops the session, and moves the transcript to the system trash, where you can r
   alt="Search results for retry: four hits across billing-api, homelab and docs-site, each with its project, session title, a matching snippet and whether the user or the assistant said it"
 />
 
-`Mod+K` focuses the sidebar search. It full-text searches every added project; every word must
+`Mod+F` (outside the viewer) focuses the sidebar search. It full-text searches every added project; every word must
 match. Click a result to open the session.

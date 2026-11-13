@@ -22,12 +22,6 @@ export function prTabKey(projectId: string, number: number): string {
 	return `${PR_KEY_PREFIX}${projectId}#${number}`;
 }
 
-/** The part of a pull request key after its prefix, which is what the tab's
- *  `data-pr-tab` attribute carries. */
-export function prTabDomId(key: string): string {
-	return key.startsWith(PR_KEY_PREFIX) ? key.slice(PR_KEY_PREFIX.length) : key;
-}
-
 /** Whether `key` names a pull request tab of `projectId`. */
 export function isPrKeyOfProject(key: string, projectId: string): boolean {
 	return key.startsWith(`${PR_KEY_PREFIX}${projectId}#`);

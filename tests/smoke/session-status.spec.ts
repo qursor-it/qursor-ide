@@ -62,16 +62,12 @@ test('@smoke a status event moves every dot for that session', async ({ page }) 
 	await expect(page.locator('main header [title="Working"]')).toHaveCount(1);
 });
 
-test('@smoke the tab carries the status as a dot', async ({ page }) => {
+test('@smoke the open session carries the status as a dot', async ({ page }) => {
 	await openSession(page);
 	await emitStatus(page, 'waiting_input');
 
-	// A dot on the tab itself: inside a project's group the chip names the
-	// project, so the avatar badge the tab used to wear is gone (F16, ADR-0080).
-	const dot = page
-		.getByTestId('session-tabs')
-		.getByRole('tab')
-		.locator('[title="Waiting for input"]');
+	// A dot on its row in the Inbox, which replaced the tab strip (F36, ADR-0092).
+	const dot = page.getByTestId('inbox').locator('[title="Waiting for input"]');
 	await expect(dot).toHaveCount(1);
 });
 
@@ -136,7 +132,7 @@ test('@smoke a session that wants you while the window is away turns red until s
 	await emitStatus(page, 'working');
 	await emitWindow(page, 'tauri://blur');
 	await emitStatus(page, 'waiting_input');
-	await expect(page.getByTestId('session-tabs').locator('[data-unseen]')).toHaveCount(1);
+	await expect(page.getByTestId('inbox').locator('[data-unseen]')).toHaveCount(1);
 	await expect(page.locator('aside [data-unseen]')).not.toHaveCount(0);
 
 	// Back: it is the session in front, so coming back is seeing it.
@@ -152,15 +148,15 @@ test('@smoke a session you are not looking at turns red everywhere until opened'
 
 	// Leave the session for the project's own page; its tab stays open.
 	await page.locator('aside nav').getByText('foo').click();
-	await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(1);
+	await expect(page.getByTestId('inbox').locator('li')).toHaveCount(1);
 
 	// Not the active session, so going idle is news even in a focused window.
 	await emitStatus(page, 'waiting_input');
-	await expect(page.getByTestId('session-tabs').locator('[data-unseen]')).toHaveCount(1);
+	await expect(page.getByTestId('inbox').locator('[data-unseen]')).toHaveCount(1);
 	await expect(page.locator('aside [data-unseen]')).not.toHaveCount(0);
 	await expect(page.getByTestId('project-icon').locator('[data-unseen]')).not.toHaveCount(0);
 
 	// Opening it is seeing it.
-	await page.getByTestId('session-tabs').getByRole('tab').click();
+	await page.getByTestId('inbox-row-session-uuid-001').click();
 	await expect(page.locator('[data-unseen]')).toHaveCount(0);
 });

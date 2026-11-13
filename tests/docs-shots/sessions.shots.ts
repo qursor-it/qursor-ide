@@ -62,9 +62,9 @@ test('sessions: tabs and the session header', async ({ page }) => {
 	await status(page, 'pty-stripe', 'working');
 	await agentWrites(page, 'pty-stripe', TRANSCRIPT);
 	await rest(page);
-	// The tab strip, the header under it and the first lines of the agent's
-	// output: enough terminal to say what the tab holds.
-	await shot(page, 'sessions-tabs', { x: 0, y: 0, width: 880, height: 270 });
+	// The Inbox at the top of the sidebar, the session header beside it and the
+	// first lines of the agent's output (F36, ADR-0092).
+	await shot(page, 'sessions-tabs', { x: 0, y: 0, width: 880, height: 330 });
 	// The README's picture of the same moment, the whole window (ADR-0071).
 	await windowShot(page, 'sessions');
 	// Every dot the sidebar can show at once: working, waiting, stopped.

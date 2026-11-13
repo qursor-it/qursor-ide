@@ -73,17 +73,17 @@ test.describe('when the index catches up', () => {
 		await expect(rows.filter({ hasText: 'New session' })).toHaveCount(0);
 	});
 
-	test('@smoke the tab takes the title claude derived', async ({ page }) => {
+	test('@smoke the open session takes the title claude derived', async ({ page }) => {
 		await installMockBridge(page, fixture());
 		await page.goto('/');
 
 		await page.getByRole('button', { name: 'Expand alpha' }).click();
 		await page.getByRole('button', { name: 'New session in alpha' }).click();
 
-		// The strip has no poll of its own, so before this fix the tab kept the
-		// short id it was born with for as long as the session stayed open.
-		const tab = page.getByTestId('session-tabs').getByRole('tab');
-		await expect(tab).toContainText(NEW_ID.slice(0, 8));
+		// The Inbox has no poll of its own: until the index has a title the row
+		// says what it is, and it takes the title once the watcher says so.
+		const tab = page.getByTestId(`inbox-row-${NEW_ID}`);
+		await expect(tab).toContainText('New session');
 
 		await indexSession(page, 'Wire up the exporter');
 

@@ -40,9 +40,13 @@ test.describe('inbox', () => {
 		).toBeVisible();
 		await expect(page.getByTestId('inbox-working')).toHaveCount(0);
 
-		// Stopped while you are looking at it: nothing to see, so it leaves.
+		// Stopped while you are looking at it: nothing to see, but still open, so
+		// it moves to Open until you close it (F16).
 		await emitStatus(page, 'stopped');
-		await expect(page.getByTestId('inbox')).toHaveCount(0);
+		await expect(
+			page.getByTestId('inbox-open').getByTestId(`inbox-row-${SESSION_ID}`),
+		).toBeVisible();
+		await expect(page.getByTestId('inbox-needs-you')).toHaveCount(0);
 	});
 
 	test('@smoke a row opens its session', async ({ page }) => {

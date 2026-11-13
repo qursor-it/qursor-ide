@@ -731,6 +731,9 @@ place in the app that lays out arbitrary key/value data.
 
 ### Session Tabs (signature)
 
+**Git mode only since ADR-0092**: in Sessions mode what is open is the Inbox
+(see Inbox Row). The rules below still describe Git mode's strip.
+
 The horizontal strip that stands in for an editor's file tabs, one tab per live
 agent session.
 
@@ -815,7 +818,7 @@ the status dot and the title in the foreground colour, then the project's 14px
 tile and name in 12px metadata, indented to the title. 8px radius, no
 background at rest, `secondary` at 60% on hover; the active session's row is
 raised with the `background` fill and `shadow-sm`. A row in *Needs you* carries
-a 3px inset blue edge on its left — blue because it is the human's move. Section
+a 3px inset blue edge on its left — blue because it is the human's move. Every row ends in a close `IconButton`, shown on hover, on focus and on the current row. Section
 headers are the 12px uppercase tracked voice of `PROJECTS`, with the count in a
 `secondary` pill.
 

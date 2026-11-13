@@ -2937,6 +2937,11 @@ off the file-tree toggle (Q15). It belongs to the keybinding pass.
 
 ## F16 — Session tabs
 
+**Since 2026-11-13 the open sessions are listed in the sidebar's Inbox, not in a
+strip in the top bar (ADR-0092, F36).** The rules below about what is open, how
+it is restored and how it closes still hold; drag, groups and the strip's
+layout no longer apply to Sessions mode, and Git mode keeps its own strip.
+
 **Behavior.** The top bar carries a tab per **open session**, for switching
 between agents without going through the sidebar.
 
@@ -8597,10 +8602,15 @@ restarted first, exactly as a click on a stopped tab is (F16).
 **Rows are buttons, not links**, so they never compete with the project tree's
 session links for the same name, and they carry `inbox-row-<sessionId>`.
 
-**Not yet.** The tab strip stays: closing a tab is still how a session is
-killed, and pull request tabs live there. Replacing the strip with the Inbox,
-the time a session has been waiting, and the question the agent asked are later
-slices.
+**Since ADR-0092 it lists everything open**: after *Working* come **Open**
+(open sessions that are stopped and seen) and **Pull requests** (open pull
+request tabs, `#N title` and their project). Every row has a close `×` (on
+hover, focus, or the current row) and closes on middle-click, through the same
+`CloseSessionConfirm` the header uses; `Mod+W` closes the current session or
+pull request and `Mod+PageUp/PageDown` step through the list in order.
+
+**Not yet.** The time a session has been waiting, and the question the agent
+asked, on its row.
 
 ## F37 — The command palette
 
