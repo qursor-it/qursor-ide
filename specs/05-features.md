@@ -759,9 +759,10 @@ mark, the profile and the checkout picker. The second says what it is and what
 you can do: the status dot (still the one animated dot), the session title at
 14px medium in the foreground colour, a **status pill** naming the state in
 words (`Working`, `Needs you` in the accent, `Stopped`; no `title`, the dot has
-it), and a **changes chip** — `N files +A −D` for the checkout, polled every
-10s on the Changes panel's own query, absent outside a repository and on a clean
-tree — whose click opens the file panel on its Changes tab (F13). The pin and
+it), and a **changes chip** — `N files +A −D` for the checkout, read when the
+session is opened and when the window regains focus (no poll of its own; with
+the panel open it shares the panel's query and its 3s poll), absent outside a
+repository and on a clean tree — whose click opens the file panel on its Changes tab (F13). The pin and
 the close control sit at the right end of that row.
 
 **The header's one control is a close `×`**, an `IconButton` at the right

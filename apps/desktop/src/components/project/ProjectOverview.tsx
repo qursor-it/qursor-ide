@@ -1,6 +1,7 @@
 import type { Project } from '@factorai/types';
 import { Button } from '@factorai/ui';
 import { useFileViewer } from '@hooks/useFileViewer';
+import { childPath } from '@lib/paths';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useAttentionStore } from '@store/attentionStore';
@@ -42,7 +43,7 @@ export function ProjectOverview({ project }: { project: Project }) {
 		enabled: !project.missing,
 	});
 	const changes = statusQ.data?.repoRoot ? statusQ.data.changes : null;
-	const claudeMd = `${project.realPath.replace(/\/$/, '')}/CLAUDE.md`;
+	const claudeMd = childPath(project.realPath, 'CLAUDE.md');
 	const rulesQ = useQuery({
 		queryKey: queryKeys.pathKind(claudeMd),
 		queryFn: () => cmd.pathKinds([claudeMd]),

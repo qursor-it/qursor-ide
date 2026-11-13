@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isWithin, relativeToRoot } from './paths';
+import { childPath, isWithin, relativeToRoot } from './paths';
 
 describe('relativeToRoot', () => {
 	it('strips the root and its separator, with no leading ./', () => {
@@ -121,5 +121,18 @@ describe('isWithin', () => {
 	it('keeps POSIX comparisons case-sensitive', () => {
 		expect(isWithin('/Home/a/repo/src', '/home/a/repo')).toBe(false);
 		expect(relativeToRoot('/Home/a/repo/src', '/home/a/repo')).toBe('/Home/a/repo/src');
+	});
+});
+
+describe('childPath', () => {
+	it('joins with the separator the root uses', () => {
+		expect(childPath('/home/ada/code/app', 'CLAUDE.md')).toBe('/home/ada/code/app/CLAUDE.md');
+		expect(childPath('C:\\Users\\ada\\app', 'CLAUDE.md')).toBe('C:\\Users\\ada\\app\\CLAUDE.md');
+		expect(childPath('\\\\server\\share\\app', 'CLAUDE.md')).toBe('\\\\server\\share\\app\\CLAUDE.md');
+	});
+
+	it('does not double a trailing separator', () => {
+		expect(childPath('/home/ada/', 'CLAUDE.md')).toBe('/home/ada/CLAUDE.md');
+		expect(childPath('C:\\', 'CLAUDE.md')).toBe('C:\\CLAUDE.md');
 	});
 });

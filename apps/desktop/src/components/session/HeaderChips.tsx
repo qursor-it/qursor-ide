@@ -26,13 +26,11 @@ export function StatusPill({ status }: { status: TerminalStatus }) {
 	);
 }
 
-/** Slower than the Changes panel's 3s: this is a summary, not the list. */
-const CHIP_POLL_MS = 10_000;
-
 /**
  * What the agent has changed in this checkout, as a door onto the Changes panel
- * (F3, F13). Shares the panel's query, so with the panel open the two agree to
- * the poll. Absent outside a repository and on a clean tree.
+ * (F3, F13). No poll of its own: it reads when the session is opened and when
+ * the window regains focus, and shares the panel's query, so with the panel open
+ * it follows the panel's 3s poll. Absent outside a repository and on a clean tree.
  */
 export function ChangesChip({ root }: { root: string | null }) {
 	const setOpen = usePanelStore((s) => s.setOpen);
@@ -41,7 +39,7 @@ export function ChangesChip({ root }: { root: string | null }) {
 		queryKey: queryKeys.gitStatus(root ?? ''),
 		queryFn: () => cmd.gitStatus(root ?? ''),
 		enabled: Boolean(root),
-		refetchInterval: CHIP_POLL_MS,
+		refetchOnMount: 'always',
 	});
 	const changes = data?.repoRoot ? data.changes : [];
 	if (changes.length === 0) return null;
