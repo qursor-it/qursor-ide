@@ -3,7 +3,7 @@ import { Button } from '@factorai/ui';
 import { Check, Circle, CircleDot } from 'lucide-react';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
-import { usePanelStore } from '@store/panelStore';
+import { useNavigate } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 
 const PILL: Record<TerminalStatus, { label: string; className: string }> = {
@@ -33,9 +33,16 @@ export function StatusPill({ status }: { status: TerminalStatus }) {
  * header keys it by session) and when the window regains focus, and shares the panel's query, so with the panel open
  * it follows the panel's 3s poll. Absent outside a repository and on a clean tree.
  */
-export function ChangesChip({ root }: { root: string | null }) {
-	const setOpen = usePanelStore((s) => s.setOpen);
-	const setTab = usePanelStore((s) => s.setTab);
+export function ChangesChip({
+	root,
+	projectId,
+	sessionId,
+}: {
+	root: string | null;
+	projectId: string;
+	sessionId: string;
+}) {
+	const navigate = useNavigate();
 	const { data } = useQuery({
 		queryKey: queryKeys.gitStatus(root ?? ''),
 		queryFn: () => cmd.gitStatus(root ?? ''),
@@ -53,10 +60,12 @@ export function ChangesChip({ root }: { root: string | null }) {
 			size="sm"
 			data-testid="session-changes"
 			title="Review the changes in this checkout"
-			onClick={() => {
-				setTab('changes');
-				setOpen(true);
-			}}
+			onClick={() =>
+				void navigate({
+					to: '/projects/$projectId/sessions/$sessionId/review',
+					params: { projectId, sessionId },
+				})
+			}
 			className="h-6 shrink-0 gap-1.5 rounded-full px-2.5 font-normal text-xs"
 		>
 			<span>

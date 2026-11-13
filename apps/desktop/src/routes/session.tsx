@@ -366,7 +366,7 @@ function SessionView() {
 					</span>
 					{!isSubAgent && <StatusPill status={live?.status ?? 'stopped'} />}
 					{/* Keyed so showing a session, even one of the same checkout, reads git again. */}
-					<ChangesChip key={sessionId} root={root} />
+					<ChangesChip key={sessionId} root={root} projectId={projectId} sessionId={sessionId} />
 					<span className="flex-1" />
 					{/* **The pin's control, and its mark** (F2). The session you are looking
 					    at is the one you know you want kept, so this is where the decision

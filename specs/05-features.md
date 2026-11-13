@@ -8764,3 +8764,32 @@ sections, each under a 12px uppercase label:
 Reads only queries the app already keeps — the Changes panel's status, the
 session index, `session_usage`, `session_plan` — with no poll of its own beyond
 the panel's.
+
+## F43 — Reviewing a session's changes on one screen
+
+**Specified and built 2026-11-13.** Code in `routes/review.tsx` and
+`lib/agentSummary.ts`. Route `/projects/$projectId/sessions/$sessionId/review`.
+
+**Doors.** The session header's changes chip (F3) and the Review tab's *Review
+all changes* on a session (F42; off a session that button still goes to the
+Changes tab).
+
+**Layout.** In the work card: a header with the project, the session title and
+the branch, *Back to session*, the title *Review changes* with the file count
+and `+A −D`, the session's state pill, and *Commit…*. Under it three columns:
+
+- **Files**, the project folder's changed files in the Changes tab's order,
+  each with a *reviewed* checkbox (kept while the page is open, not stored) and
+  the count `n / m reviewed`. Clicking a name shows its diff.
+- **The diff** of the file picked (the first one until you pick), with the
+  viewer's own diff editor and the same pair the Changes tab would compare.
+- **The side**: *What the agent said* — the text of the newest assistant message
+  in the last 40 transcript events — the agent's *Plan* (F40) when it has one,
+  and *Ask the agent to revise*: a note sent to the session as a reply prefixed
+  `About <file>:` (F39's paste path, then Enter), after which you are back on
+  the session to watch it work. Disabled when the session is not running.
+
+**Leaving.** *Back to session* or `Esc`. *Commit…* opens Git mode on the
+project (F35), where commits are made; nothing on this page writes to git.
+
+**Not in it.** Comments anchored to diff lines, and the checks the agent ran.

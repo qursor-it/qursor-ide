@@ -5,6 +5,7 @@ import { revealWindow } from '@lib/windowReveal';
 import { useEffect } from 'react';
 import { ErrorBoundary } from './components/layout/ErrorBoundary';
 import { boardRoute } from './routes/board';
+import { reviewRoute } from './routes/review';
 import { indexRoute } from './routes/index';
 import { projectRoute } from './routes/project';
 import { pullRequestRoute } from './routes/pullRequest';
@@ -19,6 +20,7 @@ const routeTree = rootRoute.addChildren([
 	pullRequestRoute,
 	searchRoute,
 	boardRoute,
+	reviewRoute,
 ]);
 
 const router = createRouter({ routeTree, history: createHashHistory() });

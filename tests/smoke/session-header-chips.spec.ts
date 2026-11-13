@@ -6,7 +6,9 @@ import { expect, test } from '@playwright/test';
 import { FOO_ID, fixtureWithChanges, installMockBridge } from './fixtures';
 
 test.describe('session header', () => {
-	test('@smoke says the state in words and opens Changes from its diff chip', async ({ page }) => {
+	test('@smoke says the state in words and opens the review from its diff chip', async ({
+		page,
+	}) => {
 		await installMockBridge(page, fixtureWithChanges());
 		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
 		await expect(page.locator('.xterm:visible')).toBeVisible();
@@ -18,13 +20,9 @@ test.describe('session header', () => {
 		await expect(chip).toContainText('+19');
 		await expect(chip).toContainText('−2');
 
-		await expect(page.getByTestId('file-tree-panel')).toHaveCount(0);
 		await chip.click();
-		await expect(page.getByTestId('file-tree-panel')).toBeVisible();
-		await expect(page.getByRole('tab', { name: 'Changes' })).toHaveAttribute(
-			'aria-selected',
-			'true',
-		);
+		await expect(page).toHaveURL(/sessions\/session-uuid-001\/review$/);
+		await expect(page.getByTestId('review-mode')).toBeVisible();
 	});
 });
 
@@ -109,7 +107,7 @@ test.describe('changes chip refresh', () => {
 });
 
 test.describe('review tab', () => {
-	test('@smoke lists the changed files and opens one as a diff; the button goes to Changes', async ({
+	test('@smoke lists the changed files and opens one as a diff; the button opens the review', async ({
 		page,
 	}) => {
 		await installMockBridge(page, fixtureWithChanges());
@@ -123,9 +121,6 @@ test.describe('review tab', () => {
 		await expect(page).toHaveURL(/file=.*new-file\.ts/);
 
 		await page.getByTestId('review-all-changes').click();
-		await expect(page.getByRole('tab', { name: 'Changes' })).toHaveAttribute(
-			'aria-selected',
-			'true',
-		);
+		await expect(page.getByTestId('review-mode')).toBeVisible();
 	});
 });

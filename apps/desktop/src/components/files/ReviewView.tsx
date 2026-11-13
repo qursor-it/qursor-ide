@@ -9,7 +9,7 @@ import { formatCost } from '@lib/usage';
 import { usePanelStore } from '@store/panelStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQuery } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
+import { useNavigate, useParams } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
 function Section({
@@ -52,6 +52,7 @@ export function ReviewView() {
 	const { projectId } = useActiveProject();
 	const live = useTerminalStore((s) => (sessionId ? s.bySession[sessionId] : undefined));
 	const setTab = usePanelStore((s) => s.setTab);
+	const navigate = useNavigate();
 	const { status: git } = useGitStatus();
 	const sessionsQ = useQuery({
 		queryKey: queryKeys.sessions(projectId ?? ''),
@@ -123,7 +124,16 @@ export function ReviewView() {
 							size="sm"
 							className="mt-2 w-full"
 							data-testid="review-all-changes"
-							onClick={() => setTab('changes')}
+							// On a session the whole-screen review (F43); elsewhere the
+							// Changes tab, which lists every file.
+							onClick={() =>
+								sessionId && projectId
+									? void navigate({
+											to: '/projects/$projectId/sessions/$sessionId/review',
+											params: { projectId, sessionId },
+										})
+									: setTab('changes')
+							}
 						>
 							Review all changes
 						</Button>
