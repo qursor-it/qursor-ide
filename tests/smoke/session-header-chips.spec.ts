@@ -27,3 +27,48 @@ test.describe('session header', () => {
 		);
 	});
 });
+
+test.describe('session plan and cost', () => {
+	test('@smoke shows the agent plan as a count that opens its steps, and the cost', async ({
+		page,
+	}) => {
+		const fx = fixtureWithChanges();
+		fx.sessionPlans = {
+			'session-uuid-001': [
+				{ content: 'Find where the duplicate is created', status: 'completed' },
+				{ content: 'Add a retry test', status: 'in_progress' },
+				{ content: 'Run the webhook suite', status: 'pending' },
+			],
+		};
+		fx.sessionUsage = {
+			'session-uuid-001': {
+				sessionId: 'session-uuid-001',
+				model: 'claude-opus',
+				inputTokens: 1000,
+				outputTokens: 500,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				reasoningTokens: 0,
+				totalTokens: 1500,
+				costUsd: 0.84,
+			},
+		};
+		await installMockBridge(page, fx);
+		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
+
+		const chip = page.getByTestId('session-plan');
+		await expect(chip).toHaveText('Plan 1/3');
+		await chip.click();
+		const list = page.getByTestId('session-plan-list');
+		await expect(list).toContainText('Add a retry test');
+		await expect(list.getByLabel('Done')).toHaveCount(1);
+		await expect(page.getByTestId('session-cost')).toContainText('0.84');
+	});
+
+	test('@smoke a session with no plan shows no plan chip', async ({ page }) => {
+		await installMockBridge(page, fixtureWithChanges());
+		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
+		await expect(page.locator('.xterm:visible')).toBeVisible();
+		await expect(page.getByTestId('session-plan')).toHaveCount(0);
+	});
+});

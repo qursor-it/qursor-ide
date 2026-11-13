@@ -826,7 +826,7 @@ Two rows inside the card's `card` strip, 10px vertical padding. Row one is
 is the status dot, the title at 14px medium, a full-round status pill (`working`
 at a 15% tint of its green, `waiting` at 15% of the accent, `stopped` on
 `secondary`) and the changes chip, a 24px full-round `secondary` button with the
-counts in the git hues. Pin and close end the row.
+counts in the git hues. After the changes chip, the plan chip (same shape, a list glyph and `Plan n/m`, opening a popover of steps) and the cost in 12px metadata. Pin and close end the row.
 
 ### Project Overview
 

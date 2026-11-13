@@ -33,6 +33,7 @@ import type {
 	MediaProbe,
 	Mention,
 	PathKind,
+	PlanItem,
 	PdfContents,
 	PrCheckoutPlan,
 	PrComment,
@@ -402,6 +403,7 @@ export const cmd = {
 	/** The latest known rate-limit windows per profile. */
 	getUsage: () => invoke<ProviderUsage[]>('get_usage'),
 	sessionUsage: (sessionId: string) => invoke<SessionUsage | null>('session_usage', { sessionId }),
+	sessionPlan: (sessionId: string) => invoke<PlanItem[] | null>('session_plan', { sessionId }),
 	/** Every Claude profile, default first (F25). */
 	listProfiles: () => invoke<Profile[]>('list_profiles'),
 	/** Create one, making its config directory if it is missing and leaving it
@@ -1002,6 +1004,8 @@ interface TestFixture {
 	ghBlobs?: Record<string, string>;
 	/** What `get_usage` answers (usage monitor). Absent means no readings yet. */
 	usage?: ProviderUsage[];
+	/** `session_plan` keyed by session id. Absent answers null. */
+	sessionPlans?: Record<string, PlanItem[]>;
 	/** `session_usage` keyed by session id. Absent answers null. */
 	sessionUsage?: Record<string, SessionUsage>;
 	/** Project Intelligence (F33). The switch is `settings.projectIntelligence`,
@@ -1901,6 +1905,8 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			return null as unknown as T;
 		case 'get_usage':
 			return (fx?.usage ?? []) as unknown as T;
+		case 'session_plan':
+			return (fx?.sessionPlans?.[String(args?.sessionId ?? '')] ?? null) as unknown as T;
 		case 'session_usage':
 			return (fx?.sessionUsage?.[String(args?.sessionId ?? '')] ?? null) as unknown as T;
 		case 'list_profiles':

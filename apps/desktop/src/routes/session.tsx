@@ -17,7 +17,7 @@ import { useState } from 'react';
 import { CloseSessionConfirm, needsCloseConfirm } from '@components/dialog/CloseSessionConfirm';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { StatusDot } from '@components/layout/StatusDot';
-import { ChangesChip, StatusPill } from '@components/session/HeaderChips';
+import { ChangesChip, CostLabel, PlanChip, StatusPill } from '@components/session/HeaderChips';
 import { GitOriginStrip } from '@components/session/GitOriginStrip';
 import { CheckoutMenu } from '@components/session/CheckoutMenu';
 import { SubAgentTranscript } from '@components/session/SubAgentTranscript';
@@ -366,6 +366,8 @@ function SessionView() {
 					</span>
 					{!isSubAgent && <StatusPill status={live?.status ?? 'stopped'} />}
 					<ChangesChip root={root} />
+					{!isSubAgent && <PlanChip sessionId={sessionId} status={live?.status} />}
+					{!isSubAgent && <CostLabel sessionId={sessionId} />}
 					<span className="flex-1" />
 					{/* **The pin's control, and its mark** (F2). The session you are looking
 					    at is the one you know you want kept, so this is where the decision

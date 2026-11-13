@@ -8692,3 +8692,26 @@ Disabled, and saying why, when the session is not running. Text is pasted into
 the terminal, so the agent sees what it would have seen typed.
 
 **Never** does anything here send input without a click or an Enter in the box.
+
+## F40 — The agent's plan and the session's cost, in the session header
+
+**Specified and built 2026-11-13.** Code in `services/session_plan.rs`, the
+`session_plan` command in `commands/usage.rs`, and `PlanChip` / `CostLabel` in
+`components/session/HeaderChips.tsx`.
+
+**The plan** is the todo list Claude Code keeps with its `TodoWrite` tool.
+`session_plan(sessionId)` returns the items of the **last** `TodoWrite` call in
+the session's transcript (`content` and `status`: `pending`, `in_progress`,
+`completed`), or null for an unknown session, a missing transcript, a Codex
+session or one that never wrote a plan. It scans the file once and parses only
+the lines that name the tool. The renderer asks again whenever the session's
+status changes (the status is part of the query key), and never on a timer.
+
+In the header's second row, after the changes chip: a chip `Plan done/total`
+that opens a popover listing the steps — a check for done (struck through), the
+accent's dot for in progress (medium weight), an empty circle for to do.
+Absent with no plan.
+
+**The cost** is `session_usage`'s estimate (F34), shown as metadata text after
+the plan chip, from the status bar's own query so it adds no read while that
+bar is on. Absent when there is no estimate.

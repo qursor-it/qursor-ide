@@ -145,4 +145,5 @@ export const queryKeys = {
 	/** One session's tokens and estimated cost (usage monitor), for the status
 	 *  bar. Polled while that session is in front. */
 	sessionUsage: (sessionId: string) => ['sessionUsage', sessionId] as const,
+	sessionPlan: (sessionId: string, status: string) => ['sessionPlan', sessionId, status] as const,
 };
