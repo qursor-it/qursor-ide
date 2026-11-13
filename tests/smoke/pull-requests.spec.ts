@@ -7,6 +7,7 @@ import {
 	fixtureWithPullRequestsViaRemote,
 	fixtureWithPullRequestsSignedOut,
 	installMockBridge,
+	showInbox,
 } from './fixtures';
 
 /**
@@ -207,6 +208,7 @@ test.describe('pull requests tab', () => {
 		await page.goto(PROJECT);
 		await openPrs(page);
 		const strip = page.getByTestId('inbox-prs');
+		await showInbox(page);
 		await expect(strip).toHaveCount(0);
 
 		await page.getByTestId('pr-row-11').click();
@@ -246,6 +248,7 @@ test.describe('pull requests tab', () => {
 		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
 		const strip = page.getByTestId('inbox-prs');
+		await showInbox(page);
 		await expect(strip.locator('li')).toHaveCount(2);
 
 		// Closing one you are not on leaves the page alone.
@@ -268,6 +271,7 @@ test.describe('pull requests tab', () => {
 		await page.getByTestId('pr-row-11').click();
 		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
+		await showInbox(page);
 		await expect(page.getByTestId('inbox-prs').locator('li')).toHaveCount(2);
 		await expect
 			.poll(() => page.evaluate(() => localStorage.getItem('factorai.prTabs') ?? ''))
@@ -275,6 +279,7 @@ test.describe('pull requests tab', () => {
 
 		await page.reload();
 		const strip = page.getByTestId('inbox-prs');
+		await showInbox(page);
 		await expect(strip.locator('li')).toHaveCount(2);
 		await expect(strip.getByTestId(`inbox-pr-${FOO_ID}-12`)).toHaveAttribute(
 			'aria-current',
@@ -389,6 +394,7 @@ test.describe('pull request page layout', () => {
 		// Entering the pull request's tab again switches the panel, once.
 		await page.goto(PROJECT);
 		const strip = page.getByTestId('inbox-prs');
+		await showInbox(page);
 		await strip.getByTestId(`inbox-pr-${FOO_ID}-11`).click();
 		await expect(page.getByRole('tab', { name: 'PRs' })).toHaveAttribute('aria-selected', 'true');
 		const files = page.getByTestId('pr-files');
@@ -457,6 +463,7 @@ test.describe('pull request page layout', () => {
 		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
 
 		const strip = page.getByTestId('inbox-prs');
+		await showInbox(page);
 		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
 		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
@@ -520,6 +527,7 @@ test.describe('review with agent', () => {
 
 		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}/sessions/${NEW_ID}`));
 		// The pull request's own row, then the review session.
+		await showInbox(page);
 		await expect(page.getByTestId('inbox-prs').locator('li')).toHaveCount(1);
 		await expect(page.getByTestId(`inbox-row-${NEW_ID}`)).toBeVisible();
 

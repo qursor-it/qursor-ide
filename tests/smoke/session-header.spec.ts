@@ -6,6 +6,7 @@ import {
 	fixtureTwoProjectsManySessions,
 	fixtureWithChanges,
 	installMockBridge,
+	showInbox,
 } from './fixtures';
 
 /**
@@ -48,6 +49,7 @@ test.describe('session header', () => {
 
 		await expect(page.getByText('Close this session?')).toHaveCount(0);
 		await expect(page.locator('.xterm:visible')).toBeVisible();
+		await showInbox(page);
 		await expect(page.getByTestId('inbox').locator('li')).toHaveCount(1);
 		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
 		expect(calls.some((c) => c.name === 'terminal_kill')).toBe(false);
@@ -84,6 +86,7 @@ test.describe('session header', () => {
 		const headerText = await page.getByRole('dialog').innerText();
 		await page.getByRole('button', { name: /Keep it running/ }).click();
 
+		await showInbox(page);
 		await fromTab.click();
 		expect(await page.getByRole('dialog').innerText()).toBe(headerText);
 	});

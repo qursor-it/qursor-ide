@@ -1,5 +1,5 @@
 import { type Page, expect, test } from '@playwright/test';
-import { ALPHA_ID, fixtureTwoProjectsManySessions, installMockBridge } from './fixtures';
+import { ALPHA_ID, fixtureTwoProjectsManySessions, installMockBridge, showInbox } from './fixtures';
 
 /**
  * A session that is live but not indexed yet (specs/05-features.md F6,
@@ -82,6 +82,7 @@ test.describe('when the index catches up', () => {
 
 		// The Inbox has no poll of its own: until the index has a title the row
 		// says what it is, and it takes the title once the watcher says so.
+		await showInbox(page);
 		const tab = page.getByTestId(`inbox-row-${NEW_ID}`);
 		await expect(tab).toContainText('New session');
 

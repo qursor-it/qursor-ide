@@ -11,7 +11,7 @@
  * hook `pending-session.spec.ts` uses for `sessions:changed`.
  */
 import { expect, test } from '@playwright/test';
-import { fixtureOneProjectOneSession, installMockBridge } from './fixtures';
+import { fixtureOneProjectOneSession, installMockBridge, showInbox } from './fixtures';
 
 const TERMINAL_ID = 'mock-terminal-id';
 
@@ -67,6 +67,7 @@ test('@smoke the open session carries the status as a dot', async ({ page }) => 
 	await emitStatus(page, 'waiting_input');
 
 	// A dot on its row in the Inbox, which replaced the tab strip (F36, ADR-0092).
+	await showInbox(page);
 	const dot = page.getByTestId('inbox').locator('[title="Waiting for input"]');
 	await expect(dot).toHaveCount(1);
 });
@@ -132,6 +133,7 @@ test('@smoke a session that wants you while the window is away turns red until s
 	await emitStatus(page, 'working');
 	await emitWindow(page, 'tauri://blur');
 	await emitStatus(page, 'waiting_input');
+	await showInbox(page);
 	await expect(page.getByTestId('inbox').locator('[data-unseen]')).toHaveCount(1);
 	await expect(page.locator('aside [data-unseen]')).not.toHaveCount(0);
 
@@ -148,6 +150,7 @@ test('@smoke a session you are not looking at turns red everywhere until opened'
 
 	// Leave the session for the project's own page; its tab stays open.
 	await page.locator('aside nav').getByText('foo').click();
+	await showInbox(page);
 	await expect(page.getByTestId('inbox').locator('li')).toHaveCount(1);
 
 	// Not the active session, so going idle is news even in a focused window.

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { fixtureTwoProjectsManySessions, installMockBridge } from './fixtures';
+import { fixtureTwoProjectsManySessions, installMockBridge, showInbox } from './fixtures';
 
 /**
  * The pooled terminal's DOM contract (F5).
@@ -36,6 +36,7 @@ test('@smoke switching session never takes a terminal out of the document', asyn
 	});
 
 	await page.getByRole('link', { name: /Zulu task 10/ }).click();
+	await showInbox(page);
 	await expect(page.getByTestId('inbox-row-zulu-session-10')).toHaveAttribute(
 		'aria-current',
 		'page',
@@ -115,6 +116,7 @@ test('@smoke the terminal that is not showing is off screen, and keeps its box',
 	expect(parked[0].clientWidth).toBe(shown[0].clientWidth);
 
 	// And switching back moves it into the viewport rather than rebuilding it.
+	await showInbox(page);
 	await page.getByTestId('inbox-row-zulu-session-11').click();
 	await expect(page.locator('.xterm:visible')).toHaveCount(1);
 	const swapped = await page.evaluate(() =>

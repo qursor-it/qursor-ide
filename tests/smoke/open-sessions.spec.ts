@@ -6,6 +6,7 @@ import {
 	fixtureOneProjectOneSession,
 	fixtureTwoProjectsManySessions,
 	installMockBridge,
+	showInbox,
 } from './fixtures';
 
 /**
@@ -14,9 +15,12 @@ import {
  * strip's rules — a row per open session, the close × and its confirm, the
  * keyboard, and sessions restored stopped on launch.
  */
+/** Open a session from the project tree, then look at the Inbox (ADR-0093). */
 async function openSession(page: Page, name: RegExp) {
+	await page.getByTestId('rail-projects').click();
 	await page.getByRole('link', { name }).click();
 	await expect(page.locator('.xterm:visible')).toBeVisible();
+	await showInbox(page);
 }
 
 const row = (page: Page, sessionId: string) => page.getByTestId(`inbox-row-${sessionId}`);
@@ -129,6 +133,7 @@ test.describe('restored sessions', () => {
 		await seedTabs(page, [{ sessionId: 'session-uuid-001', projectId: FOO_ID }]);
 		await installMockBridge(page, fixtureOneProjectOneSession());
 		await page.goto('/');
+		await showInbox(page);
 
 		const open = page.getByTestId('inbox-open');
 		const r = open.getByTestId('inbox-row-session-uuid-001');
@@ -148,6 +153,7 @@ test.describe('restored sessions', () => {
 		await seedTabs(page, [{ sessionId: 'session-uuid-001', projectId: FOO_ID }]);
 		await installMockBridge(page, fixtureOneProjectOneSession());
 		await page.goto('/');
+		await showInbox(page);
 		await row(page, 'session-uuid-001').hover();
 		await page.getByTestId('inbox-row-session-uuid-001-close').click();
 		await expect(page.getByText('Close this session?')).toHaveCount(0);

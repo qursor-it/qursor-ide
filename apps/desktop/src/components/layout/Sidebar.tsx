@@ -1,9 +1,7 @@
-import { Inbox } from '@components/layout/Inbox';
 import { DragChip } from '@components/layout/DragChip';
 import { ImportMenuItems } from '@components/layout/ImportMenuItems';
 import { SidebarGroup } from '@components/layout/SidebarGroup';
 import { SidebarProject } from '@components/layout/SidebarProject';
-import { SidebarRailGlyph } from '@components/layout/SidebarRailGlyph';
 import { UpdateBadge } from '@components/layout/UpdateBadge';
 import { ZoomControls } from '@components/layout/ZoomControls';
 import {
@@ -22,7 +20,7 @@ import {
 } from '@dnd-kit/core';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { SortableContext } from '@dnd-kit/sortable';
-import type { SidebarRow, TerminalStatus } from '@factorai/types';
+import type { SidebarRow } from '@factorai/types';
 
 import {
 	Button,
@@ -58,7 +56,6 @@ import {
 	fileIntoGroup,
 	filterRows,
 	groupsOf,
-	flattenProjects,
 	indicatorFor as toIndicator,
 	parentOf,
 	rowFor,
@@ -78,13 +75,12 @@ import { useNavigate } from '@tanstack/react-router';
 import {
 	AlertTriangle,
 	ArrowUpDown,
-	EllipsisVertical,
 	FolderPlus,
 	PanelLeftClose,
 	PanelLeftOpen,
 	Search,
 } from 'lucide-react';
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /** A group row, narrowed once so the dialog and the handlers can name it. */
 type GroupRow = Extract<SidebarRow, { kind: 'group' }>;
@@ -574,18 +570,6 @@ export const Sidebar = memo(function Sidebar() {
 		</IconButton>
 	);
 
-	if (collapsed)
-		return (
-			<Rail
-				toggle={toggleButton}
-				rows={rows}
-				statusByProject={statusByProject}
-				unseenByProject={unseenByProject}
-				onAddProject={() => void addProject()}
-				adding={adding}
-			/>
-		);
-
 	return (
 		<>
 			{/* The app's brand row lives in TopBar now — the sidebar starts at
@@ -609,8 +593,6 @@ export const Sidebar = memo(function Sidebar() {
 					/>
 				</div>
 			</div>
-
-			<Inbox />
 
 			{/* Outside the scroll container, not `position: sticky` inside it: the
 			    header then needs an opaque background and a z-index to stop rows
@@ -1010,163 +992,5 @@ function SidebarEndZone({ active }: { active: boolean }) {
 				/>
 			)}
 		</div>
-	);
-}
-
-/**
- * The sidebar at 48px (F1, ADR-0038).
- *
- * **One glyph per project, groups flattened away.** A folder glyph has nothing
- * to route to, and since a glyph click does not expand, every project inside a
- * group would be unreachable. `viewRows` already dissolves groups under two of
- * the three sort modes for the same reason: a group is part of the
- * *arrangement*, and a 48px column has no arrangement to show. Taking
- * `flattenProjects` over whatever `viewRows` returned means the rail mirrors
- * the current sort in all three modes with no ordering logic of its own.
- *
- * **Reordering is off**, gesture and keyboard path together, so there is no
- * `DndContext` here — only the same scroller, which is all that is left of it.
- */
-function Rail({
-	toggle,
-	rows,
-	statusByProject,
-	unseenByProject,
-	onAddProject,
-	adding,
-}: {
-	toggle: ReactNode;
-	rows: SidebarRow[];
-	statusByProject: Map<string, TerminalStatus | undefined>;
-	unseenByProject: Map<string, boolean>;
-	onAddProject: () => void;
-	adding: boolean;
-}) {
-	const navigate = useNavigate();
-	const { projectId: activeProjectId } = useActiveProject();
-	const projects = useMemo(() => flattenProjects(rows), [rows]);
-	// **At most one hover card, and switching between two is instant.** Radix
-	// gives each card its own timers and no notion of a group, so the 400ms
-	// close that makes a card reachable would also keep the *previous* one up
-	// while the next opened. Holding the open id here makes those one event.
-	const [openCard, setOpenCard] = useState<string | null>(null);
-
-	return (
-		<>
-			{/* Two icon-only controls stacked in a 48px column read as one blob at
-			    the expanded row's density. 8px between them and 8px under the pair
-			    separates them from each other and from the glyphs, which are a
-			    different kind of thing (DESIGN.md, The Rail Rule). */}
-			<div className="flex flex-col items-center gap-2 pt-3 pb-2">
-				{toggle}
-				{/* **It routes to the search page rather than expanding.** The
-				    expanded field only debounces into this same navigation, so the
-				    icon goes straight there and you type in a full-width view — the
-				    rail routes, it does not expand. A 48px input is not a degraded
-				    input, it is a broken one. */}
-				<IconButton
-					size="md"
-					aria-label="Search projects and sessions"
-					title="Search projects and sessions"
-					data-testid="rail-search"
-					onClick={() => void navigate({ to: '/search', search: { focus: true } })}
-				>
-					<Search />
-				</IconButton>
-			</div>
-
-			<nav
-				aria-label="Projects"
-				data-testid="sidebar-rail"
-				className="flex min-h-0 flex-1 flex-col items-center gap-0.5 overflow-y-auto px-1.5 pt-1 pb-3"
-			>
-				{projects.length === 0 ? (
-					// The one thing the rail keeps of the header's menus, and only in
-					// this state: a rail with nothing to navigate to and nothing to
-					// press is a dead column. The folder picker, not the menu — Import
-					// and New group both want the list in front of you, and this one
-					// does not.
-					<IconButton
-						aria-label="Add a project"
-						title="Add a project"
-						data-testid="rail-add-project"
-						disabled={adding}
-						onClick={onAddProject}
-					>
-						<FolderPlus />
-					</IconButton>
-				) : (
-					projects.map((project) => (
-						<SidebarRailGlyph
-							key={project.id}
-							project={project}
-							isActive={project.id === activeProjectId}
-							open={openCard === project.id}
-							// A close arriving late — this glyph's 400ms timer firing after
-							// the pointer has already opened the next card — must not shut
-							// the one that replaced it, so it only clears its own id.
-							onOpenChange={(next) =>
-								setOpenCard((current) =>
-									next ? project.id : current === project.id ? null : current,
-								)
-							}
-							liveStatus={statusByProject.get(project.id)}
-							liveUnseen={unseenByProject.get(project.id)}
-						/>
-					))
-				)}
-			</nav>
-
-			{/* **One overflow menu, not two half-rendered widgets.** `UpdateBadge`
-			    could survive inline — it drops its label in a narrow `@container` —
-			    but `ZoomControls` is three controls and cannot. `h-9`, the height
-			    the expanded footer already is, so the toggle does not move the rows
-			    above it. */}
-			<footer
-				data-testid="sidebar-footer"
-				className="flex h-9 shrink-0 items-center justify-center border-t border-border"
-			>
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<IconButton
-							aria-label="Updates and zoom"
-							title="Updates and zoom"
-							data-testid="rail-overflow"
-						>
-							<EllipsisVertical />
-						</IconButton>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="start" side="top" className="w-56">
-						<RailFooterMenu />
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</footer>
-		</>
-	);
-}
-
-/** Indexing and the updater, which the expanded footer states inline, plus the
- *  zoom controls it cannot. */
-function RailFooterMenu() {
-	const progress = useIndexerStore((s) => s.progress);
-	return (
-		<>
-			{progress && progress.phase !== 'idle' && (
-				<>
-					<DropdownMenuLabel>
-						Indexing… {progress.processed}/{progress.total}
-					</DropdownMenuLabel>
-					<DropdownMenuSeparator />
-				</>
-			)}
-			<div className="px-2 py-1">
-				<UpdateBadge />
-			</div>
-			<DropdownMenuSeparator />
-			<div className="flex items-center gap-2 px-2 py-1 text-muted-foreground text-xs">
-				<span className="flex-1">Zoom</span>
-				<ZoomControls />
-			</div>
-		</>
 	);
 }

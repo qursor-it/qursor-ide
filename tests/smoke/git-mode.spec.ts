@@ -5,6 +5,7 @@ import {
 	fixtureWithGraph,
 	installMockBridge,
 	type TestFixture,
+	showInbox,
 } from './fixtures';
 
 /**
@@ -98,6 +99,7 @@ test.describe('git-mode', () => {
 		await page.locator('aside').getByText('foo').click();
 		await page.getByText('Refactor the auth middleware').click();
 		await expect(page.locator('.xterm:visible')).toBeVisible();
+		await showInbox(page);
 		await expect(page.getByTestId('inbox')).toBeVisible();
 
 		await page.getByRole('tab', { name: /^Git/ }).click();

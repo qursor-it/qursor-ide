@@ -25,12 +25,10 @@ export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 480;
 export const DEFAULT_SIDEBAR_WIDTH = 256;
 
-/** The collapsed sidebar's fixed width (F1, ADR-0038).
- *
- *  It is not a clamped width and never passes through `clampSidebarWidth`: the
- *  rail is a different thing from a narrow sidebar, which is exactly why
- *  `collapsed` is a boolean beside `width` rather than a width of zero. */
-export const SIDEBAR_RAIL_WIDTH = 48;
+/** The app rail's fixed width (ADR-0093), always on screen at the window's
+ *  left edge; collapsing the sidebar hides only the column beside it. Not a
+ *  clamped width and never passed through `clampSidebarWidth`. */
+export const SIDEBAR_RAIL_WIDTH = 56;
 
 /** What the layout should use, which is not always what was dragged.
  *
@@ -41,7 +39,7 @@ export const SIDEBAR_RAIL_WIDTH = 48;
  *  208px short (ADR-0037, `lib/viewerLayout.ts`). Exported so the three call
  *  sites share one answer instead of each writing the ternary. */
 export function effectiveSidebarWidth(width: number, collapsed: boolean): number {
-	return collapsed ? SIDEBAR_RAIL_WIDTH : width;
+	return collapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_RAIL_WIDTH + width;
 }
 
 /** Pure, so the drag maths is testable without a pointer — same rule as the
@@ -68,6 +66,8 @@ interface SidebarState {
 	 *  `width` apart and this follows it: collapsing leaves `width` untouched, so
 	 *  expanding restores the width you dragged rather than the default. */
 	collapsed: boolean;
+	/** Which list the column beside the app rail shows (ADR-0093). */
+	view: SidebarView;
 
 	/** Bumped when something asks for the search field (F28's `Mod+K`).
 	 *
@@ -80,6 +80,7 @@ interface SidebarState {
 	setSort: (sort: ProjectSort) => void;
 	setWidth: (width: number) => void;
 	toggleCollapsed: () => void;
+	setView: (view: SidebarView) => void;
 	/** Ask for the sidebar's search field, expanding the rail first if it is
 	 *  collapsed: a keystroke that focuses something invisible is a keystroke
 	 *  that did nothing. */
@@ -112,6 +113,9 @@ interface SidebarState {
  *
  * Pure and exported so the rule is testable without a storage round-trip.
  */
+/** The Inbox (F36) or the project tree (F1). */
+type SidebarView = 'inbox' | 'projects';
+
 export function migrateSidebarState(state: unknown, from: number): unknown {
 	if (from >= 2) return state;
 	if (!state || typeof state !== 'object') return state;
@@ -125,6 +129,7 @@ export const useSidebarStore = create<SidebarState>()(
 			expanded: [],
 			width: DEFAULT_SIDEBAR_WIDTH,
 			collapsed: false,
+			view: 'inbox',
 			searchFocusRequest: 0,
 
 			setSort: (sort) => set({ sort }),
@@ -132,8 +137,15 @@ export const useSidebarStore = create<SidebarState>()(
 			// Writes the boolean and nothing else. See `collapsed` for why `width`
 			// is not touched here.
 			toggleCollapsed: () => set((s) => ({ collapsed: !s.collapsed })),
+			// Picking a list shows the column, whatever state it was in.
+			setView: (view) => set({ view, collapsed: false }),
+			// The search field lives in the project tree, so asking for it shows that.
 			focusSearch: () =>
-				set((s) => ({ collapsed: false, searchFocusRequest: s.searchFocusRequest + 1 })),
+				set((s) => ({
+					collapsed: false,
+					view: 'projects',
+					searchFocusRequest: s.searchFocusRequest + 1,
+				})),
 			toggleProject: (projectId) =>
 				set((s) => ({
 					expanded: s.expanded.includes(projectId)
@@ -158,6 +170,7 @@ export const useSidebarStore = create<SidebarState>()(
 				expanded: s.expanded,
 				width: s.width,
 				collapsed: s.collapsed,
+				view: s.view,
 			}),
 		},
 	),

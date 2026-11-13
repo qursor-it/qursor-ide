@@ -8576,8 +8576,10 @@ needs you next. Until now that answer was spread over 8px dots in the project
 tree and the tab strip, so a session waiting in a collapsed project, or in a
 tab scrolled off the strip, was invisible.
 
-**Placement.** At the top of the expanded sidebar, under the search box and
-above `PROJECTS`. Not in the collapsed rail (The Rail Rule: nothing in it is
+**Placement (since ADR-0093).** The Inbox is the column beside the app rail,
+its whole height, whenever the rail's Inbox (Sessions) icon is the place picked;
+the project tree is the other list that column can show. Before that it sat at
+the top of the expanded sidebar, under the search box and above `PROJECTS`. Not in the collapsed rail (The Rail Rule: nothing in it is
 read as prose). Capped at 45% of the sidebar's height, scrolling inside itself,
 so the project tree always keeps room.
 

@@ -230,7 +230,21 @@ export async function installMockBridge(page: Page, fixture: TestFixture): Promi
 	await serveMediaFixtures(page);
 	await page.addInitScript((fx) => {
 		(window as unknown as { __FACTORAI_TEST__: typeof fx }).__FACTORAI_TEST__ = fx;
+		// Most specs drive the project tree, so they start on it; a spec about the
+		// Inbox opens it from the rail (ADR-0093). Only when nothing is persisted
+		// yet, so a reload or a spec that seeds the sidebar keeps its own state.
+		if (!window.localStorage.getItem('factorai.sidebar')) {
+			window.localStorage.setItem(
+				'factorai.sidebar',
+				JSON.stringify({ state: { view: 'projects' }, version: 2 }),
+			);
+		}
 	}, fixture);
+}
+
+/** Open the Inbox from the app rail (ADR-0093). */
+export async function showInbox(page: Page): Promise<void> {
+	await page.getByTestId('mode-sessions').click();
 }
 
 /** Where the smoke lane serves media from. In the app the URL comes from the

@@ -1,3 +1,5 @@
+import { AppRail } from '@components/layout/AppRail';
+import { InboxColumn, OpenListKeys } from '@components/layout/Inbox';
 import { CommandPalette } from '@components/layout/CommandPalette';
 import { Toaster } from '@factorai/ui';
 import type { ReactNode } from 'react';
@@ -22,12 +24,7 @@ import {
 import { useGitModeStore } from '@store/gitModeStore';
 import { useAddProjectStore } from '@store/addProjectStore';
 import { usePanelStore } from '@store/panelStore';
-import {
-	clampSidebarWidth,
-	effectiveSidebarWidth,
-	SIDEBAR_RAIL_WIDTH,
-	useSidebarStore,
-} from '@store/sidebarStore';
+import { clampSidebarWidth, effectiveSidebarWidth, useSidebarStore } from '@store/sidebarStore';
 import { tabsFor, type ViewerSubject, useViewerStore, viewerHandoff } from '@store/viewerStore';
 import { PanelResizer } from './PanelResizer';
 import { RestartConfirm } from './RestartConfirm';
@@ -53,6 +50,7 @@ export function AppShell({ children }: AppShellProps) {
 
 	const storedSidebarWidth = useSidebarStore((s) => s.width);
 	const sidebarCollapsed = useSidebarStore((s) => s.collapsed);
+	const sidebarView = useSidebarStore((s) => s.view);
 	const setSidebarWidth = useSidebarStore((s) => s.setWidth);
 	// **What the layout is told**, which is the rail's 48 while collapsed (F1,
 	// ADR-0038). Every rule below asks how much room the sidebar is taking, and
@@ -221,17 +219,25 @@ export function AppShell({ children }: AppShellProps) {
 			}`}
 		>
 			<TopBar />
-			{/* Git mode hides this body rather than unmounting it: the terminals in
+			{/* The app rail sits outside both modes' bodies, so it is there in Git
+			    mode too, which is where you switch back (ADR-0093). */}
+			<div className="flex min-h-0 flex-1">
+				<AppRail />
+				{/* Git mode hides this body rather than unmounting it: the terminals in
 			    it must keep running (F35). */}
-			<div ref={row} className={gitMode ? 'hidden' : 'flex min-h-0 flex-1 pr-2 pb-2'}>
-				<aside
-					data-testid="sidebar"
-					style={{ width: sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : storedSidebarWidth }}
-					className="flex shrink-0 flex-col bg-chrome"
-				>
-					<Sidebar />
-				</aside>
-				{/* Mirror of the file panel's handle: this one is on the sidebar's
+				<div ref={row} className={gitMode ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}>
+					{/* The column beside the rail: the Inbox or the project tree. Collapsed,
+				    it is gone and the rail is all that is left (ADR-0093). */}
+					{!sidebarCollapsed && (
+						<aside
+							data-testid="sidebar"
+							style={{ width: storedSidebarWidth }}
+							className="flex shrink-0 flex-col bg-chrome"
+						>
+							{sidebarView === 'inbox' ? <InboxColumn /> : <Sidebar />}
+						</aside>
+					)}
+					{/* Mirror of the file panel's handle: this one is on the sidebar's
 				    right edge, so dragging right widens it.
 
 				    **Not rendered while collapsed** (F1, ADR-0038). The rail is a
@@ -239,59 +245,63 @@ export function AppShell({ children }: AppShellProps) {
 				    lies. There is no drag-to-collapse either: the clamp keeps its
 				    180px floor, because a width and a collapse are different
 				    questions. */}
-				{!sidebarCollapsed && (
-					<PanelResizer
-						size={storedSidebarWidth}
-						onSize={setSidebarWidth}
-						edge="right"
-						label="Resize sidebar"
-						clamp={clampSidebarWidth}
-					/>
-				)}
-				{/* The route above, the project's shell footer below (F23, ADR-0032).
+					{!sidebarCollapsed && (
+						<PanelResizer
+							size={storedSidebarWidth}
+							onSize={setSidebarWidth}
+							edge="right"
+							label="Resize sidebar"
+							clamp={clampSidebarWidth}
+						/>
+					)}
+					{/* The route above, the project's shell footer below (F23, ADR-0032).
 				    Inside this column and not spanning the window, so the file panel
 				    keeps its full height and the footer is the width of the thing it
 				    belongs to. The dock renders nothing where the route has no
 				    project. */}
-				{/* The work area is a card floating on the chrome (ADR-0090). */}
-				<section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
-					<div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-					<ShellDock />
-				</section>
-				{/* **The viewer's own column** (ADR-0037), between the session and the
+					{/* The work area is a card floating on the chrome (ADR-0090). */}
+					<section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
+						<div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+						<ShellDock />
+					</section>
+					{/* **The viewer's own column** (ADR-0037), between the session and the
 				    tree. Only where the shell can hold four columns — under that
 				    width the same pane is rendered by `FileTreePanel`, split under the
 				    tree — and only with a file open, so nothing open gives the
 				    session the width back. */}
-				{showColumn && (
-					<>
-						<PanelResizer
-							size={appliedViewerWidth}
-							onSize={(width) =>
-								setViewerWidth(width, maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth))
-							}
-							edge="left"
-							label="Resize file viewer"
-							clamp={(width) =>
-								clampViewerWidth(
-									width,
-									maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
-								)
-							}
-						/>
-						<aside
-							data-testid="viewer-column"
-							style={{ width: appliedViewerWidth }}
-							className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card"
-						>
-							<ViewerPane />
-						</aside>
-					</>
-				)}
-				{/* Renders nothing when collapsed; follows the route's project. */}
-				<FileTreePanel />
+					{showColumn && (
+						<>
+							<PanelResizer
+								size={appliedViewerWidth}
+								onSize={(width) =>
+									setViewerWidth(
+										width,
+										maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
+									)
+								}
+								edge="left"
+								label="Resize file viewer"
+								clamp={(width) =>
+									clampViewerWidth(
+										width,
+										maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
+									)
+								}
+							/>
+							<aside
+								data-testid="viewer-column"
+								style={{ width: appliedViewerWidth }}
+								className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card"
+							>
+								<ViewerPane />
+							</aside>
+						</>
+					)}
+					{/* Renders nothing when collapsed; follows the route's project. */}
+					<FileTreePanel />
+				</div>
+				{gitMode && <GitModeView />}
 			</div>
-			{gitMode && <GitModeView />}
 			{/* Plan limits and the session's cost (usage monitor): full width, under
 			    every column, so it belongs to the window rather than to a panel.
 			    Renders nothing when the user has turned it off. */}
@@ -301,6 +311,7 @@ export function AppShell({ children }: AppShellProps) {
 			<RestartConfirm />
 			<ImportDialog />
 			<CommandPalette />
+			<OpenListKeys />
 			{/* The one place a toast appears (ADR-0065). Here rather than at the
 			    root so it is only ever mounted with the app around it. */}
 			<Toaster />

@@ -1,15 +1,12 @@
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
 import { GitTabs } from '@components/layout/GitTabs';
-import { ModeSwitch } from '@components/layout/ModeSwitch';
 import { Button, IconButton } from '@factorai/ui';
-import { useSettingsModal } from '@hooks/useSettingsModal';
 import { useChordLabel, useChordTitle } from '@hooks/useShortcuts';
 import { usePaletteStore } from '@store/paletteStore';
 import { useGitModeStore } from '@store/gitModeStore';
 import { usePanelStore } from '@store/panelStore';
-import { LayoutGrid, PanelRight, Search, Settings } from 'lucide-react';
-import { useNavigate } from '@tanstack/react-router';
+import { PanelRight, Search } from 'lucide-react';
 
 /**
  * Full-window header. Deliberately spans above the sidebar too: this is the
@@ -21,20 +18,16 @@ export function TopBar() {
 	const open = usePanelStore((s) => s.open);
 	const toggle = usePanelStore((s) => s.toggle);
 	const gitMode = useGitModeStore((s) => s.mode === 'git');
-	const settings = useSettingsModal();
 	// The chord rides on the tooltip these buttons already had (F28).
-	const settingsTitle = useChordTitle('Settings', 'openSettings');
 	const panelTitle = useChordTitle('Toggle file tree', 'toggleFilePanel');
 	const paletteChord = useChordLabel('openPalette');
 	const openPalette = usePaletteStore((s) => s.setOpen);
-	const navigate = useNavigate();
 
 	return (
 		<div className="shrink-0 bg-chrome">
 			<header className="flex h-10.5 items-center gap-2 px-3">
 				<Brand />
 				<DevBadge />
-				<ModeSwitch />
 
 				{/* The palette's door (F37), centred in what the tools row leaves. */}
 				<div className="flex min-w-0 flex-1 justify-center px-4">
@@ -54,31 +47,6 @@ export function TopBar() {
 						)}
 					</Button>
 				</div>
-
-				{/* Settings is app-level chrome, so it lives here rather than in the
-			    sidebar footer — which is also already over-full (F14). Left of the
-			    panel toggle, and item 6's window controls sit at the window's outer
-			    edge, so this moves once by a fixed offset when they land rather than
-			    competing for the same pixels. */}
-				{/* The Board (F38): every session by state, on one screen. */}
-				<IconButton
-					size="md"
-					aria-label="All sessions board"
-					title="All sessions board"
-					data-testid="open-board"
-					onClick={() => void navigate({ to: '/board' })}
-				>
-					<LayoutGrid />
-				</IconButton>
-				<IconButton
-					size="md"
-					aria-label="Settings"
-					title={settingsTitle}
-					data-testid="open-settings"
-					onClick={() => settings.open()}
-				>
-					<Settings />
-				</IconButton>
 
 				{/* **One colour for both, changed 2026-08-20 on user feedback.** This
 			    button used to take full `foreground` while the panel was open, on the

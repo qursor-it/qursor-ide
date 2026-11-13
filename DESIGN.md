@@ -410,6 +410,8 @@ uses a 16px+ step except modal internals.
 **The Fixed-Chrome Rule.** Every chrome row declares its height. If a child can
 grow, it truncates or scrolls; it does not push its container.
 
+**The App Rail** (ADR-0093). A 56px column at the window's left edge on the chrome, always drawn: 36px items with 18px glyphs, the place you are on raised with the `background` fill and `shadow-sm` (the one icon control that paints a background), project tiles at 26px with their state badge, settings at the foot. The rule below about icons only and identity kept still holds for it.
+
 **The Rail Rule.** A column collapsed to 48px carries **icons only, one per
 cell, at the size the expanded row drew them** — a project's avatar is 20px in
 both. Collapsing takes the label away, not the identity, so a glyph that grew to

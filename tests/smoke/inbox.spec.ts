@@ -3,7 +3,7 @@
  * project tree.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { fixtureOneProjectOneSession, installMockBridge } from './fixtures';
+import { FOO_ID, fixtureOneProjectOneSession, installMockBridge, showInbox } from './fixtures';
 
 const TERMINAL_ID = 'mock-terminal-id';
 const SESSION_ID = 'session-uuid-001';
@@ -25,6 +25,7 @@ test.describe('inbox', () => {
 		await page.locator('aside').getByText('foo').click();
 		await page.getByText('Refactor the auth middleware').click();
 		await expect(page.locator('.xterm:visible')).toBeVisible();
+		await showInbox(page);
 
 		const row = page.getByTestId(`inbox-row-${SESSION_ID}`);
 		await expect(
@@ -56,7 +57,8 @@ test.describe('inbox', () => {
 		await page.getByText('Refactor the auth middleware').click();
 		await expect(page.locator('.xterm:visible')).toBeVisible();
 
-		await page.getByRole('link', { name: 'foo' }).first().click();
+		await showInbox(page);
+		await page.getByTestId(`rail-project-${FOO_ID}`).click();
 		await expect(page).not.toHaveURL(/sessions/);
 		await page.getByTestId(`inbox-row-${SESSION_ID}`).click();
 		await expect(page).toHaveURL(new RegExp(`sessions/${SESSION_ID}`));

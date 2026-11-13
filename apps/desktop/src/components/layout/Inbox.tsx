@@ -18,10 +18,11 @@ import { cmd } from '@lib/tauri';
 import { useAttentionStore } from '@store/attentionStore';
 import { usePrefsStore } from '@store/prefsStore';
 import { usePrTabStore } from '@store/prTabStore';
+import { useSidebarStore } from '@store/sidebarStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { GitPullRequest, X } from 'lucide-react';
+import { GitPullRequest, PanelLeftClose, X } from 'lucide-react';
 import { type ReactNode, useMemo, useState } from 'react';
 
 /** One row's key in list order, for `Mod+PageUp/PageDown` (F28). */
@@ -37,7 +38,7 @@ const prKey = (projectId: string, number: number) => `pr:${projectId}:${number}`
  * included), `Mod+W` and stepping with `Mod+PageUp/PageDown`. Renders nothing
  * while nothing is open or live.
  */
-export function Inbox() {
+function useOpenList() {
 	const tabs = useTerminalStore((s) => s.tabs);
 	const bySession = useTerminalStore((s) => s.bySession);
 	const detach = useTerminalStore((s) => s.detach);
@@ -140,6 +141,51 @@ export function Inbox() {
 		else closeSession(e);
 	};
 
+	return {
+		needsYou,
+		working,
+		stopped,
+		entries,
+		prTabs,
+		order,
+		tabIds,
+		titles,
+		projectName,
+		unseen,
+		bySession,
+		activeId,
+		activeKey,
+		openSession,
+		openPr,
+		closePr,
+		requestClose,
+		closing,
+		setClosing,
+		closeSession,
+	};
+}
+
+/**
+ * The open list's keys, mounted once at the shell so they work whichever list
+ * the column shows (F28, ADR-0093), with its own copy of the close confirm.
+ */
+export function OpenListKeys() {
+	const {
+		entries,
+		prTabs,
+		order,
+		titles,
+		bySession,
+		activeId,
+		activeKey,
+		openSession,
+		openPr,
+		closePr,
+		requestClose,
+		closing,
+		setClosing,
+		closeSession,
+	} = useOpenList();
 	// What the strip's own bindings did, in list order (F28): `Mod+W` closes
 	// what you are looking at, through the same confirm the × takes.
 	useShortcuts({
@@ -162,7 +208,40 @@ export function Inbox() {
 		if (pr) openPr(pr.projectId, pr.number);
 	};
 
-	if (entries.length === 0 && prTabs.length === 0) return null;
+	return (
+		<CloseSessionConfirm
+			sessionName={closing ? (titles.get(closing.sessionId) ?? 'this session') : null}
+			canConfirm={closing !== null && Boolean(bySession[closing.sessionId])}
+			onCancel={() => setClosing(null)}
+			onConfirm={() => closing && closeSession(closing)}
+		/>
+	);
+}
+
+function Inbox({ empty = null }: { empty?: ReactNode }) {
+	const {
+		needsYou,
+		working,
+		stopped,
+		entries,
+		prTabs,
+		tabIds,
+		titles,
+		projectName,
+		unseen,
+		bySession,
+		activeId,
+		activeKey,
+		openSession,
+		openPr,
+		closePr,
+		requestClose,
+		closing,
+		setClosing,
+		closeSession,
+	} = useOpenList();
+
+	if (entries.length === 0 && prTabs.length === 0) return empty;
 
 	const row = (
 		key: string,
@@ -247,7 +326,7 @@ export function Inbox() {
 		);
 
 	return (
-		<div data-testid="inbox" className="max-h-[45%] shrink-0 overflow-y-auto pb-1">
+		<div data-testid="inbox" className="min-h-0 flex-1 overflow-y-auto pb-2">
 			{section(
 				'Needs you',
 				needsYou.length,
@@ -300,5 +379,49 @@ export function Inbox() {
 				onConfirm={() => closing && closeSession(closing)}
 			/>
 		</div>
+	);
+}
+
+/**
+ * The column beside the app rail when it shows the Inbox (ADR-0093): a header
+ * that names it and can fold the column away, the list, and — with nothing
+ * open — a way to the projects instead of an empty pane.
+ */
+export function InboxColumn() {
+	const toggleCollapsed = useSidebarStore((s) => s.toggleCollapsed);
+	const setView = useSidebarStore((s) => s.setView);
+	return (
+		<>
+			<div className="flex h-11 shrink-0 items-center gap-2 pr-2 pl-3">
+				<h1 className="flex-1 font-semibold text-sm">Inbox</h1>
+				<IconButton
+					size="md"
+					aria-label="Collapse sidebar"
+					title="Collapse sidebar"
+					data-testid="sidebar-collapse"
+					onClick={toggleCollapsed}
+				>
+					<PanelLeftClose />
+				</IconButton>
+			</div>
+			<Inbox
+				empty={
+					<div
+						data-testid="inbox-empty"
+						className="flex flex-col items-start gap-2 px-3 py-2 text-muted-foreground text-sm"
+					>
+						<p>Nothing is open. Sessions that need you, and the ones working, show up here.</p>
+						<Button
+							variant="link"
+							size="sm"
+							className="h-auto p-0"
+							onClick={() => setView('projects')}
+						>
+							Browse projects
+						</Button>
+					</div>
+				}
+			/>
+		</>
 	);
 }
