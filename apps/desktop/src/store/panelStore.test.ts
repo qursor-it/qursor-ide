@@ -145,8 +145,8 @@ describe('isPanelTab', () => {
 		for (const tab of ['files', 'changes', 'graph', 'prs']) expect(isPanelTab(tab)).toBe(true);
 	});
 
-	it('rejects a value this build does not know, so the panel falls back to Files', () => {
-		for (const bad of ['', 'review', 'PRs', null, undefined, 3]) {
+	it('rejects a value this build does not know, so the panel falls back to its default tab', () => {
+		for (const bad of ['', 'inspector', 'PRs', null, undefined, 3]) {
 			expect(isPanelTab(bad), String(bad)).toBe(false);
 		}
 	});
