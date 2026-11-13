@@ -29,9 +29,7 @@ test.describe('session header', () => {
 });
 
 test.describe('session plan and cost', () => {
-	test('@smoke shows the agent plan as a count that opens its steps, and the cost', async ({
-		page,
-	}) => {
+	test('@smoke shows the agent plan and the cost in the Review tab', async ({ page }) => {
 		const fx = fixtureWithChanges();
 		fx.sessionPlans = {
 			'session-uuid-001': [
@@ -55,21 +53,26 @@ test.describe('session plan and cost', () => {
 		};
 		await installMockBridge(page, fx);
 		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
+		// The plan and the cost live in the panel's Review tab (ADR-0094).
+		await page.getByRole('button', { name: 'Toggle file tree' }).click();
+		await page.getByRole('tab', { name: 'Review' }).click();
 
-		const chip = page.getByTestId('session-plan');
-		await expect(chip).toHaveText('Plan 1/3');
-		await chip.click();
+		const review = page.getByTestId('review-view');
+		await expect(review).toContainText('1/3');
 		const list = page.getByTestId('session-plan-list');
 		await expect(list).toContainText('Add a retry test');
 		await expect(list.getByLabel('Done')).toHaveCount(1);
 		await expect(page.getByTestId('session-cost')).toContainText('0.84');
 	});
 
-	test('@smoke a session with no plan shows no plan chip', async ({ page }) => {
+	test('@smoke a session with no plan shows no plan', async ({ page }) => {
 		await installMockBridge(page, fixtureWithChanges());
 		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
 		await expect(page.locator('.xterm:visible')).toBeVisible();
-		await expect(page.getByTestId('session-plan')).toHaveCount(0);
+		await page.getByRole('button', { name: 'Toggle file tree' }).click();
+		await page.getByRole('tab', { name: 'Review' }).click();
+		await expect(page.getByTestId('review-view')).toContainText('Changed files');
+		await expect(page.getByTestId('session-plan-list')).toHaveCount(0);
 	});
 });
 
@@ -102,5 +105,27 @@ test.describe('changes chip refresh', () => {
 		// Back to the first, same checkout: read again.
 		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
 		await expect.poll(statusCalls).toBeGreaterThan(afterSecond);
+	});
+});
+
+test.describe('review tab', () => {
+	test('@smoke lists the changed files and opens one as a diff; the button goes to Changes', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureWithChanges());
+		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
+		await page.getByRole('button', { name: 'Toggle file tree' }).click();
+		await page.getByRole('tab', { name: 'Review' }).click();
+
+		const files = page.getByTestId('review-files');
+		await expect(files.getByText('new-file.ts')).toBeVisible();
+		await files.getByText('new-file.ts').click();
+		await expect(page).toHaveURL(/file=.*new-file\.ts/);
+
+		await page.getByTestId('review-all-changes').click();
+		await expect(page.getByRole('tab', { name: 'Changes' })).toHaveAttribute(
+			'aria-selected',
+			'true',
+		);
 	});
 });

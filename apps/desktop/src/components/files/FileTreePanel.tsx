@@ -1,3 +1,4 @@
+import { ReviewView } from '@components/files/ReviewView';
 import type { DirEntry } from '@factorai/types';
 import { useIsFetching, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
@@ -154,6 +155,7 @@ function PanelBody() {
 				    Files, Changes and Graph keep the positions muscle memory already
 				    has. */}
 				<div className="flex flex-1 items-center gap-0.5" role="tablist" aria-label="Panel">
+					<TabButton tab="review" label="Review" />
 					<TabButton tab="files" label="Files" />
 					<TabButton tab="changes" label="Changes" />
 					<TabButton tab="graph" label="Graph" />
@@ -199,7 +201,9 @@ function PanelBody() {
 			    inside it — a pane docked to the bottom of a scroll container scrolls
 			    away with the content. The PRs tab sits out here too (F31): its list
 			    and its detail each scroll on their own under a fixed header. */}
-			{tab === 'graph' ? (
+			{tab === 'review' ? (
+				<ReviewView />
+			) : tab === 'graph' ? (
 				<GraphView />
 			) : tab === 'prs' ? (
 				<PrsView />

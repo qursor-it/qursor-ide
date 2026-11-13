@@ -142,9 +142,9 @@ export function withExpanded(
  *  `isPanelTab` is the other direction — a stored value this build does not know
  *  (a newer build's tab, after a downgrade) falls back to `files` instead of
  *  rendering a panel with no body. */
-export type PanelTab = 'files' | 'changes' | 'graph' | 'prs';
+export type PanelTab = 'review' | 'files' | 'changes' | 'graph' | 'prs';
 
-const PANEL_TABS: readonly PanelTab[] = ['files', 'changes', 'graph', 'prs'];
+const PANEL_TABS: readonly PanelTab[] = ['review', 'files', 'changes', 'graph', 'prs'];
 
 export function isPanelTab(value: unknown): value is PanelTab {
 	return PANEL_TABS.includes(value as PanelTab);
@@ -259,8 +259,10 @@ type PanelStateV2 = PersistedPanelState & { diffInline?: boolean };
 export const usePanelStore = create<PanelState>()(
 	persist(
 		(set) => ({
-			open: false,
-			tab: 'files',
+			// Open on Review for a new install, as the redesign's mock-up shows it
+			// (ADR-0094); a persisted choice still wins.
+			open: true,
+			tab: 'review',
 			width: DEFAULT_PANEL_WIDTH,
 			expandedByCheckout: {},
 			selectedPaths: new Set<string>(),

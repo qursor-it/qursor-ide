@@ -239,6 +239,14 @@ export async function installMockBridge(page: Page, fixture: TestFixture): Promi
 				JSON.stringify({ state: { view: 'projects' }, version: 2 }),
 			);
 		}
+		// Likewise the file panel starts closed and on Files, as specs written
+		// before the Review tab expect (ADR-0094).
+		if (!window.localStorage.getItem('factorai.panel')) {
+			window.localStorage.setItem(
+				'factorai.panel',
+				JSON.stringify({ state: { open: false, tab: 'files' }, version: 3 }),
+			);
+		}
 	}, fixture);
 }
 

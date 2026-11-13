@@ -1,7 +1,6 @@
-import type { TerminalStatus } from '@factorai/types';
-import { Button, Popover, PopoverContent, PopoverTrigger } from '@factorai/ui';
-import { formatCost } from '@lib/usage';
-import { Check, Circle, CircleDot, ListChecks } from 'lucide-react';
+import type { PlanItem, TerminalStatus } from '@factorai/types';
+import { Button } from '@factorai/ui';
+import { Check, Circle, CircleDot } from 'lucide-react';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { usePanelStore } from '@store/panelStore';
@@ -69,91 +68,33 @@ export function ChangesChip({ root }: { root: string | null }) {
 	);
 }
 
-/**
- * The agent's own plan, as a door onto its list (F40): how many of its steps
- * are done, and on click the steps themselves. Re-read when the session's status
- * changes, which is when a step can have moved; absent when there is no plan.
- */
-export function PlanChip({
-	sessionId,
-	status,
-}: {
-	sessionId: string;
-	status: TerminalStatus | undefined;
-}) {
-	const { data: plan } = useQuery({
-		queryKey: queryKeys.sessionPlan(sessionId, status ?? 'stopped'),
-		queryFn: () => cmd.sessionPlan(sessionId),
-	});
-	if (!plan || plan.length === 0) return null;
-	const done = plan.filter((p) => p.status === 'completed').length;
+/** The agent's plan as a list of steps (F40): a check for done (struck
+ *  through), the accent's dot for in progress, an empty circle for to do. */
+export function PlanList({ plan }: { plan: PlanItem[] }) {
 	return (
-		<Popover>
-			<PopoverTrigger asChild>
-				<Button
-					variant="secondary"
-					size="sm"
-					data-testid="session-plan"
-					className="h-6 shrink-0 gap-1.5 rounded-full px-2.5 font-normal text-xs"
-				>
-					<ListChecks />
-					Plan {done}/{plan.length}
-				</Button>
-			</PopoverTrigger>
-			<PopoverContent align="start" className="w-80" data-testid="session-plan-list">
-				<div className="pb-2 font-medium text-muted-foreground text-xs uppercase tracking-wider">
-					The agent's plan
-				</div>
-				<ol className="space-y-1.5 text-sm">
-					{plan.map((p) => (
-						<li key={p.content} className="flex items-start gap-2">
-							{p.status === 'completed' ? (
-								<Check className="mt-0.5 size-3.5 shrink-0 text-status-working" aria-label="Done" />
-							) : p.status === 'in_progress' ? (
-								<CircleDot
-									className="mt-0.5 size-3.5 shrink-0 text-primary"
-									aria-label="In progress"
-								/>
-							) : (
-								<Circle
-									className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
-									aria-label="To do"
-								/>
-							)}
-							<span
-								className={
-									p.status === 'completed'
-										? 'text-muted-foreground line-through'
-										: p.status === 'in_progress'
-											? 'font-medium'
-											: undefined
-								}
-							>
-								{p.content}
-							</span>
-						</li>
-					))}
-				</ol>
-			</PopoverContent>
-		</Popover>
-	);
-}
-
-/** What the session has cost so far at list price (F34), from the status
- *  bar's own query, so it adds no read of its own while that bar is on. */
-export function CostLabel({ sessionId }: { sessionId: string }) {
-	const { data } = useQuery({
-		queryKey: queryKeys.sessionUsage(sessionId),
-		queryFn: () => cmd.sessionUsage(sessionId),
-	});
-	if (data?.costUsd == null) return null;
-	return (
-		<span
-			data-testid="session-cost"
-			title="Estimated cost at list price"
-			className="shrink-0 text-muted-foreground text-xs tabular-nums"
-		>
-			{formatCost(data.costUsd)}
-		</span>
+		<ol data-testid="session-plan-list" className="space-y-1.5 text-sm">
+			{plan.map((p) => (
+				<li key={p.content} className="flex items-start gap-2">
+					{p.status === 'completed' ? (
+						<Check className="mt-0.5 size-3.5 shrink-0 text-status-working" aria-label="Done" />
+					) : p.status === 'in_progress' ? (
+						<CircleDot className="mt-0.5 size-3.5 shrink-0 text-primary" aria-label="In progress" />
+					) : (
+						<Circle className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-label="To do" />
+					)}
+					<span
+						className={
+							p.status === 'completed'
+								? 'text-muted-foreground line-through'
+								: p.status === 'in_progress'
+									? 'font-medium'
+									: undefined
+						}
+					>
+						{p.content}
+					</span>
+				</li>
+			))}
+		</ol>
 	);
 }

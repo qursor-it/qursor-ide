@@ -8720,8 +8720,8 @@ session or one that never wrote a plan. It scans the file once and parses only
 the lines that name the tool. The renderer asks again whenever the session's
 status changes (the status is part of the query key), and never on a timer.
 
-In the header's second row, after the changes chip: a chip `Plan done/total`
-that opens a popover listing the steps — a check for done (struck through), the
+In the panel's Review tab (F42, ADR-0094; until then a chip in the header's
+second row): `Plan done/total` and the list of steps — a check for done (struck through), the
 accent's dot for in progress (medium weight), an empty circle for to do.
 Absent with no plan.
 
@@ -8743,3 +8743,24 @@ has one, otherwise a `cwd` inside the checkout — and whose span, from
 several, the one started last. Absent for a folder that is no project and when
 nothing matches. It reads the session list and the commit detail the view
 already caches, so it costs no extra git call.
+
+## F42 — The Review tab
+
+**Specified and built 2026-11-13** (ADR-0094). Code in
+`components/files/ReviewView.tsx`.
+
+The right-hand panel's first tab, and where a new install opens it. Three
+sections, each under a 12px uppercase label:
+
+- **This session** (on a session route only): the state as F3's pill, the
+  branch (from the checkout's status), the turn count (from the index), and the
+  cost so far (F34's estimate), each line absent when its fact is.
+- **Changed files**: the checkout's status, its total `+A −D` beside the label,
+  the first eight rows exactly as the Changes tab draws them (a click opens the
+  diff in the viewer), and *Review all changes*, which switches to Changes. Says
+  "Not a repository." or "Nothing changed in this checkout." instead.
+- **Plan** (on a session with one): F40's list and its `done/total`.
+
+Reads only queries the app already keeps — the Changes panel's status, the
+session index, `session_usage`, `session_plan` — with no poll of its own beyond
+the panel's.
