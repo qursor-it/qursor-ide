@@ -365,7 +365,8 @@ function SessionView() {
 						{isSubAgent ? 'sub-agent' : sessionLabel(sessionId, sessionsQ.data)}
 					</span>
 					{!isSubAgent && <StatusPill status={live?.status ?? 'stopped'} />}
-					<ChangesChip root={root} />
+					{/* Keyed so showing a session, even one of the same checkout, reads git again. */}
+					<ChangesChip key={sessionId} root={root} />
 					{!isSubAgent && <PlanChip sessionId={sessionId} status={live?.status} />}
 					{!isSubAgent && <CostLabel sessionId={sessionId} />}
 					<span className="flex-1" />

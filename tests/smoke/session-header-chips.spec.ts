@@ -72,3 +72,35 @@ test.describe('session plan and cost', () => {
 		await expect(page.getByTestId('session-plan')).toHaveCount(0);
 	});
 });
+
+test.describe('changes chip refresh', () => {
+	test('@smoke reads git again each time a session is shown, with no timer', async ({ page }) => {
+		const fx = fixtureWithChanges();
+		const [first] = fx.sessionsByProject?.[FOO_ID] ?? [];
+		fx.sessionsByProject = {
+			[FOO_ID]: [first, { ...first, id: 'session-uuid-002', title: 'Second session' }],
+		};
+		await installMockBridge(page, fx);
+		const statusCalls = () =>
+			page.evaluate(
+				() => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === 'git_status').length,
+			);
+
+		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
+		await expect(page.getByTestId('session-changes')).toBeVisible();
+		const afterFirst = await statusCalls();
+
+		// Nothing polls while you stay on it.
+		await page.waitForTimeout(1500);
+		expect(await statusCalls()).toBe(afterFirst);
+
+		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-002`);
+		await expect(page.getByTestId('session-changes')).toBeVisible();
+		await expect.poll(statusCalls).toBeGreaterThan(afterFirst);
+		const afterSecond = await statusCalls();
+
+		// Back to the first, same checkout: read again.
+		await page.goto(`/#/projects/${FOO_ID}/sessions/session-uuid-001`);
+		await expect.poll(statusCalls).toBeGreaterThan(afterSecond);
+	});
+});

@@ -30,8 +30,8 @@ export function StatusPill({ status }: { status: TerminalStatus }) {
 
 /**
  * What the agent has changed in this checkout, as a door onto the Changes panel
- * (F3, F13). No poll of its own: it reads when the session is opened and when
- * the window regains focus, and shares the panel's query, so with the panel open
+ * (F3, F13). No poll of its own: it reads every time a session is shown (the
+ * header keys it by session) and when the window regains focus, and shares the panel's query, so with the panel open
  * it follows the panel's 3s poll. Absent outside a repository and on a clean tree.
  */
 export function ChangesChip({ root }: { root: string | null }) {
