@@ -8,7 +8,7 @@ export type GitErrorAction =
 	| { kind: 'askAgent' }
 	| { kind: 'copy' };
 
-export interface GitErrorInfo {
+interface GitErrorInfo {
 	title: string;
 	actions: GitErrorAction[];
 }
