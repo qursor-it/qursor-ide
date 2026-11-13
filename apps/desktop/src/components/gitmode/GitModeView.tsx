@@ -42,7 +42,11 @@ function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 				<AgentPopover dir={dir} projectId={projectId} />
 				<ConflictBanner dir={dir} projectId={projectId} />
 				<main className="flex min-h-0 min-w-0 flex-1 flex-col">
-					{section === 'history' ? <GitHistory dir={dir} /> : <LocalChanges dir={dir} />}
+					{section === 'history' ? (
+						<GitHistory dir={dir} projectId={projectId} />
+					) : (
+						<LocalChanges dir={dir} />
+					)}
 				</main>
 				<OpLog dir={dir} />
 			</div>

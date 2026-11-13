@@ -8715,3 +8715,18 @@ Absent with no plan.
 **The cost** is `session_usage`'s estimate (F34), shown as metadata text after
 the plan chip, from the status bar's own query so it adds no read while that
 bar is on. Absent when there is no estimate.
+
+## F41 — Which session was running when a commit was made
+
+**Specified and built 2026-11-13.** Code in `lib/sessionDuring.ts` and
+`components/gitmode/CommitSession.tsx`.
+
+Over a selected commit's detail in Git mode, a strip says "Committed while
+*<session title>* was running in this checkout" with an `Open session` link.
+It is an **inference, not a record**, and worded as one: the session is the
+project's (sub-agents skipped) whose checkout is this one — its worktree when it
+has one, otherwise a `cwd` inside the checkout — and whose span, from
+`createdAt` to `updatedAt` plus one minute, contains the commit time. With
+several, the one started last. Absent for a folder that is no project and when
+nothing matches. It reads the session list and the commit detail the view
+already caches, so it costs no extra git call.

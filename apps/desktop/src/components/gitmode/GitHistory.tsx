@@ -1,4 +1,5 @@
 import { CommitDetail } from '@components/graph/CommitDetail';
+import { CommitSession } from '@components/gitmode/CommitSession';
 import { CommitRow } from '@components/graph/CommitRow';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { PanelResizer } from '@components/layout/PanelResizer';
@@ -51,7 +52,7 @@ const RESET_MODES = [
  * The F18 graph at full width, with the selected commit below it (F35). Reuses
  * `CommitRow` (with its author, date and sha columns on) and `CommitDetail`.
  */
-export function GitHistory({ dir }: { dir: string }) {
+export function GitHistory({ dir, projectId }: { dir: string; projectId: string }) {
 	const { commits, laneCount, graph, isPending, hasMore, isLoadingMore, loadMore } =
 		useGitHistory(dir);
 	const detailHeight = usePanelStore((s) => s.detailHeight);
@@ -294,9 +295,12 @@ export function GitHistory({ dir }: { dir: string }) {
 					<div
 						data-testid="commit-detail"
 						style={{ height: detailHeight }}
-						className="shrink-0 overflow-hidden"
+						className="flex shrink-0 flex-col overflow-hidden"
 					>
-						<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} />
+						<CommitSession projectId={projectId} dir={dir} sha={selected} />
+						<div className="min-h-0 flex-1">
+							<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} />
+						</div>
 					</div>
 				</>
 			)}
