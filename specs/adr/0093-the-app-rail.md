@@ -37,3 +37,6 @@ column of places at the window's edge and the Inbox as the main list.
   footer menu) is removed with its tests; the app rail replaces it.
 - Smoke specs start on the project tree (`installMockBridge` seeds it), and the
   ones about the Inbox open it from the rail.
+- The rail's 56px count toward the left column's width, so the viewer's own
+  column (ADR-0037) now needs a window about 60px wider than before; below that
+  it docks under the file tree, as it already did on narrow windows.

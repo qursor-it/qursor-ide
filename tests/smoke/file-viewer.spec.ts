@@ -1050,6 +1050,8 @@ test.describe('file viewer', () => {
 	test('@smoke a single click previews, a double click pins, so browsing leaves one tab', async ({
 		page,
 	}) => {
+		// Wide enough for the viewer's own column beside the app rail (ADR-0093).
+		await page.setViewportSize({ width: 1520, height: 900 });
 		await installMockBridge(page, fixtureWithFileTree());
 		await page.goto('/');
 		const panel = await openTree(page);
@@ -1079,6 +1081,8 @@ test.describe('file viewer', () => {
 	test('@smoke a shell too narrow for four columns moves the viewer under the tree', async ({
 		page,
 	}) => {
+		// Wide: room for four columns beside the app rail (ADR-0093).
+		await page.setViewportSize({ width: 1520, height: 900 });
 		await installMockBridge(page, fixtureWithFileTree());
 		await page.goto('/');
 		const panel = await openTree(page);
@@ -1097,7 +1101,7 @@ test.describe('file viewer', () => {
 		await expect(page.getByTestId('file-viewer').getByTestId('markdown-view')).toBeVisible();
 
 		// And back, once the shell is a dead band clear of the threshold again.
-		await page.setViewportSize({ width: 1440, height: 900 });
+		await page.setViewportSize({ width: 1520, height: 900 });
 		await expect(page.getByTestId('viewer-column')).toBeVisible();
 	});
 
