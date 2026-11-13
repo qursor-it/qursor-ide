@@ -1,3 +1,4 @@
+import { CommandPalette } from '@components/layout/CommandPalette';
 import { Toaster } from '@factorai/ui';
 import type { ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
@@ -299,6 +300,7 @@ export function AppShell({ children }: AppShellProps) {
 			    settings modal, when About is the door (F29). */}
 			<RestartConfirm />
 			<ImportDialog />
+			<CommandPalette />
 			{/* The one place a toast appears (ADR-0065). Here rather than at the
 			    root so it is only ever mounted with the app around it. */}
 			<Toaster />

@@ -3,12 +3,13 @@ import { DevBadge } from '@components/layout/DevBadge';
 import { GitTabs } from '@components/layout/GitTabs';
 import { ModeSwitch } from '@components/layout/ModeSwitch';
 import { SessionTabs } from '@components/layout/SessionTabs';
-import { IconButton } from '@factorai/ui';
+import { Button, IconButton } from '@factorai/ui';
 import { useSettingsModal } from '@hooks/useSettingsModal';
-import { useChordTitle } from '@hooks/useShortcuts';
+import { useChordLabel, useChordTitle } from '@hooks/useShortcuts';
+import { usePaletteStore } from '@store/paletteStore';
 import { useGitModeStore } from '@store/gitModeStore';
 import { usePanelStore } from '@store/panelStore';
-import { PanelRight, Settings } from 'lucide-react';
+import { PanelRight, Search, Settings } from 'lucide-react';
 
 /**
  * Full-window header. Deliberately spans above the sidebar too: this is the
@@ -24,6 +25,8 @@ export function TopBar() {
 	// The chord rides on the tooltip these buttons already had (F28).
 	const settingsTitle = useChordTitle('Settings', 'openSettings');
 	const panelTitle = useChordTitle('Toggle file tree', 'toggleFilePanel');
+	const paletteChord = useChordLabel('openPalette');
+	const openPalette = usePaletteStore((s) => s.setOpen);
 
 	return (
 		<div className="shrink-0 bg-chrome">
@@ -32,7 +35,24 @@ export function TopBar() {
 				<DevBadge />
 				<ModeSwitch />
 
-				<div className="flex-1" />
+				{/* The palette's door (F37), centred in what the tools row leaves. */}
+				<div className="flex min-w-0 flex-1 justify-center px-4">
+					<Button
+						variant="secondary"
+						size="sm"
+						data-testid="open-palette"
+						onClick={() => openPalette(true)}
+						className="w-full max-w-md justify-start gap-2 bg-secondary/70 font-normal text-muted-foreground hover:bg-secondary"
+					>
+						<Search />
+						<span className="truncate">Search sessions, projects and actions…</span>
+						{paletteChord && (
+							<kbd className="ml-auto rounded border border-border bg-background px-1.5 font-sans text-xs">
+								{paletteChord}
+							</kbd>
+						)}
+					</Button>
+				</div>
 
 				{/* Settings is app-level chrome, so it lives here rather than in the
 			    sidebar footer — which is also already over-full (F14). Left of the

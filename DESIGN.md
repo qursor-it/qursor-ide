@@ -819,6 +819,15 @@ a 3px inset blue edge on its left — blue because it is the human's move. Secti
 headers are the 12px uppercase tracked voice of `PROJECTS`, with the count in a
 `secondary` pill.
 
+### Command Palette
+
+A dialog (16px radius, `shadow-popover`) pinned 14% from the top rather than
+centred, so its top edge does not move as results arrive. A 48px borderless
+field with the search glyph, a hairline, the results in 8px-radius rows with a
+`secondary` ground on the highlighted one, section labels in the 12px uppercase
+voice, and a `muted` footer naming the keys. Its door in the top bar is a
+`secondary` pill at 70%, up to 28rem wide, with the chord in a bordered `kbd`.
+
 ### Tab Chips
 
 Two or three sibling lists inside one route — the project page's

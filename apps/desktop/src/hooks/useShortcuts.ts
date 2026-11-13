@@ -91,9 +91,12 @@ export function useShortcuts(handlers: ShortcutHandlers, options: ShortcutOption
  * with no empty brackets.
  */
 export function useChordTitle(title: string, action: ShortcutAction): string {
-	const keymap = useKeymap();
-	const mac = isMacOS();
-	const hotkey = keymap[action];
-	if (!hotkey) return title;
-	return `${title} (${formatForDisplay(hotkey, { platform: mac ? 'mac' : 'linux' })})`;
+	const label = useChordLabel(action);
+	return label ? `${title} (${label})` : title;
+}
+
+/** An action's chord as the platform writes it ("⌘K"), or null when unbound. */
+export function useChordLabel(action: ShortcutAction): string | null {
+	const hotkey = useKeymap()[action];
+	return hotkey ? formatForDisplay(hotkey, { platform: isMacOS() ? 'mac' : 'linux' }) : null;
 }

@@ -3868,7 +3868,7 @@ section that edits them.
 
 | Shortcut             | Action                                    |
 | -------------------- | ----------------------------------------- |
-| `Mod + K`            | Focus sidebar search — from anywhere      |
+| `Mod + K`            | Open the command palette — from anywhere (F37) |
 | `Mod + F`            | Find, in a focused viewer or terminal; focus sidebar search anywhere else |
 | `Mod + N`            | New session in the active project         |
 | `Mod + W`            | Close the focused tab                     |
@@ -6613,8 +6613,10 @@ scrolling the terminal is untouched.
 
 Viewer focused, `Mod+F` opens find — Monaco's widget through the `findHandle` the
 viewer already provides. Anywhere else it focuses the sidebar search, which is
-what was asked for. `Mod+K` focuses the sidebar search regardless of focus, so
-there is one key whose meaning never depends on where you were looking.
+what was asked for. `Mod+K` opens the command palette regardless of focus
+(F37; it focused the sidebar search until 2026-11-13, an action that is now
+unbound by default), so there is one key whose meaning never depends on where
+you were looking.
 
 **A focused terminal keeps `Mod+F` and gets no find bar**, which is the honest
 state rather than the tidy one: `SearchAddon` is loaded and has no UI, so there
@@ -8568,3 +8570,41 @@ session links for the same name, and they carry `inbox-row-<sessionId>`.
 killed, and pull request tabs live there. Replacing the strip with the Inbox,
 the time a session has been waiting, and the question the agent asked are later
 slices.
+
+## F37 — The command palette
+
+**Specified and built 2026-11-13**, the third slice of the layout redesign
+(ADR-0090). Code in `components/layout/CommandPalette.tsx` and
+`store/paletteStore.ts`.
+
+**Why.** Reaching a session meant finding its project in the tree or its tab in
+the strip, and the actions lived in four different places. One field that finds
+sessions, projects and actions is the shortest path from "I want X" to X.
+
+**Doors.** `Mod+K` from anywhere, the terminal included (F28's `openPalette`;
+`focusSidebarSearch` keeps its row in settings, unbound by default), and the
+search pill centred in the top bar's tools row, which shows the chord.
+
+**Contents.** A dialog 14% from the top of the window, 36rem wide: a field, the
+results, and a footer naming the keys.
+
+- **Nothing typed:** the sessions that need you, then the ones working, in the
+  Inbox's order (F36), each with its status dot and its project; then the
+  actions.
+- **Typing:** projects whose name contains the text (at most five), the actions
+  whose label contains it, then sessions found by F4's full-text index (at most
+  eight, one row per session). Name matches lead because they are more specific
+  than a hit in a transcript.
+- **Actions:** jump to the next session that needs you (only when one does), a
+  new session in the active project (only on a route with one), toggle the file
+  panel, open settings.
+
+**Keys.** `↑` / `↓` move and wrap, `Enter` runs the highlighted row, `Esc`
+closes. A row runs on click too. The field is a `combobox` whose
+`aria-activedescendant` names the highlighted `option`. Each open starts with an
+empty field.
+
+**Running a row** closes the palette first. A session that stopped is restarted
+before it opens, as a stopped tab is (F16).
+
+**Not yet.** Files, commands typed with `>`, and Git actions.
