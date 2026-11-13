@@ -66,7 +66,7 @@ function StatusBarRow() {
 			<PopoverTrigger
 				data-testid="status-bar"
 				title="Plan limits and session usage"
-				className="flex h-6 w-full min-w-0 shrink-0 items-center gap-4 overflow-hidden border-border border-t bg-card px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+				className="flex h-6 w-full min-w-0 shrink-0 items-center gap-4 overflow-hidden bg-chrome px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
 			>
 				{rows.map((row) => (
 					<ProviderGroup

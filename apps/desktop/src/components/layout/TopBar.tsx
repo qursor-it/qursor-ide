@@ -26,7 +26,7 @@ export function TopBar() {
 	const panelTitle = useChordTitle('Toggle file tree', 'toggleFilePanel');
 
 	return (
-		<div className="shrink-0 border-b border-border bg-card">
+		<div className="shrink-0 bg-chrome">
 			<header className="flex h-10.5 items-center gap-2 px-3">
 				<Brand />
 				<DevBadge />

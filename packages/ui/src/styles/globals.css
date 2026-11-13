@@ -148,6 +148,9 @@
 	--color-destructive: var(--destructive);
 	--color-border: var(--border);
 	--color-input: var(--input);
+	--color-chrome: var(--chrome);
+	--shadow-card: var(--elevation-card);
+	--shadow-popover: var(--elevation-popover);
 	--color-ring: var(--ring);
 	--color-dev: var(--dev);
 	--color-usage-warn: var(--usage-warn);
@@ -194,12 +197,12 @@
 	   `data-theme`. */
 	color-scheme: dark;
 
-	--background: oklch(14.5% 0 0);
-	--foreground: oklch(94.6% 0 0);
-	--card: oklch(17.8% 0 0);
-	--card-foreground: oklch(94.6% 0 0);
-	--popover: oklch(17.8% 0 0);
-	--popover-foreground: oklch(94.6% 0 0);
+	--background: oklch(26% 0.016 262);
+	--foreground: oklch(94% 0.006 260);
+	--card: oklch(28.5% 0.016 262);
+	--card-foreground: oklch(94% 0.006 260);
+	--popover: oklch(29.5% 0.017 262);
+	--popover-foreground: oklch(94% 0.006 260);
 
 	/* Qursor blue #7193c8 (oklch(65.9% 0.088 259)), taken from the Qursor
 	   website. 6.3:1 against --background; --primary-foreground is near-black
@@ -207,17 +210,25 @@
 	   same hue, since #7193c8 on white is only 3:1. */
 	--primary: oklch(65.9% 0.088 259);
 	--primary-foreground: oklch(14.5% 0 0);
-	--secondary: oklch(21.8% 0 0);
-	--secondary-foreground: oklch(87% 0 0);
-	--muted: oklch(19.1% 0 0);
-	--muted-foreground: oklch(65% 0 0);
+	--secondary: oklch(32.5% 0.018 262);
+	--secondary-foreground: oklch(87% 0.008 260);
+	--muted: oklch(29% 0.016 262);
+	--muted-foreground: oklch(71% 0.015 260);
 	--accent: oklch(65.9% 0.088 259);
 	--accent-foreground: oklch(14.5% 0 0);
 	--destructive: oklch(58% 0.22 25);
-	--border: oklch(26% 0 0);
-	--input: oklch(21.8% 0 0);
+	--border: oklch(35% 0.018 262);
+	--input: oklch(31% 0.016 262);
 	--ring: oklch(65.9% 0.088 259);
-	--radius: 0.5rem;
+	--radius: 0.625rem;
+
+	/* **The window's own ground** (ADR-0090): the top bar, the sidebar and the
+	   status bar sit on it as one continuous surface, and the work area and the
+	   file panel float on it as cards. One step below `--background`, never a
+	   border, is what separates them. */
+	--chrome: oklch(21.5% 0.014 262);
+	--elevation-card: 0 1px 2px oklch(10% 0.02 262 / 0.4), 0 16px 40px -18px oklch(5% 0.02 262 / 0.7);
+	--elevation-popover: 0 0 0 1px oklch(38% 0.018 262), 0 24px 60px -20px oklch(5% 0.02 262 / 0.8);
 
 	/* Development-build marker. Violet on purpose: it is the one hue the rest
 	   of the palette never uses, so a dev window is told apart from the
@@ -239,8 +250,8 @@
 	   than as chrome. Read by `components/terminal/themes.ts` for xterm, which
 	   cannot take a CSS variable, and by `bg-terminal` around it so the padding
 	   matches the canvas (Q8, roadmap item 32 (#28)). */
-	--terminal: oklch(12% 0 0);
-	--terminal-foreground: oklch(87% 0 0);
+	--terminal: oklch(24.5% 0.015 262);
+	--terminal-foreground: oklch(90% 0.008 260);
 
 	/* Two of the status hues (F10), per theme now that there are two. Their
 	   meaning and ramp are documented with `--color-status-*` in the theme block
@@ -300,31 +311,35 @@
 	   tokens below already override — see the note there for what this controls. */
 	color-scheme: light;
 
-	--background: oklch(98.5% 0 0);
-	--foreground: oklch(20.5% 0 0);
+	--background: oklch(99.2% 0.004 80);
+	--foreground: oklch(23% 0.012 60);
 	--card: oklch(100% 0 0);
-	--card-foreground: oklch(20.5% 0 0);
+	--card-foreground: oklch(23% 0.012 60);
 	--popover: oklch(100% 0 0);
-	--popover-foreground: oklch(20.5% 0 0);
-	--primary: oklch(48.9% 0.102 262);
+	--popover-foreground: oklch(23% 0.012 60);
+	--primary: oklch(50% 0.13 264);
 	--primary-foreground: oklch(100% 0 0);
-	--secondary: oklch(95% 0 0);
-	--secondary-foreground: oklch(26% 0 0);
-	--muted: oklch(95% 0 0);
-	--muted-foreground: oklch(44% 0 0);
-	--accent: oklch(48.9% 0.102 262);
+	--secondary: oklch(94.5% 0.009 80);
+	--secondary-foreground: oklch(30% 0.012 60);
+	--muted: oklch(95% 0.008 80);
+	--muted-foreground: oklch(47% 0.015 60);
+	--accent: oklch(50% 0.13 264);
 	--accent-foreground: oklch(100% 0 0);
 	--destructive: oklch(58% 0.22 25);
-	--border: oklch(90% 0 0);
-	--input: oklch(95% 0 0);
-	--ring: oklch(48.9% 0.102 262);
+	--border: oklch(90% 0.01 80);
+	--input: oklch(94.5% 0.009 80);
+	--chrome: oklch(96.2% 0.008 80);
+	--elevation-card:
+		0 1px 2px oklch(40% 0.03 60 / 0.06), 0 12px 32px -16px oklch(40% 0.03 60 / 0.22);
+	--elevation-popover: 0 0 0 1px oklch(88% 0.01 80), 0 24px 60px -20px oklch(30% 0.03 60 / 0.35);
+	--ring: oklch(50% 0.13 264);
 	--dev: oklch(49.1% 0.121 297);
 	/* Amber on a 98% ground needs a darker, oranger step, the way the accent does. */
 	--usage-warn: oklch(55% 0.13 70);
 	/* White paper, a step above the 98% chrome — the light theme's well goes up,
 	   not down, the way `--card` does. */
-	--terminal: oklch(100% 0 0);
-	--terminal-foreground: oklch(26% 0 0);
+	--terminal: oklch(99.6% 0.003 80);
+	--terminal-foreground: oklch(26% 0.012 60);
 	--status-working: oklch(55% 0.17 150);
 	--status-background: oklch(55% 0.11 200);
 	/* Roughly the 700 steps: on white the 500s fall under 3:1, and an `M` you

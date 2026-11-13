@@ -17,7 +17,7 @@ import type { SidebarRow } from '@factorai/types';
  *
  * **This is one of the few places a shadow is correct** (Elevation): the chip
  * genuinely floats above the app and will be gone in a moment, which is exactly
- * the condition the Flat-By-Default Rule names for a shadow rather than a tonal
+ * the condition the Card-On-Chrome Rule names for a shadow rather than a tonal
  * step.
  */
 export function DragChip({ row }: { row: SidebarRow }) {

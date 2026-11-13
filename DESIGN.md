@@ -1,17 +1,18 @@
 ---
 name: Qursor IDE
-description: A calm dark control room for supervising coding agents.
+description: A calm control room for supervising coding agents.
 colors:
-  background: "oklch(14.5% 0 0)"
-  foreground: "oklch(94.6% 0 0)"
-  card: "oklch(17.8% 0 0)"
-  popover: "oklch(17.8% 0 0)"
-  secondary: "oklch(21.8% 0 0)"
-  secondary-foreground: "oklch(87% 0 0)"
-  muted: "oklch(19.1% 0 0)"
-  muted-foreground: "oklch(65% 0 0)"
-  border: "oklch(26% 0 0)"
-  input: "oklch(21.8% 0 0)"
+  chrome: "oklch(21.5% 0.014 262)"
+  background: "oklch(26% 0.016 262)"
+  foreground: "oklch(94% 0.006 260)"
+  card: "oklch(28.5% 0.016 262)"
+  popover: "oklch(29.5% 0.017 262)"
+  secondary: "oklch(32.5% 0.018 262)"
+  secondary-foreground: "oklch(87% 0.008 260)"
+  muted: "oklch(29% 0.016 262)"
+  muted-foreground: "oklch(71% 0.015 260)"
+  border: "oklch(35% 0.018 262)"
+  input: "oklch(31% 0.016 262)"
   primary: "oklch(65.9% 0.088 259)"
   primary-foreground: "oklch(14.5% 0 0)"
   destructive: "oklch(58% 0.22 25)"
@@ -31,8 +32,8 @@ colors:
   lane-5: "oklch(78% 0.15 65)"
   lane-6: "oklch(72% 0.17 340)"
   lane-7: "oklch(76% 0.16 115)"
-  terminal: "oklch(12% 0 0)"
-  terminal-foreground: "oklch(87% 0 0)"
+  terminal: "oklch(24.5% 0.015 262)"
+  terminal-foreground: "oklch(90% 0.008 260)"
   git-added: "oklch(69.6% 0.17 162.48)"
   git-modified: "oklch(76.9% 0.188 70.08)"
   git-deleted: "oklch(64.5% 0.246 16.439)"
@@ -64,9 +65,11 @@ typography:
     letterSpacing: "normal"
 rounded:
   chip: "4px"
-  sm: "4px"
-  md: "6px"
-  lg: "8px"
+  sm: "6px"
+  md: "8px"
+  lg: "10px"
+  card: "12px"
+  dialog: "16px"
   full: "9999px"
 spacing:
   hair: "2px"
@@ -150,15 +153,15 @@ components:
 
 **Creative North Star: "The Control Room"**
 
-factorai is a dark console you sit in front of all day while agents work. Its
+factorai is a console you sit in front of all day while agents work. Its
 job is not to be looked at; its job is to be glanced at. Everything is arranged
 so that a developer returning to the window after twenty minutes away can tell,
 without reading, which sessions are still working, which one wants them, and
 which stopped. That is why the surface is quiet almost everywhere: a control
 room where every panel glows is a control room where nothing means anything.
 
-The system is built from four near-black neutral lightness steps and a
-single blue accent. Colour is spent, not applied. Blue means *your move* —
+The system is built from a continuous chrome, the cards of work that float on
+it, and a single blue accent (ADR-0090). Colour is spent, not applied. Blue means *your move* —
 it is the accent, the ring, the brand mark and the `waiting` status, all at the
 same value, so the one thing that asks for the human always looks the same.
 Green means working, grey means inert, violet means this is the development
@@ -174,11 +177,12 @@ different, chunkier application borrowed from elsewhere.
 
 **Key Characteristics:**
 
-- Dark-first: the dark theme is the identity, not a mode; a light theme exists
-  and is a translation, never a tint.
+- Two first-class themes: Slate (a soft blue-grey dark) and Paper (a warm
+  ivory light). Each is its own palette, never a tint of the other.
 - Two type sizes, 14px and 12px, with no third step.
 - One accent, used where the human must act — and almost nowhere else.
-- Flat: depth is four lightness steps and a hairline border.
+- Cards on chrome: the window's chrome is one borderless surface, and the work
+  area floats on it as a card with a hairline and a soft shadow.
 - Quiet until asked: affordances appear on hover; only state stays lit.
 - Machined chrome: explicit heights, hairline dividers, no decoration.
 
@@ -232,27 +236,32 @@ a small set of signal and categorical hues that never leave their jobs.
 
 ### Neutral
 
-- **Console Black** (`oklch(14.5% 0 0)`): the app ground.
-- **Panel Charcoal** (`oklch(17.8% 0 0)`): raised chrome — the sidebar, the
-  top bar, popovers and menus. Two lightness points above the ground is the whole
-  elevation cue.
-- **Pressed Graphite** (`oklch(21.8% 0 0)`): a selected row, an active tab,
-  an input's field.
-- **Hairline** (`oklch(26% 0 0)`): every divider and border in the app, and
-  the shell's own outline against the desktop.
-- **Mercury** (`oklch(94.6% 0 0)`): focused text — a selected row, a hovered
-  row, the thing you are reading now.
-- **Resting Text** (`oklch(87% 0 0)`): repeated text at rest — a commit
+The dark theme is **Slate** (ADR-0090): one blue-grey ramp at hue 262 and
+chroma ~0.016, not pure grey, so the dark reads as soft rather than as black.
+
+- **Chrome** (`--chrome`, `oklch(21.5% 0.014 262)`): the window's own ground —
+  top bar, sidebar and status bar, as one surface with no border between them.
+- **Ground** (`--background`, `oklch(26% 0.016 262)`): the work card.
+- **Panel** (`--card`, `oklch(28.5% 0.016 262)`): a header or a container inside
+  a card. Popovers and menus are a step above, `oklch(29.5% 0.017 262)`.
+- **Pressed** (`--secondary`, `oklch(32.5% 0.018 262)`): a selected row, an
+  active tab, an input's field.
+- **Hairline** (`--border`, `oklch(35% 0.018 262)`): every divider and border,
+  the edge of every card, and the shell's own outline against the desktop.
+- **Focused text** (`oklch(94% 0.006 260)`): a selected row, a hovered row, the
+  thing you are reading now.
+- **Resting text** (`oklch(87% 0.008 260)`): repeated text at rest — a commit
   subject, a filename in a list.
-- **Metadata Grey** (`oklch(65% 0 0)`): counts, SHAs, timestamps, section
+- **Metadata** (`oklch(71% 0.015 260)`): counts, SHAs, timestamps, section
   headers, and every icon affordance at rest.
-- **Terminal Well** (`oklch(16.3% 0.009 264)`, text `oklch(87.1% 0.005 286)`):
-  the agent's PTY, a shell and the sub-agent transcript. A hair deeper and cooler
-  than the ground, so a pane full of output reads as a well rather than as
+- **Terminal Well** (`oklch(24.5% 0.015 262)`, text `oklch(90% 0.008 260)`):
+  the agent's PTY, a shell and the sub-agent transcript. A step deeper than the
+  card it sits in, so a pane full of output reads as a well rather than as
   chrome. xterm cannot read a variable, so `components/terminal/themes.ts` reads
   these and hands xterm hex. Its ANSI colours are the app's own in both themes
   (ADR-0082): in dark they share the status and git hues at 70–96% lightness,
-  4.5:1 on the well, with the two blacks at 3:1 so dim reads as dim. The well
+  4.5:1 on the well, with the two blacks at 3:1 so dim reads as dim (57% and 66%
+  lightness since the well moved to 24.5%, ADR-0090). The well
   pads its output 16px at the sides and 12px top and bottom.
   A terminal a file drag is over wears a **1px `primary` outline**, 4px outside
   its box and drawn only while the pointer is over it (ADR-0083). It is the
@@ -289,9 +298,11 @@ Selected in Settings → Appearance (`system` by default, following the OS). It 
 a translation of everything above, never a tint: every token has its own value
 on `[data-theme="light"]`.
 
-- **Ground and chrome** go up rather than down: the ground is `oklch(98.5% 0 0)`, while card, popover and the terminal well are white. Depth is still
-  steps of lightness and a hairline (`oklch(90% 0 0)`).
-- **Blue** is `oklch(48.9% 0.102 262)` (`#3F5F9A`) — see § Primary. `waiting` takes
+- **Paper** (ADR-0090): a warm ivory ramp at hue 80 and chroma ~0.008. The
+  chrome is `oklch(96.2% 0.008 80)`, the work card `oklch(99.2% 0.004 80)`, card
+  and popover white, the terminal well `oklch(99.6% 0.003 80)`, the hairline
+  `oklch(90% 0.01 80)`, text `oklch(23% 0.012 60)`.
+- **Blue** is `oklch(50% 0.13 264)` — see § Primary. `waiting` takes
   it too, because it *is* the accent.
 - **Status, git and lane hues** drop roughly 15–20 lightness points: `working`
   and `background` to 55%, the git hues to about the Tailwind 700 steps, the
@@ -369,7 +380,7 @@ never shows a double line where a block is absent.
 
 ## Layout
 
-A fixed three-column desktop shell inside a bordered window: **sidebar** (resizable, ~288px default, collapsible to a 48px rail) · **session area** (flex, min-width 0) · **file panel** (resizable, collapsible to nothing). The shell itself draws a hairline border on its sides and bottom only — the titlebar caps the top — which is what gives the window a defined silhouette against the desktop. Bottom corners are rounded (12px) on macOS only; on Linux, where the WM clips nothing, a radius takes a bite out of the shell and reads worse than a square corner.
+A fixed three-column desktop shell inside a bordered window: **sidebar** (resizable, ~288px default, collapsible to a 48px rail) · **session area** (flex, min-width 0) · **file panel** (resizable, collapsible to nothing). The top bar, the sidebar and the status bar are one continuous chrome; the session area, the viewer column and the file panel are **cards on it** (12px radius, hairline, `shadow-card`), inset 8px from the window's right and bottom edges, with the 8px resize handle as the gap between two cards (ADR-0090). The shell itself draws a hairline border on its sides and bottom only — the titlebar caps the top — which is what gives the window a defined silhouette against the desktop. Bottom corners are rounded (12px) on macOS only; on Linux, where the WM clips nothing, a radius takes a bite out of the shell and reads worse than a square corner.
 
 There is no responsive breakpoint system. This is a desktop application with a
 minimum window size, and the two side panels are user-resized rather than
@@ -415,24 +426,25 @@ in one row truncate each other down to the prefix they share.
 
 ## Elevation & Depth
 
-**The system is flat and tonal.** Depth is carried by four lightness steps at one
-hue — ground 16%, panel 18%, pressed 22%, border 25% — plus a hairline border,
-and by nothing else. There are no ambient shadows, no gradients, no bevels, no
-glows on resting surfaces — with one named exception, the First-Run Halo, which
-exists on exactly one screen and nowhere else (ADR-0067). A panel is above the ground because it is two points
-lighter and separated by a 1px line.
-
-Shadows exist only where a surface genuinely floats above the app rather than
-being part of it: the dialog, the popover, the dropdown and context menus, the
-toast, and the card primitive. They are a statement that the surface is temporary, not a
-decoration.
+**Three layers: chrome, cards, overlays** (ADR-0090). The chrome is the window's
+ground and carries neither a border nor a shadow. A card — the work area, the
+viewer column, the file panel — sits on it with a hairline and the soft
+`shadow-card`, which is what says *this is where the work is*. An overlay — the
+dialog, the popover, the menus, the toast — carries the stronger
+`shadow-popover`, whose first layer is a 1px ring, so it needs no border of its
+own. Inside a card the model is still tonal: rows, tabs, inputs and buttons are
+flat, and a header is one lightness step from the card it sits in. There are no
+gradients, no bevels and no glows on resting surfaces — with one named exception,
+the First-Run Halo, which exists on exactly one screen (ADR-0067).
 
 ### Shadow Vocabulary
 
-- **Resting surface** (`box-shadow: none`): every panel, row, tab, input and
-  button in the app. This is the default and the overwhelming majority.
-- **Floating surface** (`box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05)` and its
-  `-md` step for menus and dialogs): applied only to overlays and to `Card`.
+- **Resting surface** (`box-shadow: none`): the chrome, and every row, tab,
+  input and button in the app.
+- **Card** (`shadow-card`, `--elevation-card`): the work area, the viewer
+  column and the file panel.
+- **Overlay** (`shadow-popover`, `--elevation-popover`): dialogs, popovers,
+  dropdown and context menus, select lists, tooltips, hover cards and toasts.
 - **Lifted surface** (`ring-1 ring-border` over the `secondary` ground, no
   shadow): the one row or tab currently being dragged. A **ring**, not a
   `border` — a border appearing would change the element's height in the middle
@@ -440,9 +452,10 @@ decoration.
 
 ### Named Rules
 
-**The Flat-By-Default Rule.** A surface that stays on screen gets tone and a
-hairline. A surface that appears over the app and will be dismissed gets a
-shadow. Nothing gets both a shadow and a tonal step to say the same thing twice.
+**The Card-On-Chrome Rule.** The chrome gets neither a border nor a shadow; a
+card on it gets a hairline and `shadow-card`; an overlay that will be dismissed
+gets `shadow-popover`. Nothing inside a card gets a shadow — a row, a tab or a
+header says what it is with tone.
 
 **The Group Row Rule.** A container in a list is named in the **12px uppercase
 tracked style the section header uses**, not in the 14px the rows inside it use. A
@@ -513,14 +526,16 @@ sidebar, per the Nothing-Moves Rule — the two marks split: the *source* row st
 in place at 40% opacity, a placeholder for where the thing came from and
 deliberately competing with nothing; and the chip in the overlay takes a border
 and the floating shadow, because it genuinely floats above the app and will be
-gone in a moment. That is the one condition the Flat-By-Default Rule allows a
-shadow for.
+gone in a moment. That is the one condition the Card-On-Chrome Rule allows a
+shadow inside a card for.
 
 ## Shapes
 
-Corners are small and consistent: 8px (`--radius`) for cards and dialogs, 6px for
-buttons, inputs and selects, 4px for the dense objects — tabs, menu items, icon
-buttons, chips — and full-round only for a status dot and a badge pill. Nothing
+Corners are soft and consistent (ADR-0090): 16px for dialogs, 12px for the
+shell's cards, overlays and menus, 10px (`--radius`) for the `Card` primitive's
+inner steps, 8px for buttons, inputs and selects, 6px for menu rows, 4px for
+the densest objects — tabs, icon buttons, chips — and full-round only for a
+status dot and a badge pill. Nothing
 in the app is square-cornered except the panel edges themselves.
 
 Borders are always 1px and always `border`. There are no 2px rules, no double
@@ -642,7 +657,7 @@ too loud for a mark repeated once per expanded project.
 
 ### Inputs / Fields
 
-- **Style:** 32px tall, 6px radius, 1px `input` border, app-ground fill, 14px
+- **Style:** 32px tall, 8px radius, 1px `input` border, app-ground fill, 14px
   text, muted placeholder.
 - **Focus:** **1px** blue ring at a 1px offset — the same ring every control
   uses. It was 2px until 2026-08-29, when a user called it heavy: at this
@@ -660,8 +675,9 @@ too loud for a mark repeated once per expanded project.
 
 ### Menus (Dropdown and Context)
 
-- **Row:** 28px, 4px vertical padding, a 28px indicator gutter on the left, 4px
-  radius, highlighted on a `secondary` ground.
+- **Row:** 28px, 4px vertical padding, a 28px indicator gutter on the left, 6px
+  radius, highlighted on a `secondary` ground. The menu itself is 12px round with
+  `shadow-popover`.
 - **Section label:** 12px uppercase in the same voice as `PROJECTS` — a menu's
   section label is a section header, not a bolded title.
 - These metrics live on the primitives so every menu inherits them, rather than
@@ -683,8 +699,9 @@ too loud for a mark repeated once per expanded project.
 
 ### Cards / Containers
 
-- **Corner:** 8px. **Background:** `card`. **Border:** hairline.
-- **Shadow:** the small floating step (see Elevation).
+- **Corner:** 12px. **Background:** `card`. **Border:** hairline.
+- **Shadow:** `shadow-sm` for the `Card` primitive inside a card; the shell's own
+  cards take `shadow-card` (see Elevation).
 - **Internal padding:** 24px — the one place in the app that uses a spacing step
   this large, and it is a modal-scale container rather than a row.
 
@@ -916,8 +933,8 @@ without that constant would simply never be drawn.
   toggles is already visible; use `aria-pressed`.
 - **Don't** introduce a third type size, and don't hand-write one
   (`text-[13px]`) to sneak past the scale.
-- **Don't** add a shadow to a surface that stays on screen; tone and a hairline
-  are the elevation model. The First-Run Halo is the one exception.
+- **Don't** add a shadow to anything inside a card, or a border or shadow to the
+  chrome; see the Card-On-Chrome Rule. The First-Run Halo is the one exception.
 - **Don't** animate more than one thing at a time in a list. Status animation is
   opt-in and belongs to the single dot that describes the current view.
 - **Don't** use HTML5 drag-and-drop; it is dead in this shell on macOS. Drag with

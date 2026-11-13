@@ -215,18 +215,18 @@ export function AppShell({ children }: AppShellProps) {
 		// where the wedge was. Square, with the border running unbroken into the
 		// corner, is the least-bad shape there. See Q21.
 		<div
-			className={`flex h-screen flex-col overflow-hidden border-border border-x border-b bg-background text-foreground ${
+			className={`flex h-screen flex-col overflow-hidden border-border border-x border-b bg-chrome text-foreground ${
 				isMacOS() ? 'rounded-b-xl' : ''
 			}`}
 		>
 			<TopBar />
 			{/* Git mode hides this body rather than unmounting it: the terminals in
 			    it must keep running (F35). */}
-			<div ref={row} className={gitMode ? 'hidden' : 'flex min-h-0 flex-1'}>
+			<div ref={row} className={gitMode ? 'hidden' : 'flex min-h-0 flex-1 pr-2 pb-2'}>
 				<aside
 					data-testid="sidebar"
 					style={{ width: sidebarCollapsed ? SIDEBAR_RAIL_WIDTH : storedSidebarWidth }}
-					className="flex shrink-0 flex-col border-r border-border bg-card"
+					className="flex shrink-0 flex-col bg-chrome"
 				>
 					<Sidebar />
 				</aside>
@@ -252,7 +252,8 @@ export function AppShell({ children }: AppShellProps) {
 				    keeps its full height and the footer is the width of the thing it
 				    belongs to. The dock renders nothing where the route has no
 				    project. */}
-				<section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+				{/* The work area is a card floating on the chrome (ADR-0090). */}
+				<section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
 					<div className="min-h-0 flex-1 overflow-hidden">{children}</div>
 					<ShellDock />
 				</section>
@@ -280,7 +281,7 @@ export function AppShell({ children }: AppShellProps) {
 						<aside
 							data-testid="viewer-column"
 							style={{ width: appliedViewerWidth }}
-							className="flex shrink-0 flex-col overflow-hidden border-l border-border"
+							className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card"
 						>
 							<ViewerPane />
 						</aside>

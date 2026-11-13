@@ -86,7 +86,7 @@ export function FileTreePanel() {
 				style={{ width: size }}
 				// `select-none`: dragging the resizer sweeps the cursor across these
 				// rows, and double-click-to-open would otherwise select the filename.
-				className="flex shrink-0 select-none flex-col overflow-hidden border-l border-border bg-card"
+				className="flex shrink-0 select-none flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card"
 			>
 				<PanelBody />
 				{/* **The narrow-window host** (ADR-0037): the same `ViewerPane` the

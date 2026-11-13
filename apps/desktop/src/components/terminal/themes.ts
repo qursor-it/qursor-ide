@@ -39,14 +39,14 @@ type TokenReader = (name: string) => string;
  */
 const FALLBACK: Record<Theme, Record<string, string>> = {
 	dark: {
-		'--terminal': 'oklch(16.3% 0.009 264)',
-		'--terminal-foreground': 'oklch(87.1% 0.005 286)',
+		'--terminal': 'oklch(24.5% 0.015 262)',
+		'--terminal-foreground': 'oklch(90% 0.008 260)',
 		'--primary': 'oklch(65.9% 0.088 259)',
 	},
 	light: {
-		'--terminal': 'oklch(100% 0 0)',
-		'--terminal-foreground': 'oklch(24% 0.008 250)',
-		'--primary': 'oklch(48.9% 0.102 262)',
+		'--terminal': 'oklch(99.6% 0.003 80)',
+		'--terminal-foreground': 'oklch(26% 0.012 60)',
+		'--primary': 'oklch(50% 0.13 264)',
 	},
 };
 
@@ -96,7 +96,7 @@ const LIGHT_ANSI: ITheme = {
  */
 const DARK_ANSI_OKLCH: Record<AnsiName, readonly [lightness: number, chroma: number, hue: number]> =
 	{
-		black: [0.5, 0.01, 264],
+		black: [0.57, 0.01, 264],
 		red: [0.7, 0.15, 22],
 		green: [0.74, 0.15, 150],
 		yellow: [0.8, 0.13, 80],
@@ -104,7 +104,7 @@ const DARK_ANSI_OKLCH: Record<AnsiName, readonly [lightness: number, chroma: num
 		magenta: [0.74, 0.13, 320],
 		cyan: [0.76, 0.1, 200],
 		white: [0.82, 0.005, 286],
-		brightBlack: [0.6, 0.01, 264],
+		brightBlack: [0.66, 0.01, 264],
 		brightRed: [0.76, 0.16, 20],
 		brightGreen: [0.8, 0.17, 155],
 		brightYellow: [0.86, 0.14, 85],

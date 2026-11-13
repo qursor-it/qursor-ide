@@ -594,7 +594,7 @@ export const Sidebar = memo(function Sidebar() {
 			    column's own state, and a rail is left behind to hold it — which is
 			    the whole reason it can live with the thing it toggles rather than
 			    reading as window chrome beside the file-tree button. */}
-			<div className="flex items-center gap-1.5 border-b border-border py-2.5 pr-3 pl-1.5">
+			<div className="flex items-center gap-1.5 py-2.5 pr-3 pl-1.5">
 				{toggleButton}
 				<div className="relative min-w-0 flex-1">
 					<Search className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 size-3.5 text-muted-foreground" />
@@ -828,7 +828,7 @@ export const Sidebar = memo(function Sidebar() {
 			    badge's 24px plus the padding it wants. */}
 			<footer
 				data-testid="sidebar-footer"
-				className="flex h-9 shrink-0 items-center gap-2 border-t border-border pr-1.5 pl-3 text-muted-foreground text-xs"
+				className="flex h-9 shrink-0 items-center gap-2 pr-1.5 pl-3 text-muted-foreground text-xs"
 			>
 				{/* Indexing is transient and worth saying; "Idle" was a label for the
 				    absence of news. In its place, the updater — the one background

@@ -143,13 +143,13 @@ export function ensureTheme(): void {
 		inherit: true,
 		rules: [],
 		colors: {
-			'editor.background': '#14171c',
-			'editor.foreground': '#d4d4d8',
-			'editorLineNumber.foreground': '#4a4f58',
-			'editorLineNumber.activeForeground': '#8b919c',
-			'editor.selectionBackground': '#2b3038',
-			'editor.lineHighlightBackground': '#1a1e24',
-			'editorIndentGuide.background1': '#23272e',
+			'editor.background': '#20242c',
+			'editor.foreground': '#dbdee3',
+			'editorLineNumber.foreground': '#595e66',
+			'editorLineNumber.activeForeground': '#9ca2ab',
+			'editor.selectionBackground': '#353b44',
+			'editor.lineHighlightBackground': '#262a32',
+			'editorIndentGuide.background1': '#2f343e',
 
 			// **The find widget, restated in the app's palette** (DESIGN.md §
 			// Colors). Unthemed it is vs-dark's: a `#313131` slab with a
@@ -160,21 +160,21 @@ export function ensureTheme(): void {
 			// DESIGN.md § Inputs).
 			//
 			// The ladder is the one the editor colours above already use:
-			// `#14171c` ground, `#1a1e24` a surface over it, `#23272e` and
-			// `#2b3038` the two hairline steps, `#8b919c` metadata,
-			// `#d4d4d8` text.
-			'editorWidget.background': '#1a1e24',
-			'editorWidget.foreground': '#d4d4d8',
-			'editorWidget.border': '#2b3038',
-			'editorWidget.resizeBorder': '#2b3038',
+			// `#20242c` ground, `#262a32` a surface over it, `#2f343e` and
+			// `#353b44` the two hairline steps, `#9ca2ab` metadata,
+			// `#dbdee3` text.
+			'editorWidget.background': '#262a32',
+			'editorWidget.foreground': '#dbdee3',
+			'editorWidget.border': '#353b44',
+			'editorWidget.resizeBorder': '#353b44',
 			// A surface that appears over the app and will be dismissed gets a
-			// shadow and no tonal step of its own — The Flat-By-Default Rule.
+			// shadow and no tonal step of its own — the Card-On-Chrome Rule.
 			'widget.shadow': '#00000059',
 			// App-ground fill, hairline border, accent ring on focus: the field
 			// rule every input in the app follows.
-			'input.background': '#14171c',
-			'input.foreground': '#d4d4d8',
-			'input.border': '#2b3038',
+			'input.background': '#20242c',
+			'input.foreground': '#dbdee3',
+			'input.border': '#353b44',
 			focusBorder: '#7193c8',
 			// Aa / ab / .* pressed. Accent at 16% behind, the hue itself as
 			// text — the chip treatment, which is what these toggles are.
@@ -196,10 +196,10 @@ export function ensureTheme(): void {
 			'editor.findMatchHighlightBorder': '#7193c84d',
 			// Find-in-selection dims everything outside the scope rather than
 			// tinting the scope with the accent, which would compete with the matches.
-			'editor.findRangeHighlightBackground': '#8b919c1a',
+			'editor.findRangeHighlightBackground': '#9ca2ab1a',
 			'editorOverviewRuler.findMatchForeground': '#7193c8b3',
-			'toolbar.hoverBackground': '#23272e',
-			'icon.foreground': '#8b919c',
+			'toolbar.hoverBackground': '#2f343e',
+			'icon.foreground': '#9ca2ab',
 		},
 	});
 
