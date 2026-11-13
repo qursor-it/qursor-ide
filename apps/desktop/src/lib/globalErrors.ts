@@ -60,6 +60,20 @@ export function isDisposedDiff(err: unknown): boolean {
 	return err instanceof Error && err.message === 'no diff result available';
 }
 
+/**
+ * The browser's ResizeObserver notice: some size changes are delivered on the
+ * next frame instead of this one. Not a failure — nothing is lost and nothing
+ * throws in our code — but WebView2 and Chromium dispatch it as a window
+ * `error` with only a message, and a layout with resizing panes (the terminal's
+ * fit, the reply box, ADR-0090's cards) trips it on ordinary resizes.
+ */
+function isResizeObserverNotice(err: unknown): boolean {
+	const text = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+	return /^ResizeObserver loop (completed with undelivered notifications|limit exceeded)/.test(
+		text,
+	);
+}
+
 /** Human-readable text for anything that can be thrown or rejected. */
 export function describeError(err: unknown): string {
 	if (err instanceof Error) {
@@ -102,6 +116,9 @@ export function classify(err: unknown, mounted: boolean): ErrorDisposition {
 	}
 	if (isDisposedDiff(err)) {
 		return { kind: 'ignore', why: 'a diff editor was disposed while its diff was computing' };
+	}
+	if (isResizeObserverNotice(err)) {
+		return { kind: 'ignore', why: 'ResizeObserver deferred notifications to the next frame' };
 	}
 	// A failed resource load (an `<img>`, a stylesheet) also fires `error` on
 	// window, as a plain Event carrying neither `error` nor `message`. Reporting

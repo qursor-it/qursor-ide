@@ -76,6 +76,18 @@ describe('classify', () => {
 		expect(classify(new TypeError('boom'), false).kind).toBe('boot-failure');
 	});
 
+	it('ignores the ResizeObserver notice, which is the browser deferring work, not a failure', () => {
+		for (const msg of [
+			'ResizeObserver loop completed with undelivered notifications.',
+			'ResizeObserver loop limit exceeded',
+		]) {
+			expect(classify(msg, true).kind).toBe('ignore');
+			expect(classify(new Error(msg), true).kind).toBe('ignore');
+		}
+		// Anything else that merely mentions it still reaches the screen.
+		expect(classify('Failed to observe: ResizeObserver loop', true).kind).toBe('runtime');
+	});
+
 	it('ignores an event carrying no error and no message', () => {
 		// A failed resource load fires `error` on window as a plain Event, so
 		// `e.error ?? e.message` is undefined. Reporting it renders a card reading
