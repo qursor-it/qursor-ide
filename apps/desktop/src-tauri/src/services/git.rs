@@ -2567,6 +2567,43 @@ mod tests {
 	}
 
 	#[test]
+	fn repo_state_reports_a_conflicted_cherry_pick() {
+		let (dir, repo) = repo_with_commit();
+		let base = repo.head().unwrap().peel_to_commit().unwrap();
+		repo.branch("other", &base, false).unwrap();
+		write(
+			dir.path(),
+			"tracked.txt",
+			"main
+two
+three
+",
+		);
+		commit_all(&repo, "main side");
+		let name = current_branch(&repo);
+		repo.set_head("refs/heads/other").unwrap();
+		repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).unwrap();
+		write(
+			dir.path(),
+			"tracked.txt",
+			"other
+two
+three
+",
+		);
+		let picked = commit_all(&repo, "other side");
+		repo.set_head(&format!("refs/heads/{name}")).unwrap();
+		repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force())).unwrap();
+
+		repo.cherrypick(&repo.find_commit(picked).unwrap(), None).unwrap();
+
+		let state = repo_state(&root(&dir)).unwrap();
+		assert_eq!(state.op, GitRepoOp::CherryPick);
+		assert_eq!(state.conflicted.len(), 1);
+		assert_eq!(state.theirs.as_deref(), Some(picked.to_string().as_str()));
+	}
+
+	#[test]
 	fn file_patch_contains_hunk_header() {
 		let (dir, repo) = repo_with_commit();
 		write(dir.path(), "tracked.txt", "one\nTWO\nthree\n");

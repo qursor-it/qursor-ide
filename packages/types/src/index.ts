@@ -840,8 +840,8 @@ export type GitOp =
 	| { kind: 'resetHardTo'; sha: string }
 	| { kind: 'checkoutCommit'; sha: string }
 	| { kind: 'createTag'; name: string; at: string }
-	| { kind: 'cherryPick'; sha: string }
-	| { kind: 'revert'; sha: string }
+	| { kind: 'cherryPick'; sha: string; mergeCommit?: boolean }
+	| { kind: 'revert'; sha: string; mergeCommit?: boolean }
 	| { kind: 'resetTo'; sha: string; mode: 'soft' | 'mixed' | 'hard' }
 	| { kind: 'cherryPickAbort' }
 	| { kind: 'cherryPickContinue' }

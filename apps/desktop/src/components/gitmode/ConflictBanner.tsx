@@ -49,6 +49,14 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 		queryKey: queryKeys.gitStatus(dir),
 		queryFn: () => cmd.gitStatus(dir),
 	});
+	// The commit a cherry-pick or revert is applying, named in the banner.
+	const picked =
+		stateQ.data?.op === 'cherryPick' || stateQ.data?.op === 'revert' ? stateQ.data.theirs : null;
+	const pickedQ = useQuery({
+		queryKey: queryKeys.gitCommit(dir, picked ?? ''),
+		queryFn: () => cmd.gitCommit(dir, picked ?? ''),
+		enabled: picked !== null,
+	});
 	// The files this operation conflicted on, kept once they stop conflicting so
 	// the green banner can list what was resolved.
 	const seen = useRef<{ op: string; files: string[] }>({ op: 'none', files: [] });
@@ -75,6 +83,8 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 			refsQ.data?.local.find((b) => b.sha === state.theirs)?.name ??
 			state.theirs?.slice(0, 8) ??
 			'the other branch';
+		const subject = picked ? pickedQ.data?.subject : undefined;
+		const what = subject ? `${label} of ${theirs} "${subject}"` : label;
 		const rel = (files: string[]) => files.map((f) => relativeToRoot(f, dir));
 		const abort = (
 			<Button
@@ -101,7 +111,7 @@ export function ConflictBanner({ dir, projectId }: { dir: string; projectId: str
 				>
 					<div className="flex items-center gap-2">
 						<span className="min-w-0 flex-1 text-destructive">
-							{label} stopped: {state.conflicted.length} file
+							{what} stopped: {state.conflicted.length} file
 							{state.conflicted.length === 1 ? '' : 's'} conflict.
 						</span>
 						{!isLooseRepo(projectId) && (

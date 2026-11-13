@@ -74,11 +74,17 @@ pub enum GitOp {
 		name: String,
 		at: String,
 	},
+	/// `merge_commit` picks against the first parent (`-m 1`), as a merge
+	/// commit has no single diff otherwise.
 	CherryPick {
 		sha: String,
+		#[serde(default)]
+		merge_commit: bool,
 	},
 	Revert {
 		sha: String,
+		#[serde(default)]
+		merge_commit: bool,
 	},
 	ResetTo {
 		sha: String,
@@ -235,8 +241,18 @@ pub fn args_for(op: &GitOp) -> AppResult<Vec<String>> {
 			validate_ref_name(at)?;
 			Ok(strings(&["tag", name, at]))
 		}
-		GitOp::CherryPick { sha } => with_sha(&["cherry-pick"], sha),
-		GitOp::Revert { sha } => with_sha(&["revert", "--no-edit"], sha),
+		GitOp::CherryPick { sha, merge_commit } => with_sha(
+			if *merge_commit { &["cherry-pick", "-m", "1"] } else { &["cherry-pick"] },
+			sha,
+		),
+		GitOp::Revert { sha, merge_commit } => with_sha(
+			if *merge_commit {
+				&["revert", "--no-edit", "-m", "1"]
+			} else {
+				&["revert", "--no-edit"]
+			},
+			sha,
+		),
 		GitOp::ResetTo { sha, mode } => with_sha(
 			&[
 				"reset",
@@ -413,8 +429,22 @@ mod tests {
 			args(GitOp::CreateTag { name: "v1".into(), at: sha.into() }),
 			s(&["tag", "v1", sha])
 		);
-		assert_eq!(args(GitOp::CherryPick { sha: sha.into() }), s(&["cherry-pick", sha]));
-		assert_eq!(args(GitOp::Revert { sha: sha.into() }), s(&["revert", "--no-edit", sha]));
+		assert_eq!(
+			args(GitOp::CherryPick { sha: sha.into(), merge_commit: false }),
+			s(&["cherry-pick", sha])
+		);
+		assert_eq!(
+			args(GitOp::Revert { sha: sha.into(), merge_commit: false }),
+			s(&["revert", "--no-edit", sha])
+		);
+		assert_eq!(
+			args(GitOp::CherryPick { sha: sha.into(), merge_commit: true }),
+			s(&["cherry-pick", "-m", "1", sha])
+		);
+		assert_eq!(
+			args(GitOp::Revert { sha: sha.into(), merge_commit: true }),
+			s(&["revert", "--no-edit", "-m", "1", sha])
+		);
 		for (mode, flag) in [
 			(ResetMode::Soft, "--soft"),
 			(ResetMode::Mixed, "--mixed"),
@@ -437,8 +467,14 @@ mod tests {
 	#[test]
 	fn commit_actions_refuse_anything_but_a_hex_sha() {
 		for bad in ["-x", "HEAD", "abc", "abc123g", ""] {
-			assert!(args_for(&GitOp::CherryPick { sha: bad.into() }).is_err(), "{bad:?}");
-			assert!(args_for(&GitOp::Revert { sha: bad.into() }).is_err(), "{bad:?}");
+			assert!(
+				args_for(&GitOp::CherryPick { sha: bad.into(), merge_commit: false }).is_err(),
+				"{bad:?}"
+			);
+			assert!(
+				args_for(&GitOp::Revert { sha: bad.into(), merge_commit: false }).is_err(),
+				"{bad:?}"
+			);
 			assert!(args_for(&GitOp::CheckoutCommit { sha: bad.into() }).is_err(), "{bad:?}");
 			let reset = GitOp::ResetTo { sha: bad.into(), mode: ResetMode::Hard };
 			assert!(args_for(&reset).is_err(), "{bad:?}");
