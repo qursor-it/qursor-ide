@@ -36,14 +36,14 @@ test('@smoke switching session never takes a terminal out of the document', asyn
 	});
 
 	await page.getByRole('link', { name: /Zulu task 10/ }).click();
-	await expect(page.getByRole('tab', { name: /Zulu task 10/ })).toHaveAttribute(
-		'aria-selected',
-		'true',
+	await expect(page.getByTestId('inbox-row-zulu-session-10')).toHaveAttribute(
+		'aria-current',
+		'page',
 	);
-	await page.getByRole('tab', { name: /Zulu task 11/ }).click();
-	await expect(page.getByRole('tab', { name: /Zulu task 11/ })).toHaveAttribute(
-		'aria-selected',
-		'true',
+	await page.getByTestId('inbox-row-zulu-session-11').click();
+	await expect(page.getByTestId('inbox-row-zulu-session-11')).toHaveAttribute(
+		'aria-current',
+		'page',
 	);
 
 	const probe = await page.evaluate(() => {
@@ -115,7 +115,7 @@ test('@smoke the terminal that is not showing is off screen, and keeps its box',
 	expect(parked[0].clientWidth).toBe(shown[0].clientWidth);
 
 	// And switching back moves it into the viewport rather than rebuilding it.
-	await page.getByRole('tab', { name: /Zulu task 11/ }).click();
+	await page.getByTestId('inbox-row-zulu-session-11').click();
 	await expect(page.locator('.xterm:visible')).toHaveCount(1);
 	const swapped = await page.evaluate(() =>
 		Array.from(document.querySelectorAll('.xterm'))
