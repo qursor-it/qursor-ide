@@ -1,3 +1,4 @@
+import { GitTabs } from '@components/layout/GitTabs';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { useGitModeStore } from '@store/gitModeStore';
 import { useState } from 'react';
@@ -17,12 +18,19 @@ export function GitModeView() {
 	const tab = tabs.find((t) => t.dir === activeDir);
 
 	return (
-		<div data-testid="git-mode-view" className="flex min-h-0 flex-1 flex-col">
+		<div data-testid="git-mode-view" className="flex min-h-0 min-w-0 flex-1 flex-col">
 			{tab ? (
 				// Keyed on the directory so selection and paging belong to one checkout.
 				<GitTabBody key={tab.dir} projectId={tab.projectId} dir={tab.dir} />
 			) : (
-				<PanelEmpty>Open a Git tab with +.</PanelEmpty>
+				<div className="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
+					<div className="flex w-60 shrink-0 flex-col px-1.5 py-1">
+						<GitTabs />
+					</div>
+					<div className="flex min-w-0 flex-1 flex-col rounded-xl border border-border bg-background shadow-card">
+						<PanelEmpty>Open a repository with + beside Repositories.</PanelEmpty>
+					</div>
+				</div>
 			)}
 			<GitConfirmHost />
 			<GitErrorHost />
@@ -35,7 +43,7 @@ function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 	return (
 		// The sidebar on the chrome, everything about the checkout in one card on
 		// it, as the session column is (ADR-0090).
-		<div className="flex min-h-0 flex-1 pr-2 pb-2">
+		<div className="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
 			<GitSidebar dir={dir} projectId={projectId} section={section} onSection={setSection} />
 			<div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
 				<GitActionBar dir={dir} />

@@ -8410,6 +8410,11 @@ Three zones, the layout of desktop git clients the user already knows:
 - **Main area** — either the history or the local changes, as picked in the
   sidebar.
 
+**Since ADR-0095** the Git tabs are the sidebar's *Repositories* list (a row
+per open tab: tile, name, branch with ahead/behind, `×`, and the `+` menu beside
+the heading), the selected commit's detail is a column on the history's right,
+and the table has a Session column (F41). The top bar has one row.
+
 **On the chrome, since 2026-11-13** (ADR-0090): the sidebar sits on the
 window's chrome with 8px-radius rows (the selected section raised with the
 `background` fill), and the action bar, the banners, the main area and the op

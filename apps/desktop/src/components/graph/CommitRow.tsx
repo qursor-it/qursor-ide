@@ -137,6 +137,9 @@ interface CommitRowProps {
 	/** Git mode's table: author, date and short sha as fixed right-aligned
 	 *  columns after the subject (F35). The panel's Graph tab leaves it off. */
 	columns?: boolean;
+	/** With `columns`: the title of the session running in the checkout when
+	 *  this commit was made (F41), or null. */
+	session?: string | null;
 }
 
 /**
@@ -159,6 +162,7 @@ export const CommitRow = memo(function CommitRow({
 	onCardOpen,
 	onSelect,
 	columns = false,
+	session = null,
 }: CommitRowProps) {
 	const chips = foldRefs(commit.refs);
 	const { shown, hiddenCount } = fitRefs(chips, textWidth);
@@ -234,6 +238,13 @@ export const CommitRow = memo(function CommitRow({
 						</span>
 						{columns && (
 							<>
+								<span
+									data-testid="commit-row-session"
+									className="w-40 shrink-0 truncate text-left text-primary text-xs"
+									title={session ? `Made while “${session}” was running` : undefined}
+								>
+									{session ? `✦ ${session}` : ''}
+								</span>
 								<span className="w-32 shrink-0 truncate text-right text-muted-foreground text-xs">
 									{commit.authorName}
 								</span>

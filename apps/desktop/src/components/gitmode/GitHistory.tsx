@@ -2,7 +2,6 @@ import { CommitDetail } from '@components/graph/CommitDetail';
 import { CommitSession } from '@components/gitmode/CommitSession';
 import { CommitRow } from '@components/graph/CommitRow';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
-import { PanelResizer } from '@components/layout/PanelResizer';
 import {
 	Button,
 	ContextMenu,
@@ -17,10 +16,11 @@ import {
 import { useGitHistory } from '@hooks/useGitHistory';
 import { lanePitch, railWidth, ROW_PAD_LEFT } from '@lib/gitGraph';
 import { queryKeys } from '@lib/queryKeys';
+import { sessionDuring } from '@lib/sessionDuring';
+import { isLooseRepo } from '@store/gitModeStore';
 import { cmd, copyText } from '@lib/tauri';
-import { clampDetailHeight, usePanelStore } from '@store/panelStore';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
@@ -55,8 +55,21 @@ const RESET_MODES = [
 export function GitHistory({ dir, projectId }: { dir: string; projectId: string }) {
 	const { commits, laneCount, graph, isPending, hasMore, isLoadingMore, loadMore } =
 		useGitHistory(dir);
-	const detailHeight = usePanelStore((s) => s.detailHeight);
-	const setDetailHeight = usePanelStore((s) => s.setDetailHeight);
+	// Which session was running in this checkout when each commit was made
+	// (F41), for the table's Session column. The list the project page reads.
+	const sessionsQ = useQuery({
+		queryKey: queryKeys.sessions(projectId),
+		queryFn: () => cmd.listSessions(projectId),
+		enabled: !isLooseRepo(projectId),
+	});
+	const sessionOf = useMemo(() => {
+		const map = new Map<string, string>();
+		for (const c of commits) {
+			const s = sessionDuring(c.commitTime, sessionsQ.data ?? [], dir);
+			if (s) map.set(c.sha, s.title.trim() || 'Untitled session');
+		}
+		return map;
+	}, [commits, sessionsQ.data, dir]);
 	const [selected, select] = useState<string | null>(null);
 	const quick = useQuickAgent(dir);
 	const { run, running } = useGitOp(dir);
@@ -85,8 +98,10 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 	const textWidth = Math.max(0, LAYOUT_WIDTH - rail - ROW_PAD_LEFT - 24);
 
 	return (
-		<div data-testid="git-history" className="flex min-h-0 flex-1 flex-col">
-			<div className="min-h-0 flex-1 overflow-auto py-1">
+		// The commit list, and the selected commit's detail in a column on its
+		// right rather than docked under it (F35, ADR-0095).
+		<div data-testid="git-history" className="flex min-h-0 min-w-0 flex-1">
+			<div className="min-h-0 min-w-0 flex-1 overflow-auto py-1">
 				<ContextMenu>
 					<ContextMenuTrigger asChild>
 						<ul
@@ -112,6 +127,7 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 									onCardOpen={onCardOpen}
 									onSelect={onSelect}
 									columns
+									session={sessionOf.get(commit.sha) ?? null}
 								/>
 							))}
 						</ul>
@@ -284,25 +300,15 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 				/>
 			</div>
 			{selected && (
-				<>
-					<PanelResizer
-						size={detailHeight}
-						onSize={setDetailHeight}
-						edge="top"
-						label="Resize commit detail"
-						clamp={clampDetailHeight}
-					/>
-					<div
-						data-testid="commit-detail"
-						style={{ height: detailHeight }}
-						className="flex shrink-0 flex-col overflow-hidden"
-					>
-						<CommitSession projectId={projectId} dir={dir} sha={selected} />
-						<div className="min-h-0 flex-1">
-							<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} />
-						</div>
+				<aside
+					data-testid="commit-detail"
+					className="flex w-[24rem] shrink-0 flex-col overflow-hidden border-border border-l"
+				>
+					<CommitSession projectId={projectId} dir={dir} sha={selected} />
+					<div className="min-h-0 flex-1">
+						<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} />
 					</div>
-				</>
+				</aside>
 			)}
 		</div>
 	);

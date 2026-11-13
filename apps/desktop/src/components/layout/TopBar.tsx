@@ -1,6 +1,5 @@
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
-import { GitTabs } from '@components/layout/GitTabs';
 import { Button, IconButton } from '@factorai/ui';
 import { useChordLabel, useChordTitle } from '@hooks/useShortcuts';
 import { usePaletteStore } from '@store/paletteStore';
@@ -68,13 +67,6 @@ export function TopBar() {
 					</IconButton>
 				)}
 			</header>
-			{/* Row 2 is Git mode's own tab strip; in Sessions mode what is open lives
-			    in the sidebar's Inbox (F36, ADR-0092). */}
-			{gitMode && (
-				<div className="flex h-9 items-center px-3">
-					<GitTabs />
-				</div>
-			)}
 		</div>
 	);
 }

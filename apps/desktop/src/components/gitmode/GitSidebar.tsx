@@ -1,3 +1,4 @@
+import { GitTabs } from '@components/layout/GitTabs';
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -65,6 +66,8 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 			aria-label="Repository"
 			className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto px-1.5 py-1"
 		>
+			<GitTabs />
+			<div className="my-1.5 h-px shrink-0 bg-border" />
 			{row(
 				<>
 					Local changes
