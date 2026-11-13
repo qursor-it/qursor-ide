@@ -33,17 +33,19 @@ export function GitModeView() {
 function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 	const [section, setSection] = useState<GitSection>('history');
 	return (
-		<>
-			<GitActionBar dir={dir} />
-			<AgentPopover dir={dir} projectId={projectId} />
-			<ConflictBanner dir={dir} projectId={projectId} />
-			<div className="flex min-h-0 flex-1">
-				<GitSidebar dir={dir} projectId={projectId} section={section} onSection={setSection} />
-				<main className="flex min-w-0 flex-1 flex-col">
+		// The sidebar on the chrome, everything about the checkout in one card on
+		// it, as the session column is (ADR-0090).
+		<div className="flex min-h-0 flex-1 pr-2 pb-2">
+			<GitSidebar dir={dir} projectId={projectId} section={section} onSection={setSection} />
+			<div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
+				<GitActionBar dir={dir} />
+				<AgentPopover dir={dir} projectId={projectId} />
+				<ConflictBanner dir={dir} projectId={projectId} />
+				<main className="flex min-h-0 min-w-0 flex-1 flex-col">
 					{section === 'history' ? <GitHistory dir={dir} /> : <LocalChanges dir={dir} />}
 				</main>
+				<OpLog dir={dir} />
 			</div>
-			<OpLog dir={dir} />
-		</>
+		</div>
 	);
 }

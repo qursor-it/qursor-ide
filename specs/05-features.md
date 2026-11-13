@@ -8403,6 +8403,11 @@ Three zones, the layout of desktop git clients the user already knows:
 - **Main area** — either the history or the local changes, as picked in the
   sidebar.
 
+**On the chrome, since 2026-11-13** (ADR-0090): the sidebar sits on the
+window's chrome with 8px-radius rows (the selected section raised with the
+`background` fill), and the action bar, the banners, the main area and the op
+log share one card, exactly as the session column does in Sessions mode.
+
 **History.** The F18 graph at full width as a table: graph rail, ref badges and
 subject, author, date, short sha. Selecting a branch in the sidebar filters to
 it; `All commits` shows every ref. Below the table, the selected commit: header

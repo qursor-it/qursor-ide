@@ -48,10 +48,10 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 			type="button"
 			data-testid={testid}
 			aria-current={selected}
-			className={`flex w-full items-center gap-1.5 px-3 py-1 text-left text-sm ${
+			className={`flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm ${
 				selected
-					? 'bg-secondary text-foreground'
-					: 'text-secondary-foreground hover:bg-secondary/50'
+					? 'bg-background text-foreground shadow-sm'
+					: 'text-secondary-foreground hover:bg-secondary/60'
 			}`}
 			onClick={onClick}
 		>
@@ -63,7 +63,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 		<nav
 			data-testid="git-sidebar"
 			aria-label="Repository"
-			className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-border py-1"
+			className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto px-1.5 py-1"
 		>
 			{row(
 				<>
@@ -85,7 +85,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 							data-testid="git-branch"
 							data-branch={b.name}
 							title={b.upstream ? `${b.name} · tracks ${b.upstream}` : b.name}
-							className="flex w-full items-center gap-1.5 px-3 py-1 text-left text-sm text-secondary-foreground hover:bg-secondary/50"
+							className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-secondary-foreground hover:bg-secondary/50"
 							onDoubleClick={() => run({ kind: 'checkout', branch: b.name })}
 						>
 							<span
@@ -153,7 +153,10 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 				<div key={r.remote}>
 					<Heading>{r.remote}</Heading>
 					{r.branches.map((name) => (
-						<div key={name} className="truncate px-3 py-1 text-sm text-muted-foreground">
+						<div
+							key={name}
+							className="truncate rounded-md px-2.5 py-1.5 text-sm text-muted-foreground"
+						>
 							{name}
 						</div>
 					))}
@@ -164,7 +167,10 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 				<>
 					<Heading>Tags</Heading>
 					{refs.tags.map((t) => (
-						<div key={t} className="truncate px-3 py-1 text-sm text-muted-foreground">
+						<div
+							key={t}
+							className="truncate rounded-md px-2.5 py-1.5 text-sm text-muted-foreground"
+						>
 							{t}
 						</div>
 					))}
@@ -179,7 +185,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 							<ContextMenuTrigger asChild>
 								<div
 									data-testid="git-stash"
-									className="truncate px-3 py-1 text-sm text-secondary-foreground hover:bg-secondary/50"
+									className="truncate rounded-md px-2.5 py-1.5 text-sm text-secondary-foreground hover:bg-secondary/50"
 								>
 									{s.message}
 								</div>
@@ -216,7 +222,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 							type="button"
 							data-testid="git-worktree"
 							title={w.path}
-							className="truncate px-3 py-1 text-left text-sm text-secondary-foreground hover:bg-secondary/50"
+							className="truncate rounded-md px-2.5 py-1.5 text-left text-sm text-secondary-foreground hover:bg-secondary/50"
 							onClick={() => openTab(projectId, w.path)}
 						>
 							{w.name ?? w.branch ?? w.path}
@@ -243,7 +249,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 
 function Heading({ children }: { children: ReactNode }) {
 	return (
-		<div className="px-3 pt-3 pb-1 text-xs font-medium uppercase text-muted-foreground">
+		<div className="px-2.5 pt-3 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
 			{children}
 		</div>
 	);
