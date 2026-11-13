@@ -819,6 +819,15 @@ a 3px inset blue edge on its left — blue because it is the human's move. Secti
 headers are the 12px uppercase tracked voice of `PROJECTS`, with the count in a
 `secondary` pill.
 
+### Session Header
+
+Two rows inside the card's `card` strip, 10px vertical padding. Row one is
+12px metadata (project tile at 14px, branch, agent, profile, checkout). Row two
+is the status dot, the title at 14px medium, a full-round status pill (`working`
+at a 15% tint of its green, `waiting` at 15% of the accent, `stopped` on
+`secondary`) and the changes chip, a 24px full-round `secondary` button with the
+counts in the git hues. Pin and close end the row.
+
 ### Command Palette
 
 A dialog (16px radius, `shadow-popover`) pinned 14% from the top rather than

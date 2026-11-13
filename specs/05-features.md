@@ -739,6 +739,17 @@ the only signal a one-item menu has room for.
 the pane, with a thin header for the project name + session id. There is
 **no** chronological JSONL event viewer for ordinary sessions.
 
+**Two rows since 2026-11-13** (ADR-0090). The first says where the session
+is, in 12px metadata: the project's 14px tile and name, the branch, the agent
+mark, the profile and the checkout picker. The second says what it is and what
+you can do: the status dot (still the one animated dot), the session title at
+14px medium in the foreground colour, a **status pill** naming the state in
+words (`Working`, `Needs you` in the accent, `Stopped`; no `title`, the dot has
+it), and a **changes chip** — `N files +A −D` for the checkout, polled every
+10s on the Changes panel's own query, absent outside a repository and on a clean
+tree — whose click opens the file panel on its Changes tab (F13). The pin and
+the close control sit at the right end of that row.
+
 **The header's one control is a close `×`**, an `IconButton` at the right
 end, swapping to a labelled `Restart` when no PTY is live. Closing kills the
 process, disposes the pooled xterm and navigates back to the project — which

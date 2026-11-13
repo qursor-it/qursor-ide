@@ -15,7 +15,9 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { CloseSessionConfirm, needsCloseConfirm } from '@components/dialog/CloseSessionConfirm';
+import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { StatusDot } from '@components/layout/StatusDot';
+import { ChangesChip, StatusPill } from '@components/session/HeaderChips';
 import { GitOriginStrip } from '@components/session/GitOriginStrip';
 import { CheckoutMenu } from '@components/session/CheckoutMenu';
 import { SubAgentTranscript } from '@components/session/SubAgentTranscript';
@@ -243,215 +245,227 @@ function SessionView() {
 	return (
 		<main className="flex h-full flex-col bg-terminal">
 			<GitOriginStrip sessionId={sessionId} />
-			<header className="flex items-center gap-3 border-b border-border bg-card px-4 py-2">
-				{/* The only animated dot in the app: one per screen, describing the
-				    session you are actually looking at (see StatusDot). A sub-agent
-				    has no process to describe, so it gets the marker instead. */}
-				{isSubAgent ? (
-					<BookOpen className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-				) : (
-					<StatusDot status={live?.status ?? 'stopped'} pulse />
-				)}
-				<span className="truncate text-foreground text-sm">
-					{project?.displayName ?? projectId}
-				</span>
-				{/* Quiet by design: muted, no border, no background — it says where you
-				    are, it is not a control. Absent entirely when the project is not a
-				    repository, so a non-git project's header looks exactly as it did.
-				    `max-w-[12rem]` so a long branch name truncates instead of pushing
-				    the Close button around; the full name is on hover, following the
-				    session id below it. */}
-				{branch ? (
-					<span
-						className="flex min-w-0 max-w-[12rem] shrink-0 items-center gap-1 text-muted-foreground text-xs"
-						title={`On branch ${branch}`}
-						data-testid="session-branch"
-					>
-						<GitBranch className="size-3 shrink-0" aria-hidden />
-						<span className="truncate">{branch}</span>
+			{/* Two rows (F3, ADR-0090): where the session is, then what it is and
+			    what you can do to it. */}
+			<header className="flex flex-col gap-1.5 border-b border-border bg-card px-4 py-2.5">
+				<div className="flex min-w-0 items-center gap-3 text-muted-foreground text-xs">
+					<span className="flex min-w-0 shrink-0 items-center gap-1.5">
+						<ProjectIcon name={project?.displayName ?? projectId} size={14} />
+						<span className="truncate text-secondary-foreground">
+							{project?.displayName ?? projectId}
+						</span>
 					</span>
-				) : (
-					/* **A detached HEAD is a state, not a missing fact.** The badge used
-					   to be absent for it, which is right when the folder is not a
-					   repository at all and wrong here: beside a checkout mark that is
-					   present, the gap reads as "this app has nothing to say about the
-					   branch" rather than "there is no branch". The commit icon is the
-					   distinction — this is a position in history, not a name for one —
-					   and the short SHA is what you would have run `git status` for. */
-					detachedAt && (
+					{/* Quiet by design: muted, no border, no background — it says where you
+					    are, it is not a control. Absent entirely when the project is not a
+					    repository, so a non-git project's header looks exactly as it did.
+					    `max-w-[12rem]` so a long branch name truncates instead of pushing
+					    the Close button around; the full name is on hover, following the
+					    session id below it. */}
+					{branch ? (
 						<span
-							className="flex shrink-0 items-center gap-1 text-muted-foreground text-xs"
-							title={`Detached HEAD at ${detachedAt}`}
+							className="flex min-w-0 max-w-[12rem] shrink-0 items-center gap-1 text-muted-foreground text-xs"
+							title={`On branch ${branch}`}
 							data-testid="session-branch"
 						>
-							<GitCommitHorizontal className="size-3 shrink-0" aria-hidden />
-							<span>{detachedAt.slice(0, 7)}</span>
+							<GitBranch className="size-3 shrink-0" aria-hidden />
+							<span className="truncate">{branch}</span>
 						</span>
-					)
-				)}
-				{/* **Which Claude identity this session is** (F25). Where the branch and
-				    the checkout are said, and for the same reason: it is a fact about
-				    what you are looking at, so it is quiet — muted, no border, not a
-				    control. There is nothing to click, because a session's profile
-				    cannot change: `CLAUDE_CONFIG_DIR` is read at spawn and the
-				    transcript lives under the directory it was written in.
+					) : (
+						/* **A detached HEAD is a state, not a missing fact.** The badge used
+						   to be absent for it, which is right when the folder is not a
+						   repository at all and wrong here: beside a checkout mark that is
+						   present, the gap reads as "this app has nothing to say about the
+						   branch" rather than "there is no branch". The commit icon is the
+						   distinction — this is a position in history, not a name for one —
+						   and the short SHA is what you would have run `git status` for. */
+						detachedAt && (
+							<span
+								className="flex shrink-0 items-center gap-1 text-muted-foreground text-xs"
+								title={`Detached HEAD at ${detachedAt}`}
+								data-testid="session-branch"
+							>
+								<GitCommitHorizontal className="size-3 shrink-0" aria-hidden />
+								<span>{detachedAt.slice(0, 7)}</span>
+							</span>
+						)
+					)}
+					{/* **Which Claude identity this session is** (F25). Where the branch and
+					    the checkout are said, and for the same reason: it is a fact about
+					    what you are looking at, so it is quiet — muted, no border, not a
+					    control. There is nothing to click, because a session's profile
+					    cannot change: `CLAUDE_CONFIG_DIR` is read at spawn and the
+					    transcript lives under the directory it was written in.
 
-				    **Drawn only when it is not the default**, so a single-profile
-				    install's header is byte-identical to what it was, and the badge
-				    means "not the identity you would assume" rather than being a label
-				    every session carries. */}
-				{/* **Which agent this is** (F30): a small monochrome mark with the
-				    agent's name as its title, here and nowhere else — the sidebar rows
-				    are a list of sessions and the project menu already answers which
-				    agent a project is on. Drawn from what Rust resolved at spawn, so
-				    it appears with the PTY and is absent for a session not live. */}
-				{agent && (
-					<span
-						className="flex shrink-0 items-center text-muted-foreground"
-						title={agentName(agent)}
-						data-testid="session-agent"
-						data-agent={agent}
-					>
-						<AgentMark agent={agent} aria-hidden />
+					    **Drawn only when it is not the default**, so a single-profile
+					    install's header is byte-identical to what it was, and the badge
+					    means "not the identity you would assume" rather than being a label
+					    every session carries. */}
+					{/* **Which agent this is** (F30): a small monochrome mark with the
+					    agent's name as its title, here and nowhere else — the sidebar rows
+					    are a list of sessions and the project menu already answers which
+					    agent a project is on. Drawn from what Rust resolved at spawn, so
+					    it appears with the PTY and is absent for a session not live. */}
+					{agent && (
+						<span
+							className="flex shrink-0 items-center text-muted-foreground"
+							title={agentName(agent)}
+							data-testid="session-agent"
+							data-agent={agent}
+						>
+							<AgentMark agent={agent} aria-hidden />
+						</span>
+					)}
+					{profileName && (
+						<span
+							className="flex min-w-0 max-w-[10rem] shrink-0 items-center gap-1 text-muted-foreground text-xs"
+							title={`Running as the ${profileName} ${agentName(session?.agent)} profile`}
+							data-testid="session-profile"
+						>
+							<IdCard className="size-3 shrink-0" aria-hidden />
+							<span className="truncate">{profileName}</span>
+						</span>
+					)}
+					{/* **The checkout, beside the branch and never instead of it** (F21).
+					    Two facts rather than one: they usually agree, and the cases where
+					    they do not — a detached HEAD in a worktree, two checkouts on one
+					    branch — are exactly when you need to know.
+
+					    Drawn only when the repository *has* a second checkout, so a
+					    single-checkout header is byte-identical to what it was. It is the
+					    picker's trigger as well as the mark, and that is the whole
+					    control: the revert moved inside it when it shipped, rather than
+					    leaving two clickable things in the header for one subject. */}
+					{worktrees.length > 1 && root && (
+						<CheckoutMenu
+							worktrees={worktrees}
+							current={root}
+							onSelect={pickWorktree}
+							onRevert={isLinked ? revertWorktree : null}
+						/>
+					)}
+				</div>
+				<div className="flex min-w-0 items-center gap-3">
+					{/* The only animated dot in the app: one per screen, describing the
+					    session you are actually looking at (see StatusDot). A sub-agent
+					    has no process to describe, so it gets the marker instead. */}
+					{isSubAgent ? (
+						<BookOpen className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+					) : (
+						<StatusDot status={live?.status ?? 'stopped'} pulse />
+					)}
+					{/* The full id is one hover away rather than spending header width on
+					    36 characters nobody reads. */}
+					<span className="min-w-0 truncate font-medium text-foreground text-sm" title={sessionId}>
+						{isSubAgent ? 'sub-agent' : sessionLabel(sessionId, sessionsQ.data)}
 					</span>
-				)}
-				{profileName && (
-					<span
-						className="flex min-w-0 max-w-[10rem] shrink-0 items-center gap-1 text-muted-foreground text-xs"
-						title={`Running as the ${profileName} ${agentName(session?.agent)} profile`}
-						data-testid="session-profile"
-					>
-						<IdCard className="size-3 shrink-0" aria-hidden />
-						<span className="truncate">{profileName}</span>
-					</span>
-				)}
-				{/* **The checkout, beside the branch and never instead of it** (F21).
-				    Two facts rather than one: they usually agree, and the cases where
-				    they do not — a detached HEAD in a worktree, two checkouts on one
-				    branch — are exactly when you need to know.
+					{!isSubAgent && <StatusPill status={live?.status ?? 'stopped'} />}
+					<ChangesChip root={root} />
+					<span className="flex-1" />
+					{/* **The pin's control, and its mark** (F2). The session you are looking
+					    at is the one you know you want kept, so this is where the decision
+					    is made — and the sidebar shows ten rows, so a pin made three days
+					    ago is otherwise a fact only the list holds.
 
-				    Drawn only when the repository *has* a second checkout, so a
-				    single-checkout header is byte-identical to what it was. It is the
-				    picker's trigger as well as the mark, and that is the whole
-				    control: the revert moved inside it when it shipped, rather than
-				    leaving two clickable things in the header for one subject. */}
-				{worktrees.length > 1 && root && (
-					<CheckoutMenu
-						worktrees={worktrees}
-						current={root}
-						onSelect={pickWorktree}
-						onRevert={isLinked ? revertWorktree : null}
-					/>
-				)}
-				{/* **The pin's control, and its mark** (F2). The session you are looking
-				    at is the one you know you want kept, so this is where the decision
-				    is made — and the sidebar shows ten rows, so a pin made three days
-				    ago is otherwise a fact only the list holds.
+					    **At rest it shows the state; on hover it shows the action.** A filled
+					    pin means pinned, an outline pin means not, so the glyph is readable
+					    without hovering and without leaning on colour alone. Point at it and
+					    it becomes what the click will do: `PinOff` over a pinned session,
+					    the filled pin over an unpinned one — a preview of the result rather
+					    than a repeat of the state.
 
-				    **At rest it shows the state; on hover it shows the action.** A filled
-				    pin means pinned, an outline pin means not, so the glyph is readable
-				    without hovering and without leaning on colour alone. Point at it and
-				    it becomes what the click will do: `PinOff` over a pinned session,
-				    the filled pin over an unpinned one — a preview of the result rather
-				    than a repeat of the state.
+					    The swap is CSS on the button's own `group`, not a React hover state:
+					    a re-render per pointer entry, for two glyphs whose only difference is
+					    which one is `hidden`, is state nobody needs.
 
-				    The swap is CSS on the button's own `group`, not a React hover state:
-				    a re-render per pointer entry, for two glyphs whose only difference is
-				    which one is `hidden`, is state nobody needs.
+					    Absent for a sub-agent — not a session you go back into, and the
+					    backend refuses to pin one — and absent until the index has a row,
+					    which is what a pin hangs off (ADR-0008). */}
+					{session && !isSubAgent && (
+						<IconButton
+							data-testid="session-pin"
+							aria-label={session.pinned ? 'Unpin session' : 'Pin session'}
+							aria-pressed={session.pinned}
+							title={
+								pinFailed
+									? 'Could not change the pin'
+									: session.pinned
+										? 'Unpin — stop keeping it at the top of this project'
+										: 'Pin to the top of this project'
+							}
+							onClick={() => void togglePin()}
+							className={`group ${pinFailed ? 'text-destructive' : session.pinned ? 'text-primary' : ''}`}
+						>
+							{session.pinned ? (
+								<>
+									{/* lucide draws outlines, so "filled" is `fill-current` rather
+									    than a second icon. */}
+									<Pin className="fill-current group-hover:hidden" aria-hidden />
+									<PinOff className="hidden group-hover:block" aria-hidden />
+								</>
+							) : (
+								<>
+									<Pin className="group-hover:hidden" aria-hidden />
+									<Pin className="hidden fill-current group-hover:block" aria-hidden />
+								</>
+							)}
+						</IconButton>
+					)}
+					{/* **The bridge is broken for this session** (F20). Nothing is drawn
+					    while it works: a badge for a healthy bridge is a label that is
+					    always on, and that is a label you stop reading. This is the one
+					    state worth a pixel, because an agent that *cannot* open a file
+					    looks exactly like an agent that chose not to.
 
-				    Absent for a sub-agent — not a session you go back into, and the
-				    backend refuses to pin one — and absent until the index has a row,
-				    which is what a pin hangs off (ADR-0008). */}
-				{session && !isSubAgent && (
-					<IconButton
-						data-testid="session-pin"
-						aria-label={session.pinned ? 'Unpin session' : 'Pin session'}
-						aria-pressed={session.pinned}
-						title={
-							pinFailed
-								? 'Could not change the pin'
-								: session.pinned
-									? 'Unpin — stop keeping it at the top of this project'
-									: 'Pin to the top of this project'
-						}
-						onClick={() => void togglePin()}
-						className={`group ${pinFailed ? 'text-destructive' : session.pinned ? 'text-primary' : ''}`}
-					>
-						{session.pinned ? (
-							<>
-								{/* lucide draws outlines, so "filled" is `fill-current` rather
-								    than a second icon. */}
-								<Pin className="fill-current group-hover:hidden" aria-hidden />
-								<PinOff className="hidden group-hover:block" aria-hidden />
-							</>
-						) : (
-							<>
-								<Pin className="group-hover:hidden" aria-hidden />
-								<Pin className="hidden fill-current group-hover:block" aria-hidden />
-							</>
-						)}
-					</IconButton>
-				)}
-				{/* The full id is one hover away rather than spending header width on
-				    36 characters nobody reads. */}
-				<span className="min-w-0 flex-1 truncate text-muted-foreground text-xs" title={sessionId}>
-					{isSubAgent ? 'sub-agent' : sessionLabel(sessionId, sessionsQ.data)}
-				</span>
-				{/* **The bridge is broken for this session** (F20). Nothing is drawn
-				    while it works: a badge for a healthy bridge is a label that is
-				    always on, and that is a label you stop reading. This is the one
-				    state worth a pixel, because an agent that *cannot* open a file
-				    looks exactly like an agent that chose not to.
-
-				    Immediately before the close control rather than out among the
-				    project and branch names: those say where you are, this says
-				    something is wrong, and the right-hand end is where this header
-				    already keeps the things you act on. */}
-				{ideIssue && (
-					<span
-						data-testid="session-ide-issue"
-						title={`Claude cannot open files in this window — ${ideIssue}`}
-						className="flex shrink-0 items-center gap-1 text-destructive text-xs"
-					>
-						<TriangleAlert className="size-3.5 shrink-0" aria-hidden />
-						<span>Bridge</span>
-					</span>
-				)}
-				{isSubAgent ? (
-					// No Stop/Restart: there is no process to stop, and restarting
-					// is the resume that cannot work (see isSubAgent above).
-					<span className="text-muted-foreground text-xs">read-only</span>
-				) : live ? (
-					// An icon, not a labelled button: it does what a tab's × does, and
-					// the two surfaces should not disagree about the gesture any more
-					// than they do about the confirm (F16, F3).
-					<IconButton
-						aria-label="Close session"
-						title="Close session"
-						// Asks only while Claude is working, and only if you left the
-						// question on (F10, F11). `needsCloseConfirm` is shared with the
-						// tab strip so the two cannot disagree about when — and this is
-						// the `×` gesture, the same one a tab's close button is.
-						onClick={() =>
-							needsCloseConfirm(live.status, 'button', confirmPrefs)
-								? setClosing(true)
-								: void closeSession(live.terminalId)
-						}
-					>
-						<X />
-					</IconButton>
-				) : (
-					<Button
-						size="sm"
-						variant="outline"
-						className="gap-1.5"
-						// The same call a click on this session's stopped tab makes, so the
-						// two surfaces cannot drift about what a restart is.
-						onClick={() => restartSession(sessionId)}
-					>
-						<Play className="size-3" /> Restart
-					</Button>
-				)}
+					    Immediately before the close control rather than out among the
+					    project and branch names: those say where you are, this says
+					    something is wrong, and the right-hand end is where this header
+					    already keeps the things you act on. */}
+					{ideIssue && (
+						<span
+							data-testid="session-ide-issue"
+							title={`Claude cannot open files in this window — ${ideIssue}`}
+							className="flex shrink-0 items-center gap-1 text-destructive text-xs"
+						>
+							<TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+							<span>Bridge</span>
+						</span>
+					)}
+					{isSubAgent ? (
+						// No Stop/Restart: there is no process to stop, and restarting
+						// is the resume that cannot work (see isSubAgent above).
+						<span className="text-muted-foreground text-xs">read-only</span>
+					) : live ? (
+						// An icon, not a labelled button: it does what a tab's × does, and
+						// the two surfaces should not disagree about the gesture any more
+						// than they do about the confirm (F16, F3).
+						<IconButton
+							aria-label="Close session"
+							title="Close session"
+							// Asks only while Claude is working, and only if you left the
+							// question on (F10, F11). `needsCloseConfirm` is shared with the
+							// tab strip so the two cannot disagree about when — and this is
+							// the `×` gesture, the same one a tab's close button is.
+							onClick={() =>
+								needsCloseConfirm(live.status, 'button', confirmPrefs)
+									? setClosing(true)
+									: void closeSession(live.terminalId)
+							}
+						>
+							<X />
+						</IconButton>
+					) : (
+						<Button
+							size="sm"
+							variant="outline"
+							className="gap-1.5"
+							// The same call a click on this session's stopped tab makes, so the
+							// two surfaces cannot drift about what a restart is.
+							onClick={() => restartSession(sessionId)}
+						>
+							<Play className="size-3" /> Restart
+						</Button>
+					)}
+				</div>
 			</header>
 			{/* The project's shell footer is not here — it is in `AppShell`, so it
 			    is drawn on this route, the project page and a sub-agent transcript
