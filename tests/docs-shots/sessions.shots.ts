@@ -175,7 +175,7 @@ test('sessions: search results', async ({ page }) => {
 		],
 	});
 	await page.goto('/');
-	await page.getByPlaceholder('Search sessions…').fill('retry');
+	await page.getByPlaceholder('Search projects and sessions…').fill('retry');
 	await expect(page.getByText(/wakes the NAS/)).toBeVisible();
 	await rest(page);
 	const results = await around([page.getByText(/updater retries a failed download/)], 0);
