@@ -508,6 +508,20 @@ title, relative timestamp, turn count, and a status badge.
 **UI.** Sidebar (or full pane when on `/projects/$id`). Click → open
 session view. Keyboard: ↑/↓ to navigate, Enter to open.
 
+**The project page's overview** (added 2026-11-13, ADR-0090), between its
+header (now led by the project's tile at 40px) and its tabs, in
+`components/project/ProjectOverview.tsx`:
+
+- Three stats: **Working now** (live sessions of the project that are working
+  and not unseen), **Needs you** (waiting or unseen, in the accent when not
+  zero), **Uncommitted** (files in the project folder's git status, with a
+  `Review` link that opens the file panel on Changes; "Not a repository"
+  outside one). Uncommitted reads the project folder, not a session's worktree.
+- **Rules the agent runs under**: whether `CLAUDE.md` exists in the project
+  folder (`path_kinds`), and when it does an `Open CLAUDE.md` button that opens
+  it in the viewer, where F26 edits it. The first door onto F9; plans and
+  creating the file are not in it yet.
+
 An expanded project lists its **10 most relevant** sessions inline: **pinned
 first**, then anything with a live PTY, then most-recently-active. Running-first
 is the point of the second key — what an agent is doing *now* matters more than

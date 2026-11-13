@@ -29,6 +29,7 @@ export const queryKeys = {
 	/** One directory's listing in the file tree. Keyed by absolute path so
 	 *  every expanded node caches independently. */
 	dir: (path: string) => ['dir', path] as const,
+	pathKind: (path: string) => ['pathKind', path] as const,
 	/** One file's contents. Capped and uncapped reads are separate entries, so
 	 *  "Show anyway" fetches rather than reusing the truncated body. */
 	file: (path: string, uncapped: boolean) => ['file', path, uncapped ? 'full' : 'capped'] as const,

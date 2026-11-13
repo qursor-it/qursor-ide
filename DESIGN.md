@@ -828,6 +828,13 @@ at a 15% tint of its green, `waiting` at 15% of the accent, `stopped` on
 `secondary`) and the changes chip, a 24px full-round `secondary` button with the
 counts in the git hues. Pin and close end the row.
 
+### Project Overview
+
+Three stat tiles in a row (12px radius, `secondary` at 60%, a 12px label over a
+16px semibold number with its unit in 12px metadata), then the rules card: a
+12px-radius dashed hairline, the accent book glyph, a 14px medium title and a
+12px line under it, with its one action as an outline button.
+
 ### Command Palette
 
 A dialog (16px radius, `shadow-popover`) pinned 14% from the top rather than
