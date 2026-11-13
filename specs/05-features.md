@@ -8390,7 +8390,7 @@ text, unedited.
 | Changes | stage / unstage a file or a hunk, discard a file or a hunk (confirmed), commit, amend |
 | Branches | checkout (double-click), new branch from the selected commit, rename, delete (confirmed) |
 | Integrate | merge a branch into the current one, rebase the current branch onto another (non-interactive) |
-| Commit (history context menu) | checkout the commit (detached, confirmed), new branch here, new tag here, cherry-pick, revert, merge it into the current branch, rebase the current branch onto it, reset the current branch to it (soft / mixed / hard; hard confirmed), copy SHA, copy message |
+| Commit (history context menu) | checkout the commit (detached, confirmed), new branch here, new tag here, cherry-pick, revert (a merge commit against its first parent, `-m 1`), merge it into the current branch, rebase the current branch onto it, reset the current branch to it (soft / mixed / hard; hard confirmed), copy SHA, copy message |
 | Remote | fetch, pull, push, set upstream on the first push |
 | Stash | create, apply, pop, drop (confirmed) |
 

@@ -72,6 +72,8 @@ export function GitHistory({ dir }: { dir: string }) {
 	const onSelect = useCallback((sha: string) => select(sha), []);
 
 	const short = menuSha?.slice(0, 8) ?? '';
+	// A merge commit is picked or reverted against its first parent.
+	const mergeCommit = (commits.find((c) => c.sha === menuSha)?.parents.length ?? 0) > 1;
 
 	if (isPending) return <PanelEmpty>Loading…</PanelEmpty>;
 	if (!graph?.repoRoot) return <PanelEmpty>Not a git repository.</PanelEmpty>;
@@ -144,13 +146,13 @@ export function GitHistory({ dir }: { dir: string }) {
 								<ContextMenuSeparator />
 								<ContextMenuItem
 									disabled={running}
-									onSelect={() => void run({ kind: 'cherryPick', sha: menuSha })}
+									onSelect={() => void run({ kind: 'cherryPick', sha: menuSha, mergeCommit })}
 								>
 									Cherry-pick into {current}
 								</ContextMenuItem>
 								<ContextMenuItem
 									disabled={running}
-									onSelect={() => void run({ kind: 'revert', sha: menuSha })}
+									onSelect={() => void run({ kind: 'revert', sha: menuSha, mergeCommit })}
 								>
 									Revert this commit
 								</ContextMenuItem>
