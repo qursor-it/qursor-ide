@@ -8,6 +8,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 	IconButton,
+	Input,
 } from '@factorai/ui';
 import { queryKeys } from '@lib/queryKeys';
 import { groupSortId } from '@lib/tabGroups';
@@ -38,6 +39,15 @@ export function GitTabs() {
 		tabs: tabs.filter((t) => t.projectId === projectId),
 	}));
 	const [folded, setFolded] = useState<Set<string>>(new Set());
+	const [filter, setFilter] = useState('');
+	const [menuOpen, setMenuOpen] = useState(false);
+	const needle = filter.trim().toLowerCase();
+	const shown = projects.filter(
+		(p) =>
+			!needle ||
+			p.displayName.toLowerCase().includes(needle) ||
+			p.realPath.toLowerCase().includes(needle),
+	);
 	const toggle = (id: string) =>
 		setFolded((c) => {
 			const next = new Set(c);
@@ -82,7 +92,13 @@ export function GitTabs() {
 					})}
 				</SortableContext>
 			</DndContext>
-			<DropdownMenu>
+			<DropdownMenu
+				open={menuOpen}
+				onOpenChange={(open) => {
+					setMenuOpen(open);
+					if (!open) setFilter('');
+				}}
+			>
 				<DropdownMenuTrigger asChild>
 					<IconButton size="md" aria-label="Open Git tab" title="Open a Git tab">
 						<Plus />
@@ -99,8 +115,36 @@ export function GitTabs() {
 					>
 						Open repository…
 					</DropdownMenuItem>
-					{projects.length > 0 && <DropdownMenuSeparator />}
-					{projects.map((p) => (
+					{projects.length > 0 && (
+						<>
+							<DropdownMenuSeparator />
+							<div className="px-1 py-1">
+								<Input
+									autoFocus
+									value={filter}
+									onChange={(e) => setFilter(e.target.value)}
+									// The menu's typeahead would steal every letter; only the keys
+									// that move into the list or close it reach it.
+									onKeyDown={(e) => {
+										if (e.key !== 'ArrowDown' && e.key !== 'Escape') e.stopPropagation();
+										if (e.key === 'Enter' && shown[0]) {
+											openTab(shown[0].id, shown[0].realPath);
+											setMenuOpen(false);
+											setFilter('');
+										}
+									}}
+									placeholder="Filter projects…"
+									aria-label="Filter projects"
+									data-testid="git-open-filter"
+									className="h-7 text-sm"
+								/>
+							</div>
+							{shown.length === 0 && (
+								<p className="px-2 py-1.5 text-muted-foreground text-xs">No project matches.</p>
+							)}
+						</>
+					)}
+					{shown.map((p) => (
 						<DropdownMenuItem key={p.id} onSelect={() => openTab(p.id, p.realPath)}>
 							{p.displayName}
 						</DropdownMenuItem>

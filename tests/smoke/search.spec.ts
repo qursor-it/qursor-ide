@@ -7,7 +7,7 @@ test.describe('full-text search', () => {
 		await page.goto('/');
 
 		// Type into the sidebar search box (debounced → navigates to /search).
-		await page.getByPlaceholder('Search sessions…').fill('auth');
+		await page.getByPlaceholder('Search projects and sessions…').fill('auth');
 
 		// The hit's title and snippet render on the search route. (Exact match
 		// for the title — it's a substring of the snippet text below.)
@@ -25,6 +25,15 @@ test.describe('full-text search', () => {
 		// Header names the session by title; the uuid is on the hover title (F6).
 		await expect(page.locator('header').getByTitle('session-uuid-001')).toBeVisible();
 		await expect(page.locator('.xterm:visible')).toBeVisible();
+	});
+
+	test('@smoke a project matches by name and opens', async ({ page }) => {
+		await installMockBridge(page, fixtureWithSearchHits());
+		await page.goto('/#/search?q=fo');
+		const projects = page.getByTestId('search-projects');
+		await expect(projects.getByText('foo', { exact: true })).toBeVisible();
+		await projects.getByText('foo', { exact: true }).click();
+		await expect(page).toHaveURL(/#\/projects\//);
 	});
 
 	test('@smoke empty query shows the prompt, not a stale list', async ({ page }) => {

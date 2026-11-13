@@ -831,6 +831,11 @@ indexing and drop the `project_id IS NOT NULL` clause in `services/search.rs`.
 that lists hits grouped by session, each with a `snippet()` excerpt and the
 matched role. Click a hit → navigate to that session (opens its terminal).
 
+**Projects match too.** Above the session hits, a `Projects` list shows every
+added project whose display name or folder contains the query (matched in the
+renderer over the already-loaded project list, case-insensitive); clicking one
+opens that project. The fields read `Search projects and sessions…`.
+
 **A hit names its project, not just its session.** Results are workspace-wide,
 and a session title on its own doesn't place a conversation: two projects
 routinely hold a "Fix the flaky test". The row leads with the project's
@@ -8336,7 +8341,9 @@ Git mode is added beside them, not instead of them.
   grouped under the same project chips: one tab for the project's checkout
   (labelled with its branch and ahead/behind) and one per worktree opened from
   the sidebar's Worktrees list. `+` opens the Git tab of another project, or
-  `Open repository…` any folder, as a client like Fork does; such a repository
+  `Open repository…` any folder, as a client like Fork does. A field above the
+  project list filters it by name or folder as you type, and `Enter` opens the
+  first match. Such a repository
   is no project, so it groups under its folder name and offers nothing that
   starts or asks an agent. Entering Git mode opens a tab for every project
   that has session tabs.

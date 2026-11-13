@@ -597,7 +597,7 @@ export const Sidebar = memo(function Sidebar() {
 						type="search"
 						value={term}
 						onChange={(e) => setTerm(e.target.value)}
-						placeholder="Search sessions…"
+						placeholder="Search projects and sessions…"
 						className="pl-7"
 					/>
 				</div>
@@ -1051,8 +1051,8 @@ function Rail({
 				    input, it is a broken one. */}
 				<IconButton
 					size="md"
-					aria-label="Search sessions"
-					title="Search sessions"
+					aria-label="Search projects and sessions"
+					title="Search projects and sessions"
 					data-testid="rail-search"
 					onClick={() => void navigate({ to: '/search', search: { focus: true } })}
 				>

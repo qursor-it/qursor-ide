@@ -58,6 +58,15 @@ function SearchView() {
 	});
 
 	const hits = hitsQ.data;
+	// Projects match on name or path locally: the list is already loaded and short.
+	const projectsQ = useQuery({ queryKey: queryKeys.projects(), queryFn: () => cmd.listProjects() });
+	const needle = query.toLowerCase();
+	const projects = needle
+		? (projectsQ.data ?? []).filter(
+				(p) =>
+					p.displayName.toLowerCase().includes(needle) || p.realPath.toLowerCase().includes(needle),
+			)
+		: [];
 
 	return (
 		<main className="flex h-full flex-col bg-background">
@@ -70,7 +79,7 @@ function SearchView() {
 						type="search"
 						value={term}
 						onChange={(e) => setTerm(e.target.value)}
-						placeholder="Search sessions…"
+						placeholder="Search projects and sessions…"
 						data-testid="search-field"
 						className="pl-7"
 					/>
@@ -85,13 +94,37 @@ function SearchView() {
 			<div className="min-h-0 flex-1 overflow-y-auto">
 				{!query && (
 					<p className="p-4 text-muted-foreground text-sm">
-						Type above to search across all session content.
+						Type above to search projects and all session content.
 					</p>
 				)}
 				{query && hitsQ.isLoading && (
 					<p className="p-4 text-muted-foreground text-sm">Searching…</p>
 				)}
-				{query && hits && hits.length === 0 && (
+				{projects.length > 0 && (
+					<section aria-label="Projects" className="border-b border-border">
+						<h3 className="px-4 pt-3 pb-1 font-medium text-muted-foreground text-xs uppercase tracking-wider">
+							Projects
+						</h3>
+						<ul data-testid="search-projects">
+							{projects.map((p) => (
+								<li key={p.id}>
+									<Link
+										to="/projects/$id"
+										params={{ id: p.id }}
+										className="flex items-center gap-2 px-4 py-2 transition-colors hover:bg-secondary/50"
+									>
+										<ProjectIcon name={p.displayName} size={16} />
+										<span className="shrink-0 font-medium text-sm">{p.displayName}</span>
+										<span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+											{p.realPath}
+										</span>
+									</Link>
+								</li>
+							))}
+						</ul>
+					</section>
+				)}
+				{query && hits && hits.length === 0 && projects.length === 0 && (
 					<p className="p-4 text-muted-foreground text-sm">No matches for "{query}".</p>
 				)}
 

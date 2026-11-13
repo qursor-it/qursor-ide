@@ -126,6 +126,24 @@ test.describe('git-mode', () => {
 		);
 	});
 
+	test('@smoke typing in the + menu filters the projects', async ({ page }) => {
+		const base = fixtureWithRefs();
+		const first = base.projects?.[0];
+		if (!first) throw new Error('fixture has no project');
+		const other = { ...first, id: 'p-other', displayName: 'zeta', realPath: '/home/me/zeta' };
+		await installMockBridge(page, { ...base, projects: [first, other] });
+		await page.goto('/');
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: 'Open Git tab' }).click();
+		await page.getByTestId('git-open-filter').fill('zet');
+		await expect(page.getByRole('menuitem', { name: 'zeta' })).toBeVisible();
+		await expect(page.getByRole('menuitem', { name: first.displayName })).toBeHidden();
+		await page.getByTestId('git-open-filter').press('Enter');
+		await expect(
+			page.getByTestId('git-tabs').getByTestId('tab-group-chip').filter({ hasText: 'zeta' }),
+		).toBeVisible();
+	});
+
 	test('@smoke history rows render and double-clicking a branch checks it out', async ({
 		page,
 	}) => {
