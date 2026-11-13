@@ -97,6 +97,11 @@ type ErrorDisposition =
  * live terminal in it.
  */
 export function classify(err: unknown, mounted: boolean): ErrorDisposition {
+	// The browser's own notice that a resize callback changed layout again; the
+	// observer simply runs next frame. Nothing failed.
+	if (typeof err === 'string' && err.startsWith('ResizeObserver loop')) {
+		return { kind: 'ignore', why: 'ResizeObserver deferred a notification to the next frame' };
+	}
 	if (isCancellation(err)) {
 		return { kind: 'ignore', why: 'monaco cancelled an in-flight worker request' };
 	}

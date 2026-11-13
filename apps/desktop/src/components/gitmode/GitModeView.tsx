@@ -8,7 +8,7 @@ import { GitErrorHost } from './GitErrorDialog';
 import { GitHistory } from './GitHistory';
 import { type GitSection, GitSidebar } from './GitSidebar';
 import { LocalChanges } from './LocalChanges';
-import { GitConfirmHost, OpLog } from './OpLog';
+import { GitConfirmHost } from './OpLog';
 
 /** The full-window view of the selected Git tab (specs/05-features.md F35). */
 export function GitModeView() {
@@ -43,7 +43,6 @@ function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 					{section === 'history' ? <GitHistory dir={dir} /> : <LocalChanges dir={dir} />}
 				</main>
 			</div>
-			<OpLog dir={dir} />
 		</>
 	);
 }

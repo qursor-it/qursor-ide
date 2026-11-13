@@ -8377,7 +8377,8 @@ Three zones, the layout of desktop git clients the user already knows:
   sidebar.
 
 **History.** The F18 graph at full width as a table: graph rail, ref badges and
-subject, author, date, short sha. Selecting a branch in the sidebar filters to
+subject, author, date, short sha. Rows have no hover card (the panel's Graph
+tab keeps it): the selected commit's detail below already shows it. Selecting a branch in the sidebar filters to
 it; `All commits` shows every ref. Below the table, the selected commit: header
 (subject, sha, author, date, parents), its files with `+N −M`, and the diff of
 the selected file (the existing Monaco diff, side by side or inline). Reuses
@@ -8393,8 +8394,9 @@ and a `Commit on <branch>` button.
 ### v1 operations
 
 Each runs the `git` CLI (ADR-0089) and refreshes the view when it returns.
-Every operation shows the git command it ran; a failure shows git's own error
-text, unedited.
+A success shows nothing beyond the refreshed view (no console strip); a
+failure opens a dialog with the command it ran and git's own error text,
+unedited.
 
 | Area | Operations |
 |---|---|

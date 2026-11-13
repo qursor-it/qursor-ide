@@ -29,6 +29,8 @@ import { useQuickAgent } from './useQuickAgent';
  *  the panel the graph was designed in, but its rows are still one line. */
 const LAYOUT_WIDTH = 600;
 
+const noCard = () => {};
+
 const RESET_MODES = [
 	{
 		mode: 'soft',
@@ -65,10 +67,6 @@ export function GitHistory({ dir }: { dir: string }) {
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 	// The row the context menu was opened on, found from the event target.
 	const [menuSha, setMenuSha] = useState<string | null>(null);
-	const [carded, setCarded] = useState<string | null>(null);
-	const onCardOpen = useCallback((sha: string, open: boolean) => {
-		setCarded((current) => (open ? sha : current === sha ? null : current));
-	}, []);
 	const onSelect = useCallback((sha: string) => select(sha), []);
 
 	const short = menuSha?.slice(0, 8) ?? '';
@@ -107,8 +105,9 @@ export function GitHistory({ dir }: { dir: string }) {
 									tabbable={selected ? commit.sha === selected : index === 0}
 									remoteHost={graph.remoteHost}
 									dirty={false}
-									cardOpen={commit.sha === carded}
-									onCardOpen={onCardOpen}
+									// No hover card here: the selected commit's detail is below.
+									cardOpen={false}
+									onCardOpen={noCard}
 									onSelect={onSelect}
 									columns
 								/>

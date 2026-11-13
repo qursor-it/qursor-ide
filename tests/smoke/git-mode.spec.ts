@@ -164,7 +164,8 @@ test.describe('git-mode', () => {
 					args: expect.objectContaining({ op: { kind: 'checkout', branch: 'main' } }),
 				}),
 			]);
-		await expect(page.getByTestId('op-log')).toContainText('$ git checkout');
+		// No console strip: git's words appear only in the error dialog.
+		await expect(page.getByTestId('op-log')).toHaveCount(0);
 	});
 
 	test('@smoke the history menu cherry-picks a merge commit against its first parent', async ({
@@ -232,7 +233,8 @@ test.describe('git-mode', () => {
 			'git is not installed or not on PATH',
 		);
 		await page.getByTestId('git-error-dialog').getByRole('button', { name: 'Close' }).click();
-		await expect(page.getByTestId('op-log')).toContainText('git not found on PATH');
+		// No console strip: git's words appear only in the error dialog.
+		await expect(page.getByTestId('op-log')).toHaveCount(0);
 		// History still works.
 		await expect(page.getByTestId('commit-row')).toHaveCount(5);
 	});

@@ -10,26 +10,6 @@ import {
 import { AlertTriangle } from 'lucide-react';
 import { answerConfirm, useGitUi } from './useGitOp';
 
-/**
- * The bottom strip: the command the last write ran and git's own words,
- * unedited (specs/05-features.md F35). Renders nothing before the first write.
- */
-export function OpLog({ dir }: { dir: string }) {
-	const last = useGitUi((s) => s.logs[dir]);
-	if (!last) return null;
-	const text = last.stderr || last.stdout;
-	return (
-		<div
-			data-testid="op-log"
-			data-ok={last.ok}
-			className="max-h-32 shrink-0 overflow-auto border-t border-border bg-card px-3 py-1.5 font-mono text-xs"
-		>
-			<div className={last.ok ? 'text-muted-foreground' : 'text-destructive'}>$ {last.command}</div>
-			{text && <pre className="whitespace-pre-wrap text-secondary-foreground">{text}</pre>}
-		</div>
-	);
-}
-
 /** The question a destructive op asks every time, from `useGitOp`'s `confirm`. */
 export function GitConfirmHost() {
 	const confirm = useGitUi((s) => s.confirm);

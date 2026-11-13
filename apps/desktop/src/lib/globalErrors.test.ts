@@ -52,6 +52,13 @@ describe('isDisposedDiff', () => {
 });
 
 describe('classify', () => {
+	it('ignores the browser ResizeObserver loop notice', () => {
+		expect(
+			classify('ResizeObserver loop completed with undelivered notifications.', true).kind,
+		).toBe('ignore');
+		expect(classify('ResizeObserver loop limit exceeded', false).kind).toBe('ignore');
+	});
+
 	it('ignores a cancellation whether or not the app is mounted', () => {
 		for (const mounted of [true, false]) {
 			expect(classify(cancellationError(), mounted).kind).toBe('ignore');
