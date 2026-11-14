@@ -67,6 +67,15 @@ interface DiffViewProps {
 	 *  right-hand side is an unsaved buffer — a thing no revision holds and no
 	 *  command can be asked for. */
 	sides?: { original: string; modified: string; label: string } | null;
+	/** The lines selected on the right-hand side, 1-based and inclusive, as the
+	 *  cursor moves; null when nothing is shown. Review mode anchors a note to
+	 *  them (F43). */
+	onSelectLines?: (lines: LineRange | null) => void;
+}
+
+export interface LineRange {
+	start: number;
+	end: number;
 }
 
 /** One side of a diff, as a cache key plus the call that fills it.
@@ -195,7 +204,7 @@ function basename(path: string): string {
  * right-hand side is a file at all — carrying a worktree buffer into a commit
  * diff would offer to save one into the other.
  */
-export function DiffView({ path, mode, sides = null }: DiffViewProps) {
+export function DiffView({ path, mode, sides = null, onSelectLines }: DiffViewProps) {
 	// **Media is played, not compared** (F7, ADR-0057), and only where the file
 	// on disk is one of the sides. `diffEditsWorktree` is already the answer to
 	// that question: `unstaged` and `head` put the worktree on the right, while
@@ -209,7 +218,15 @@ export function DiffView({ path, mode, sides = null }: DiffViewProps) {
 	if ((iconKey === 'video' || iconKey === 'audio') && !sides && diffEditsWorktree(mode)) {
 		return <MediaDiff key={path} path={path} />;
 	}
-	return <DiffViewInner key={`${mode}:${path}`} path={path} mode={mode} sides={sides} />;
+	return (
+		<DiffViewInner
+			key={`${mode}:${path}`}
+			path={path}
+			mode={mode}
+			sides={sides}
+			onSelectLines={onSelectLines}
+		/>
+	);
 }
 
 /**
@@ -241,7 +258,7 @@ function MediaDiff({ path }: { path: string }) {
 	);
 }
 
-function DiffViewInner({ path, mode, sides = null }: DiffViewProps) {
+function DiffViewInner({ path, mode, sides = null, onSelectLines }: DiffViewProps) {
 	const inline = usePrefsStore((s) => s.diffInline);
 	const setInline = usePrefsStore((s) => s.setDiffInline);
 	// The checkout the pull request's files were listed from (F31). Read here,
@@ -381,6 +398,7 @@ function DiffViewInner({ path, mode, sides = null }: DiffViewProps) {
 						review={review}
 						onDirtyChange={noteDirty}
 						onSave={requestSave}
+						onSelectLines={onSelectLines}
 					/>
 				)}
 			</div>
@@ -489,6 +507,7 @@ interface DiffEditorProps {
 	review: ReviewLayerInput | null;
 	onDirtyChange: (dirty: boolean) => void;
 	onSave: () => void;
+	onSelectLines?: (lines: LineRange | null) => void;
 }
 
 /**
@@ -519,6 +538,7 @@ function DiffEditor({
 	review,
 	onDirtyChange,
 	onSave,
+	onSelectLines,
 }: DiffEditorProps) {
 	const hostRef = useRef<HTMLDivElement>(null);
 	const findSink = useFindHandleSink();
@@ -542,6 +562,8 @@ function DiffEditor({
 	onSaveRef.current = onSave;
 	const onDirtyRef = useRef(onDirtyChange);
 	onDirtyRef.current = onDirtyChange;
+	const onSelectRef = useRef(onSelectLines);
+	onSelectRef.current = onSelectLines;
 	/** The pull request's line comments, bolted on beside the editor
 	 *  (`prReviewZones`). Held in refs for the same reason as the texts: the
 	 *  data arrives after the editor exists and must not recreate it. */
@@ -628,6 +650,17 @@ function DiffEditor({
 			if (viewStateRef.current) editor.restoreViewState(viewStateRef.current);
 		}
 
+		const selectSub = modifiedEditor.onDidChangeCursorSelection(({ selection }) =>
+			onSelectRef.current?.({
+				start: selection.startLineNumber,
+				// A selection ending at column 1 of a line has not taken that line.
+				end:
+					selection.endColumn === 1 && selection.endLineNumber > selection.startLineNumber
+						? selection.endLineNumber - 1
+						: selection.endLineNumber,
+			}),
+		);
+
 		const layer = reviewable ? attachPrReview(editor, { inline }) : null;
 		layer?.update(reviewRef.current);
 		layerRef.current = layer;
@@ -651,6 +684,8 @@ function DiffEditor({
 			layer?.dispose();
 			layerRef.current = null;
 			contentSub?.dispose();
+			selectSub.dispose();
+			onSelectRef.current?.(null);
 			modelsRef.current = null;
 			appliedBaselineRef.current = null;
 			// **Detach before disposing**, so the widget stops asking about models

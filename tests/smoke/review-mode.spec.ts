@@ -114,4 +114,26 @@ test.describe('review mode', () => {
 		expect(written).toContain('cover charge.refunded too');
 		expect(written).toMatch(/About .+: cover charge\.refunded too/);
 	});
+
+	test('@smoke a note is anchored to the lines picked in the diff', async ({ page }) => {
+		await installMockBridge(page, fixture());
+		await page.goto(`/#/projects/${FOO_ID}/sessions/${SESSION}`);
+		await expect(page.locator('.xterm:visible')).toBeVisible();
+		await page.goto(REVIEW);
+		const review = page.getByTestId('review-mode');
+		await review.getByTestId('review-file').filter({ hasText: 'src/index.ts' }).first().click();
+		const note = page.getByTestId('review-note');
+		await expect(note).toHaveAttribute('placeholder', /^About [^,]+…$/);
+		await page.getByTestId('diff-view-editor').locator('.modified .view-line').first().click();
+		await expect(note).toHaveAttribute('placeholder', /, line 1…$/);
+		await note.fill('rename this');
+		await page.getByTestId('review-send').click();
+		const written = await page.evaluate(() =>
+			(window.__FACTORAI_TEST_CALLS__ ?? [])
+				.filter((c) => c.name === 'terminal_write')
+				.map((c) => (c.args as { data: string }).data)
+				.join(''),
+		);
+		expect(written).toMatch(/About .+, line 1: rename this/);
+	});
 });

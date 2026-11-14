@@ -20,7 +20,7 @@ export function lastAssistantText(events: readonly SessionEvent[]): string | nul
 
 /** A check the agent ran (F43): the command, and whether it passed — null
  *  while its result has not come back. */
-export interface AgentCheck {
+interface AgentCheck {
 	command: string;
 	ok: boolean | null;
 }

@@ -1,7 +1,7 @@
 import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { PlanList, StatusPill } from '@components/session/HeaderChips';
 import { sendToSession } from '@components/terminal/Terminal';
-import { DiffView } from '@components/viewer/DiffView';
+import { DiffView, type LineRange } from '@components/viewer/DiffView';
 import type { GitChange } from '@factorai/types';
 import { Button, Checkbox, Textarea } from '@factorai/ui';
 import { useGitBranch } from '@hooks/useGitBranch';
@@ -21,6 +21,14 @@ import { rootRoute } from './__root';
 const diffOf = (c: GitChange): DiffMode =>
 	c.group === 'staged' ? 'staged' : c.group === 'unstaged' ? 'unstaged' : 'head';
 const keyOf = (c: GitChange) => `${c.group}:${c.path}`;
+
+/** What a note is about: the file, and the lines picked in its diff (F43). */
+function noteSubject(file: string, lines: LineRange | null): string {
+	if (!lines) return file;
+	return lines.start === lines.end
+		? `${file}, line ${lines.start}`
+		: `${file}, lines ${lines.start}–${lines.end}`;
+}
 
 /** Events read off the end of the transcript for the agent's last words. */
 const TAIL_EVENTS = 40;
@@ -74,6 +82,7 @@ function ReviewMode() {
 	const [selected, setSelected] = useState<string | null>(null);
 	const [reviewed, setReviewed] = useState<ReadonlySet<string>>(() => new Set());
 	const [note, setNote] = useState('');
+	const [lines, setLines] = useState<LineRange | null>(null);
 	const current = changes.find((c) => keyOf(c) === selected) ?? changes[0];
 
 	const back = () =>
@@ -99,7 +108,9 @@ function ReviewMode() {
 			return next;
 		});
 	const sendNote = () => {
-		const text = current ? `About ${current.relPath}: ${note.trim()}` : note.trim();
+		const text = current
+			? `About ${noteSubject(current.relPath, lines)}: ${note.trim()}`
+			: note.trim();
 		if (note.trim() && sendToSession(sessionId, text, true)) {
 			setNote('');
 			back();
@@ -188,7 +199,12 @@ function ReviewMode() {
 
 					<div className="flex min-h-0 min-w-0 flex-col">
 						{current && (
-							<DiffView key={keyOf(current)} path={current.path} mode={diffOf(current)} />
+							<DiffView
+								key={keyOf(current)}
+								path={current.path}
+								mode={diffOf(current)}
+								onSelectLines={setLines}
+							/>
 						)}
 					</div>
 
@@ -242,7 +258,7 @@ function ReviewMode() {
 								placeholder={
 									live
 										? current
-											? `About ${current.relPath}…`
+											? `About ${noteSubject(current.relPath, lines)}…`
 											: 'What should change…'
 										: 'The session is not running'
 								}

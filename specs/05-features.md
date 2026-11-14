@@ -8794,10 +8794,11 @@ and `+A −D`, the session's state pill, and *Commit…*. Under it three columns
   of each, marked passed, failed (its tool result was an error) or running (no
   result yet) — the agent's *Plan* (F40) when it has one,
   and *Ask the agent to revise*: a note sent to the session as a reply prefixed
-  `About <file>:` (F39's paste path, then Enter), after which you are back on
+  `About <file>:`, or `About <file>, line n:` / `lines n–m:` once lines are
+  picked on the diff's right-hand side (F39's paste path, then Enter), after which you are back on
   the session to watch it work. Disabled when the session is not running.
 
 **Leaving.** *Back to session* or `Esc`. *Commit…* opens Git mode on the
 project (F35), where commits are made; nothing on this page writes to git.
 
-**Not in it.** Comments anchored to diff lines.
+**Not in it.** Notes kept on the diff: a note is sent, not pinned to its lines.
