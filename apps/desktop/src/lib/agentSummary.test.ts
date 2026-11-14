@@ -1,6 +1,6 @@
 import type { ContentBlock, SessionEvent } from '@factorai/types';
 import { describe, expect, it } from 'vitest';
-import { lastAssistantText } from './agentSummary';
+import { agentChecks, lastAssistantText } from './agentSummary';
 
 const assistant = (content: string | ContentBlock[]): SessionEvent => ({
 	type: 'assistant',
@@ -29,5 +29,49 @@ describe('lastAssistantText', () => {
 			lastAssistantText([{ type: 'user', message: { role: 'user', content: 'hi' } }]),
 		).toBeNull();
 		expect(lastAssistantText([])).toBeNull();
+	});
+});
+
+describe('agentChecks', () => {
+	const call = (id: string, command: string): SessionEvent => ({
+		type: 'assistant',
+		message: {
+			role: 'assistant',
+			content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }],
+		},
+	});
+	const result = (id: string, isError = false): SessionEvent => ({
+		type: 'user',
+		message: {
+			role: 'user',
+			content: [{ type: 'tool_result', tool_use_id: id, content: 'out', is_error: isError }],
+		},
+	});
+
+	it('keeps the checks, not the work, with whether each passed', () => {
+		const checks = agentChecks([
+			call('a', 'ls src'),
+			result('a'),
+			call('b', 'pnpm test webhooks'),
+			result('b', true),
+			call('c', 'pnpm typecheck'),
+			result('c'),
+			call('d', 'cargo clippy -- -D warnings'),
+		]);
+		expect(checks).toEqual([
+			{ command: 'pnpm test webhooks', ok: false },
+			{ command: 'pnpm typecheck', ok: true },
+			{ command: 'cargo clippy -- -D warnings', ok: null },
+		]);
+	});
+
+	it('shows the latest run of a command once', () => {
+		const checks = agentChecks([
+			call('a', 'pnpm test'),
+			result('a', true),
+			call('b', 'pnpm test'),
+			result('b'),
+		]);
+		expect(checks).toEqual([{ command: 'pnpm test', ok: true }]);
 	});
 });

@@ -8789,7 +8789,10 @@ and `+A −D`, the session's state pill, and *Commit…*. Under it three columns
 - **The diff** of the file picked (the first one until you pick), with the
   viewer's own diff editor and the same pair the Changes tab would compare.
 - **The side**: *What the agent said* — the text of the newest assistant message
-  in the last 40 transcript events — the agent's *Plan* (F40) when it has one,
+  in the last 40 transcript events — *Checks the agent ran*: the Bash commands
+  in those events that look like a test, a lint or a type check, the latest run
+  of each, marked passed, failed (its tool result was an error) or running (no
+  result yet) — the agent's *Plan* (F40) when it has one,
   and *Ask the agent to revise*: a note sent to the session as a reply prefixed
   `About <file>:` (F39's paste path, then Enter), after which you are back on
   the session to watch it work. Disabled when the session is not running.
@@ -8797,4 +8800,4 @@ and `+A −D`, the session's state pill, and *Commit…*. Under it three columns
 **Leaving.** *Back to session* or `Esc`. *Commit…* opens Git mode on the
 project (F35), where commits are made; nothing on this page writes to git.
 
-**Not in it.** Comments anchored to diff lines, and the checks the agent ran.
+**Not in it.** Comments anchored to diff lines.

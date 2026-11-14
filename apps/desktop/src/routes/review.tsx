@@ -6,14 +6,14 @@ import type { GitChange } from '@factorai/types';
 import { Button, Checkbox, Textarea } from '@factorai/ui';
 import { useGitBranch } from '@hooks/useGitBranch';
 import type { DiffMode } from '@hooks/useFileViewer';
-import { lastAssistantText } from '@lib/agentSummary';
+import { agentChecks, lastAssistantText } from '@lib/agentSummary';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useGitModeStore } from '@store/gitModeStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQuery } from '@tanstack/react-query';
 import { createRoute, useNavigate } from '@tanstack/react-router';
-import { ArrowLeft, Check } from 'lucide-react';
+import { ArrowLeft, Check, CircleDashed, X } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { rootRoute } from './__root';
 
@@ -90,6 +90,7 @@ function ReviewMode() {
 	const add = changes.reduce((n, c) => n + (c.additions ?? 0), 0);
 	const del = changes.reduce((n, c) => n + (c.deletions ?? 0), 0);
 	const said = tailQ.data ? lastAssistantText(tailQ.data.events) : null;
+	const checks = tailQ.data ? agentChecks(tailQ.data.events) : [];
 	const plan = planQ.data ?? [];
 	const toggle = (key: string) =>
 		setReviewed((s) => {
@@ -200,6 +201,32 @@ function ReviewMode() {
 								{said ?? 'Nothing yet.'}
 							</p>
 						</SideSection>
+						{checks.length > 0 && (
+							<SideSection title="Checks the agent ran">
+								<ul data-testid="review-checks" className="space-y-1">
+									{checks.map((c) => (
+										<li key={c.command} className="flex items-center gap-2 text-sm">
+											{c.ok === null ? (
+												<CircleDashed
+													className="size-3.5 shrink-0 text-muted-foreground"
+													aria-label="Running"
+												/>
+											) : c.ok ? (
+												<Check
+													className="size-3.5 shrink-0 text-status-working"
+													aria-label="Passed"
+												/>
+											) : (
+												<X className="size-3.5 shrink-0 text-destructive" aria-label="Failed" />
+											)}
+											<code className="truncate font-mono text-xs" title={c.command}>
+												{c.command}
+											</code>
+										</li>
+									))}
+								</ul>
+							</SideSection>
+						)}
 						{plan.length > 0 && (
 							<SideSection title="Plan">
 								<PlanList plan={plan} />

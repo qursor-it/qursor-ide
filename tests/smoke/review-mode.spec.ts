@@ -15,8 +15,29 @@ function fixture() {
 			id: SESSION,
 			offset: 0,
 			limit: 40,
-			total: 1,
+			total: 3,
 			events: [
+				{
+					type: 'assistant',
+					message: {
+						role: 'assistant',
+						content: [
+							{
+								type: 'tool_use',
+								id: 't1',
+								name: 'Bash',
+								input: { command: 'pnpm test webhooks' },
+							},
+						],
+					},
+				},
+				{
+					type: 'user',
+					message: {
+						role: 'user',
+						content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }],
+					},
+				},
 				{
 					type: 'assistant',
 					message: {
@@ -45,6 +66,8 @@ test.describe('review mode', () => {
 			'Both writes now share one transaction.',
 		);
 		await expect(page.getByTestId('session-plan-list')).toContainText('Add a retry test');
+		await expect(page.getByTestId('review-checks')).toContainText('pnpm test webhooks');
+		await expect(page.getByTestId('review-checks').getByLabel('Passed')).toBeVisible();
 	});
 
 	test('@smoke ticks files off as reviewed', async ({ page }) => {
