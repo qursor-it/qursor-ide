@@ -361,7 +361,7 @@ function SessionView() {
 					)}
 					{/* The full id is one hover away rather than spending header width on
 					    36 characters nobody reads. */}
-					<span className="min-w-0 truncate font-medium text-foreground text-sm" title={sessionId}>
+					<span className="min-w-0 truncate font-semibold text-base text-foreground" title={sessionId}>
 						{isSubAgent ? 'sub-agent' : sessionLabel(sessionId, sessionsQ.data)}
 					</span>
 					{!isSubAgent && <StatusPill status={live?.status ?? 'stopped'} />}

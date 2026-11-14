@@ -393,7 +393,7 @@ export function InboxColumn() {
 	return (
 		<>
 			<div className="flex h-11 shrink-0 items-center gap-2 pr-2 pl-3">
-				<h1 className="flex-1 font-semibold text-sm">Inbox</h1>
+				<h1 className="flex-1 font-semibold text-base">Inbox</h1>
 				<IconButton
 					size="md"
 					aria-label="Collapse sidebar"

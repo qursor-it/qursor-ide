@@ -350,6 +350,9 @@ brand lockup has to condense 6% to imitate it at large sizes.
 - **Title** (500, 14px/20px): tab labels in all three strips, sidebar project and
   session rows, commit subjects, menu items, buttons. Anything you read to
   navigate.
+- **Heading** (600, 16px/24px): the one title a surface is about — the session
+  in its header, *Review changes*, *Inbox*, *Search*, *All sessions*. One per
+  surface; a project page's name is the only 18px heading.
 - **Body** (400, 14px/20px): the same size, unweighted — prose in dialogs,
   settings descriptions, viewer content.
 - **Label** (500, 12px/16px, +0.05em, often uppercase): metadata, status,
@@ -828,7 +831,7 @@ headers are the 12px uppercase tracked voice of `PROJECTS`, with the count in a
 
 Two rows inside the card's `card` strip, 10px vertical padding. Row one is
 12px metadata (project tile at 14px, branch, agent, profile, checkout). Row two
-is the status dot, the title at 14px medium, a full-round status pill (`working`
+is the status dot, the title as a 16px semibold heading, a full-round status pill (`working`
 at a 15% tint of its green, `waiting` at 15% of the accent, `stopped` on
 `secondary`) and the changes chip, a 24px full-round `secondary` button with the
 counts in the git hues. After the changes chip, the plan chip (same shape, a list glyph and `Plan n/m`, opening a popover of steps) and the cost in 12px metadata. Pin and close end the row.

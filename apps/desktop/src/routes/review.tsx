@@ -126,7 +126,7 @@ function ReviewMode() {
 					<Button variant="quiet" size="sm" className="-ml-2 gap-1" onClick={back}>
 						<ArrowLeft /> Back to session
 					</Button>
-					<h1 className="font-medium text-sm">Review changes</h1>
+					<h1 className="font-semibold text-base">Review changes</h1>
 					<span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary text-xs">
 						{changes.length} {changes.length === 1 ? 'file' : 'files'} ·{' '}
 						<span className="text-git-added">+{add}</span>{' '}
