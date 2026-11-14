@@ -305,6 +305,50 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 					className="flex w-[24rem] shrink-0 flex-col overflow-hidden border-border border-l"
 				>
 					<CommitSession projectId={projectId} dir={dir} sha={selected} />
+					{/* The context menu's ✦ questions about this commit, as buttons in its
+					    detail (F35, ADR-0095). */}
+					{quick.enabled && (
+						<div
+							data-testid="commit-ask"
+							className="flex flex-wrap gap-1.5 border-border border-b px-3 py-2"
+						>
+							{(
+								[
+									['Explain this commit', { kind: 'explainCommit', sha: selected }],
+									['Find bugs introduced here', { kind: 'findBugs', sha: selected }],
+									['Write a release note', { kind: 'releaseNote', sha: selected }],
+								] as const
+							).map(([label, task]) => (
+								<Button
+									key={label}
+									size="sm"
+									variant="outline"
+									disabled={quick.busy}
+									onClick={() => void quick.show(label, task)}
+									className="h-7 gap-1 text-xs"
+								>
+									<span className="text-primary">✦</span> {label}
+								</Button>
+							))}
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={quick.busy}
+								onClick={() =>
+									void quick.show(
+										'Undo this commit safely',
+										{ kind: 'undoCommit', sha: selected },
+										{
+											request: `Undo commit ${selected} safely, without rewriting shared history.`,
+										},
+									)
+								}
+								className="h-7 gap-1 text-xs"
+							>
+								<span className="text-primary">✦</span> Undo this commit safely
+							</Button>
+						</div>
+					)}
 					<div className="min-h-0 flex-1">
 						<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} />
 					</div>

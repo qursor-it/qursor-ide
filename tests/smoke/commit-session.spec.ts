@@ -51,3 +51,26 @@ test.describe('commit session', () => {
 		await expect(page.getByTestId('commit-session')).toHaveCount(0);
 	});
 });
+
+test.describe('commit questions', () => {
+	test('@smoke the commit detail asks the agent about the commit from a button', async ({
+		page,
+	}) => {
+		const fx = fixture({ from: COMMIT_TIME + 3_600_000, to: COMMIT_TIME + 7_200_000 });
+		fx.gitAskAgent = 'It merges the side branch, with no conflicts.';
+		await installMockBridge(page, fx);
+		await page.goto(`/#/projects/${FOO_ID}`);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('commit-row').nth(1).click();
+
+		await page
+			.getByTestId('commit-ask')
+			.getByRole('button', { name: /Explain this commit/ })
+			.click();
+		await expect(page.getByText('It merges the side branch, with no conflicts.')).toBeVisible();
+		const calls = await page.evaluate(() =>
+			(window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === 'git_ask_agent'),
+		);
+		expect(calls[0]?.args).toMatchObject({ task: { kind: 'explainCommit' } });
+	});
+});
