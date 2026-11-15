@@ -856,9 +856,8 @@ status dot at the right, then the title at 14px medium on up to two lines.
 The banner is a 12px-radius strip inset 16px from the card's sides, the accent
 at 10% with a hairline of it at 30% — blue, because it is the human's move — a
 question glyph, the question at 14px medium, and its options as small buttons
-(the first primary) each carrying its number in a `kbd`. The reply box is a
-`card` strip under the terminal with a hairline above it: an auto-growing field
-and a primary send button with the return glyph.
+(the first primary) each carrying its number in a `kbd`. There is no reply
+box under the terminal: the agent's prompt is the one input (ADR-0097).
 
 ### Command Palette
 

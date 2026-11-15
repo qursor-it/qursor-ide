@@ -65,8 +65,9 @@ Shown on the session, its row in the sidebar's Inbox and its project's avatar.
 
 - When the agent waits for you, a banner over its terminal says what it asks. For Claude's
   permission menu it shows a button per option, each pressing that number for you.
-- The box under the terminal sends a reply: `Enter` sends it, `Shift+Enter` starts a new line.
-- Nothing is sent without your click or your `Enter`.
+- Anything else you answer at the agent's prompt in the terminal, as always — `!` commands
+  and `/` commands included.
+- Nothing is sent without your click.
 
 ## Pinning
 

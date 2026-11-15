@@ -1,9 +1,9 @@
 import type { AgentId, TerminalStatus } from '@factorai/types';
-import { Button, Textarea } from '@factorai/ui';
-import { pressKey, readSessionTail, sendToSession } from '@components/terminal/Terminal';
+import { Button } from '@factorai/ui';
+import { pressKey, readSessionTail } from '@components/terminal/Terminal';
 import { agentName } from '@lib/agents';
 import { type PermissionPrompt, parsePermissionPrompt } from '@lib/permissionPrompt';
-import { CornerDownLeft, MessageCircleQuestion } from 'lucide-react';
+import { MessageCircleQuestion } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /** Lines read off the bottom of the terminal to find a permission menu. */
@@ -15,7 +15,7 @@ const READ_DELAY_MS = 150;
  * Over the terminal while the agent waits for you (F39): what it asks, and —
  * when it is Claude's numbered permission menu — a button per option, each
  * pressing that number exactly as the keyboard would. Anything else is answered
- * in the terminal or the reply box; nothing is ever sent without a click.
+ * in the terminal itself; nothing is ever sent without a click.
  */
 export function WaitingBanner({
 	sessionId,
@@ -76,57 +76,6 @@ export function WaitingBanner({
 					</Button>
 				</div>
 			</div>
-		</div>
-	);
-}
-
-/**
- * A reply box under the terminal (F39): Enter sends the text and an Enter to
- * the agent, Shift+Enter is a new line. The text goes out through the same
- * paste path a file drop uses, so the agent sees what it would have seen typed.
- */
-export function ReplyBox({
-	sessionId,
-	live,
-	agent,
-}: {
-	sessionId: string;
-	live: boolean;
-	agent: AgentId | null;
-}) {
-	const [text, setText] = useState('');
-	const send = () => {
-		if (!text.trim()) return;
-		if (sendToSession(sessionId, text, true)) setText('');
-	};
-	return (
-		<div className="flex items-end gap-2 border-border border-t bg-card px-3 py-2">
-			<Textarea
-				data-testid="reply-box"
-				rows={1}
-				value={text}
-				disabled={!live}
-				onChange={(e) => setText(e.target.value)}
-				onKeyDown={(e) => {
-					if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-						e.preventDefault();
-						send();
-					}
-				}}
-				placeholder={live ? `Reply to ${agentName(agent)}…` : 'The session is not running'}
-				aria-label={`Reply to ${agentName(agent)}`}
-				className="max-h-32 min-h-8 resize-none py-1.5 text-sm"
-			/>
-			<Button
-				size="sm"
-				disabled={!live || !text.trim()}
-				data-testid="reply-send"
-				onClick={send}
-				aria-label="Send to the agent"
-				title="Send to the agent (Enter) · new line with Shift+Enter"
-			>
-				<CornerDownLeft />
-			</Button>
 		</div>
 	);
 }

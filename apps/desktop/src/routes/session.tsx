@@ -27,7 +27,7 @@ import {
 	restartSession,
 	Terminal,
 } from '@components/terminal/Terminal';
-import { ReplyBox, WaitingBanner } from '@components/session/AgentReply';
+import { WaitingBanner } from '@components/session/AgentReply';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
 import { useGitBranch } from '@hooks/useGitBranch';
 import { useSetSessionPinned } from '@hooks/useSetSessionPinned';
@@ -505,7 +505,6 @@ function SessionView() {
 							sessionCwd={session?.cwd ?? null}
 						/>
 					</div>
-					<ReplyBox sessionId={sessionId} live={Boolean(live)} agent={agent} />
 				</>
 			)}
 			{/* The same dialog the tab strip opens — one component, so the two

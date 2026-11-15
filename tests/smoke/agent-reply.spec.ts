@@ -1,6 +1,6 @@
 /**
  * F39 — answering the agent from outside its terminal: the waiting banner, its
- * permission-menu buttons, and the reply box. Everything they send leaves
+ * and its permission-menu buttons. Everything they send leaves
  * through `terminal_write`, the same command typing uses.
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -68,13 +68,8 @@ test.describe('agent reply', () => {
 		await expect(banner.locator('[data-testid^="waiting-option-"]')).toHaveCount(0);
 	});
 
-	test('@smoke the reply box sends the text and an Enter', async ({ page }) => {
+	test('@smoke there is no second input under the terminal', async ({ page }) => {
 		await open(page);
-		const box = page.getByTestId('reply-box');
-		await box.fill('Use port 8443');
-		await box.press('Enter');
-		await expect(box).toHaveValue('');
-		await expect.poll(() => written(page)).toContain('Use port 8443');
-		await expect.poll(() => written(page)).toMatch(/Use port 8443(\x1b\[201~)?\r/);
+		await expect(page.getByTestId('reply-box')).toHaveCount(0);
 	});
 });

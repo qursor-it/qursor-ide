@@ -8685,7 +8685,7 @@ empty columns.
 session on its card, and a "ready for review" column (stopped with uncommitted
 changes), which needs a per-session view of the checkout's status.
 
-## F39 — Answering the agent: the waiting banner and the reply box
+## F39 — Answering the agent: the waiting banner
 
 **Specified and built 2026-11-13** (ADR-0091). Code in
 `components/session/AgentReply.tsx`, `lib/permissionPrompt.ts`, and
@@ -8703,13 +8703,12 @@ after the status flips it reads the last 24 lines of the terminal:
 - Otherwise it says "<agent> is waiting for you".
 - Either way it offers "Answer in the terminal", which focuses it.
 
-**The reply box** sits under the terminal, above the project's shell footer,
-for every live session: a one-row field growing to 8rem, Enter sends the text
-followed by Enter, Shift+Enter is a new line, IME composition is respected.
-Disabled, and saying why, when the session is not running. Text is pasted into
-the terminal, so the agent sees what it would have seen typed.
+**No reply box** (ADR-0097). A reply is typed at the agent's own prompt in the
+terminal, which is the only input a session has: a second field would paste
+into it and lose what typing gives — `!` for a shell command, `/` commands and
+their completion, the prompt's history.
 
-**Never** does anything here send input without a click or an Enter in the box.
+**Never** does anything here send input without a click.
 
 ## F40 — The agent's plan and the session's cost, in the session header
 

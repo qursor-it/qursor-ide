@@ -65,7 +65,7 @@ export function isDisposedDiff(err: unknown): boolean {
  * next frame instead of this one. Not a failure — nothing is lost and nothing
  * throws in our code — but WebView2 and Chromium dispatch it as a window
  * `error` with only a message, and a layout with resizing panes (the terminal's
- * fit, the reply box, ADR-0090's cards) trips it on ordinary resizes.
+ * fit, ADR-0090's cards) trips it on ordinary resizes.
  */
 function isResizeObserverNotice(err: unknown): boolean {
 	const text = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
