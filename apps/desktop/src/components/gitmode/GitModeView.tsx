@@ -1,4 +1,3 @@
-import { GitTabs } from '@components/layout/GitTabs';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { useGitModeStore } from '@store/gitModeStore';
 import { useState } from 'react';
@@ -24,11 +23,8 @@ export function GitModeView() {
 				<GitTabBody key={tab.dir} projectId={tab.projectId} dir={tab.dir} />
 			) : (
 				<div className="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
-					<div className="flex w-60 shrink-0 flex-col px-1.5 py-1">
-						<GitTabs />
-					</div>
 					<div className="flex min-w-0 flex-1 flex-col rounded-xl border border-border bg-background shadow-card">
-						<PanelEmpty>Open a repository with + beside Repositories.</PanelEmpty>
+						<PanelEmpty>Open a repository with + in the tab bar.</PanelEmpty>
 					</div>
 				</div>
 			)}

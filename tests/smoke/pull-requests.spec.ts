@@ -7,7 +7,6 @@ import {
 	fixtureWithPullRequestsViaRemote,
 	fixtureWithPullRequestsSignedOut,
 	installMockBridge,
-	showInbox,
 } from './fixtures';
 
 /**
@@ -203,38 +202,37 @@ test.describe('pull requests tab', () => {
 		);
 	});
 
-	test('@smoke opens each pull request as a row in the Inbox', async ({ page }) => {
+	test('@smoke opens each pull request as a tab in the strip', async ({ page }) => {
 		await installMockBridge(page, withSecondDetail());
 		await page.goto(PROJECT);
 		await openPrs(page);
-		const strip = page.getByTestId('inbox-prs');
-		await showInbox(page);
+		const strip = page.getByTestId('session-tabs');
 		await expect(strip).toHaveCount(0);
 
 		await page.getByTestId('pr-row-11').click();
-		const first = strip.getByTestId(`inbox-pr-${FOO_ID}-11`);
+		const first = strip.locator(`[data-pr-tab="${FOO_ID}#11"]`);
 		await expect(first).toContainText('#11 feat: add the widget switcher');
-		await expect(first).toHaveAttribute('aria-current', 'page');
-		await expect(strip.locator('li')).toHaveCount(1);
+		await expect(first).toHaveAttribute('aria-selected', 'true');
+		await expect(strip.getByRole('tab')).toHaveCount(1);
 
 		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
-		const second = strip.getByTestId(`inbox-pr-${FOO_ID}-12`);
-		await expect(strip.locator('li')).toHaveCount(2);
-		await expect(second).toHaveAttribute('aria-current', 'page');
-		await expect(first).not.toHaveAttribute('aria-current', 'page');
+		const second = strip.locator(`[data-pr-tab="${FOO_ID}#12"]`);
+		await expect(strip.getByRole('tab')).toHaveCount(2);
+		await expect(second).toHaveAttribute('aria-selected', 'true');
+		await expect(first).toHaveAttribute('aria-selected', 'false');
 		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
 
 		// Clicking the row of an open pull request does not add a third.
 		await backToList(page);
 		await page.getByTestId('pr-row-11').click();
-		await expect(strip.locator('li')).toHaveCount(2);
+		await expect(strip.getByRole('tab')).toHaveCount(2);
 
 		await second.click();
 		await expect(page).toHaveURL(new RegExp(`/prs/12$`));
 		await first.click();
 		await expect(page).toHaveURL(new RegExp(`/prs/11$`));
-		await expect(first).toHaveAttribute('aria-current', 'page');
+		await expect(first).toHaveAttribute('aria-selected', 'true');
 		await expect(page.getByTestId('pr-title')).toHaveText('feat: add the widget switcher');
 	});
 
@@ -247,14 +245,12 @@ test.describe('pull requests tab', () => {
 		await page.getByTestId('pr-row-11').click();
 		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
-		const strip = page.getByTestId('inbox-prs');
-		await showInbox(page);
-		await expect(strip.locator('li')).toHaveCount(2);
+		const strip = page.getByTestId('session-tabs');
+		await expect(strip.getByRole('tab')).toHaveCount(2);
 
 		// Closing one you are not on leaves the page alone.
-		await strip.getByTestId(`inbox-pr-${FOO_ID}-11`).hover();
-		await strip.getByRole('button', { name: /^Close #11/ }).click();
-		await expect(strip.locator('li')).toHaveCount(1);
+		await strip.getByRole('button', { name: /^Close #11/ }).click({ force: true });
+		await expect(strip.getByRole('tab')).toHaveCount(1);
 		await expect(page).toHaveURL(new RegExp(`/prs/12$`));
 
 		await strip.getByRole('button', { name: /^Close #12/ }).click();
@@ -271,19 +267,17 @@ test.describe('pull requests tab', () => {
 		await page.getByTestId('pr-row-11').click();
 		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
-		await showInbox(page);
-		await expect(page.getByTestId('inbox-prs').locator('li')).toHaveCount(2);
+		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(2);
 		await expect
 			.poll(() => page.evaluate(() => localStorage.getItem('factorai.prTabs') ?? ''))
 			.toContain('"number":12');
 
 		await page.reload();
-		const strip = page.getByTestId('inbox-prs');
-		await showInbox(page);
-		await expect(strip.locator('li')).toHaveCount(2);
-		await expect(strip.getByTestId(`inbox-pr-${FOO_ID}-12`)).toHaveAttribute(
-			'aria-current',
-			'page',
+		const strip = page.getByTestId('session-tabs');
+		await expect(strip.getByRole('tab')).toHaveCount(2);
+		await expect(strip.locator(`[data-pr-tab="${FOO_ID}#12"]`)).toHaveAttribute(
+			'aria-selected',
+			'true',
 		);
 		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
 	});
@@ -393,9 +387,8 @@ test.describe('pull request page layout', () => {
 
 		// Entering the pull request's tab again switches the panel, once.
 		await page.goto(PROJECT);
-		const strip = page.getByTestId('inbox-prs');
-		await showInbox(page);
-		await strip.getByTestId(`inbox-pr-${FOO_ID}-11`).click();
+		const strip = page.getByTestId('session-tabs');
+		await strip.locator(`[data-pr-tab="${FOO_ID}#11"]`).click();
 		await expect(page.getByRole('tab', { name: 'PRs' })).toHaveAttribute('aria-selected', 'true');
 		const files = page.getByTestId('pr-files');
 		await expect(files.getByTitle('src/switcher.ts')).toBeVisible();
@@ -462,12 +455,11 @@ test.describe('pull request page layout', () => {
 		await page.getByTestId('pr-files').getByTitle('src/added.ts').click();
 		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
 
-		const strip = page.getByTestId('inbox-prs');
-		await showInbox(page);
+		const strip = page.getByTestId('session-tabs');
 		await backToList(page);
 		await page.getByTestId('pr-row-12').click();
 		await expect(page.getByTestId('pr-title')).toHaveText('wip: rewrite the renderer');
-		await strip.getByTestId(`inbox-pr-${FOO_ID}-11`).click();
+		await strip.locator(`[data-pr-tab="${FOO_ID}#11"]`).click();
 
 		await expect(page.getByTestId('pr-title')).toHaveText('feat: add the widget switcher');
 		await expect(page.getByTestId('pr-file-path')).toHaveText('src/added.ts');
@@ -526,10 +518,8 @@ test.describe('review with agent', () => {
 		await page.getByTestId('pr-review-agent').click();
 
 		await expect(page).toHaveURL(new RegExp(`/projects/${FOO_ID}/sessions/${NEW_ID}`));
-		// The pull request's own row, then the review session.
-		await showInbox(page);
-		await expect(page.getByTestId('inbox-prs').locator('li')).toHaveCount(1);
-		await expect(page.getByTestId(`inbox-row-${NEW_ID}`)).toBeVisible();
+		// The pull request's own tab, then the review session.
+		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(2);
 
 		const start = (await calls(page, 'start_session'))[0];
 		expect(start?.args?.fresh).toBe(true);

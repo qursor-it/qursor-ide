@@ -4,7 +4,6 @@ import { installQueryFocusListener } from '@lib/queryFocus';
 import { revealWindow } from '@lib/windowReveal';
 import { useEffect } from 'react';
 import { ErrorBoundary } from './components/layout/ErrorBoundary';
-import { boardRoute } from './routes/board';
 import { reviewRoute } from './routes/review';
 import { indexRoute } from './routes/index';
 import { projectRoute } from './routes/project';
@@ -19,7 +18,6 @@ const routeTree = rootRoute.addChildren([
 	sessionRoute,
 	pullRequestRoute,
 	searchRoute,
-	boardRoute,
 	reviewRoute,
 ]);
 

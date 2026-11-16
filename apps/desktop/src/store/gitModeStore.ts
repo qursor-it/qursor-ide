@@ -35,9 +35,6 @@ interface GitModeState {
 	/** Sidebar nodes flipped from their default open state (F35), by key. */
 	toggled: string[];
 	toggle: (key: string) => void;
-	/** The Repositories list's height in the Git sidebar, or null for its own. */
-	reposHeight: number | null;
-	setReposHeight: (height: number | null) => void;
 	/** The commit pane's height under the history (F35). */
 	detailHeight: number;
 	setDetailHeight: (height: number) => void;
@@ -106,8 +103,6 @@ export const useGitModeStore = create<GitModeState>()(
 						? s.toggled.filter((k) => k !== key)
 						: [...s.toggled, key],
 				})),
-			reposHeight: null,
-			setReposHeight: (reposHeight) => set({ reposHeight }),
 			detailHeight: 320,
 			setDetailHeight: (detailHeight) => set({ detailHeight }),
 		}),
@@ -120,7 +115,6 @@ export const useGitModeStore = create<GitModeState>()(
 				tabs: s.tabs,
 				activeDir: s.activeDir,
 				toggled: s.toggled,
-				reposHeight: s.reposHeight,
 				detailHeight: s.detailHeight,
 			}),
 		},

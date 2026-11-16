@@ -9,7 +9,6 @@ import {
 	SHA_SIDE,
 	SHA_TIP,
 	type TestFixture,
-	showInbox,
 } from './fixtures';
 
 /**
@@ -95,7 +94,7 @@ const callCount = (page: import('@playwright/test').Page, name: string) =>
 	);
 
 test.describe('git-mode', () => {
-	test('@smoke switching modes hides the open sessions and keeps the terminal', async ({
+	test('@smoke switching modes hides the session strip and keeps the terminal', async ({
 		page,
 	}) => {
 		await installMockBridge(page, fixtureOneProjectOneSession());
@@ -103,17 +102,18 @@ test.describe('git-mode', () => {
 		await page.locator('aside').getByText('foo').click();
 		await page.getByText('Refactor the auth middleware').click();
 		await expect(page.locator('.xterm:visible')).toBeVisible();
-		await showInbox(page);
-		await expect(page.getByTestId('inbox')).toBeVisible();
+		await expect(page.getByTestId('session-tabs')).toBeVisible();
 
 		await page.getByRole('tab', { name: /^Git/ }).click();
-		await expect(page.getByTestId('inbox')).toBeHidden();
+		await expect(page.getByTestId('session-tabs')).toBeHidden();
 		await expect(page.getByTestId('git-tab')).toBeVisible();
 		await expect(page.getByTestId('git-tabs').getByTestId('tab-group-chip')).toContainText('foo');
 
 		await page.getByRole('tab', { name: /^Sessions/ }).click();
-		await expect(page.getByTestId('inbox')).toBeVisible();
-		await expect(page.getByTestId('inbox').locator('[aria-current="page"]')).toBeVisible();
+		await expect(page.getByTestId('session-tabs')).toBeVisible();
+		await expect(
+			page.getByTestId('session-tabs').getByRole('tab', { selected: true }),
+		).toBeVisible();
 		// Mounted all along, not remounted.
 		await expect(page.locator('.xterm')).not.toHaveCount(0);
 		await expect(page.locator('.xterm:visible')).toBeVisible();

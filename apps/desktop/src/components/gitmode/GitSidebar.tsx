@@ -1,5 +1,3 @@
-import { GitTabs } from '@components/layout/GitTabs';
-import { PanelResizer } from '@components/layout/PanelResizer';
 import {
 	Button,
 	ContextMenu,
@@ -15,7 +13,7 @@ import { cmd } from '@lib/tauri';
 import { isOpen, useGitModeStore } from '@store/gitModeStore';
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import {
 	Archive,
 	Check,
@@ -62,9 +60,6 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 
 	const toggled = useGitModeStore((s) => s.toggled);
 	const toggle = useGitModeStore((s) => s.toggle);
-	const reposHeight = useGitModeStore((s) => s.reposHeight);
-	const setReposHeight = useGitModeStore((s) => s.setReposHeight);
-	const reposRef = useRef<HTMLDivElement>(null);
 	const open = (key: string, byDefault = true) => isOpen(toggled, key, byDefault);
 
 	const nav = (
@@ -212,23 +207,6 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 			aria-label="Repository"
 			className="flex w-60 shrink-0 flex-col px-1.5 py-1"
 		>
-			<div
-				ref={reposRef}
-				style={reposHeight === null ? undefined : { height: reposHeight }}
-				className="max-h-[70%] shrink-0 overflow-y-auto"
-			>
-				<GitTabs />
-			</div>
-			<div className="py-1.5">
-				<PanelResizer
-					size={reposHeight ?? reposRef.current?.offsetHeight ?? 120}
-					onSize={setReposHeight}
-					edge="bottom"
-					label="Resize repositories"
-					clamp={(h) => Math.max(40, Math.min(h, 600))}
-					onReset={() => setReposHeight(null)}
-				/>
-			</div>
 			<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
 				{nav(
 					<>

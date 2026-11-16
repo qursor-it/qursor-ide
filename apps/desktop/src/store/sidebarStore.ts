@@ -66,8 +66,6 @@ interface SidebarState {
 	 *  `width` apart and this follows it: collapsing leaves `width` untouched, so
 	 *  expanding restores the width you dragged rather than the default. */
 	collapsed: boolean;
-	/** Which list the column beside the app rail shows (ADR-0093). */
-	view: SidebarView;
 
 	/** Bumped when something asks for the search field (F28's `Mod+K`).
 	 *
@@ -80,7 +78,6 @@ interface SidebarState {
 	setSort: (sort: ProjectSort) => void;
 	setWidth: (width: number) => void;
 	toggleCollapsed: () => void;
-	setView: (view: SidebarView) => void;
 	/** Ask for the sidebar's search field, expanding the rail first if it is
 	 *  collapsed: a keystroke that focuses something invisible is a keystroke
 	 *  that did nothing. */
@@ -113,8 +110,6 @@ interface SidebarState {
  *
  * Pure and exported so the rule is testable without a storage round-trip.
  */
-/** The Inbox (F36) or the project tree (F1). */
-type SidebarView = 'inbox' | 'projects';
 
 export function migrateSidebarState(state: unknown, from: number): unknown {
 	if (from >= 2) return state;
@@ -129,7 +124,6 @@ export const useSidebarStore = create<SidebarState>()(
 			expanded: [],
 			width: DEFAULT_SIDEBAR_WIDTH,
 			collapsed: false,
-			view: 'inbox',
 			searchFocusRequest: 0,
 
 			setSort: (sort) => set({ sort }),
@@ -138,12 +132,10 @@ export const useSidebarStore = create<SidebarState>()(
 			// is not touched here.
 			toggleCollapsed: () => set((s) => ({ collapsed: !s.collapsed })),
 			// Picking a list shows the column, whatever state it was in.
-			setView: (view) => set({ view, collapsed: false }),
 			// The search field lives in the project tree, so asking for it shows that.
 			focusSearch: () =>
 				set((s) => ({
 					collapsed: false,
-					view: 'projects',
 					searchFocusRequest: s.searchFocusRequest + 1,
 				})),
 			toggleProject: (projectId) =>
@@ -170,7 +162,6 @@ export const useSidebarStore = create<SidebarState>()(
 				expanded: s.expanded,
 				width: s.width,
 				collapsed: s.collapsed,
-				view: s.view,
 			}),
 		},
 	),

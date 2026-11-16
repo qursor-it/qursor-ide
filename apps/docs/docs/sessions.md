@@ -32,7 +32,7 @@ A session is one agent process (`claude` or `codex`) and its transcript; see [Ag
   alt="The sidebar with every project expanded: a green dot on the working billing-api session, amber on the docs-site session waiting for input, grey on the stopped homelab session, and the same colour badged on each project's avatar"
 />
 
-Shown on the session, its row in the sidebar's Inbox and its project's avatar.
+Shown on the session, its tab and its project's avatar.
 
 | Dot | Meaning |
 | --- | --- |
@@ -42,24 +42,22 @@ Shown on the session, its row in the sidebar's Inbox and its project's avatar.
 | Grey | Stopped. |
 | Hollow grey | Live, but the agent has not said what it is doing yet: a Codex session in its first second. |
 
-## Open sessions
+## Tabs
 
 <Shot
   src={require('../../../assets/images/guide/sessions-tabs@2x.png').default}
-  alt="The sidebar's Inbox above the project tree: two sessions under Needs you, one under Working, each with its project; the open session's header shows its title, a Working pill and the agent's terminal output"
+  alt="Session tabs in the top bar, grouped by project with a tinted chip, each with its status dot; the open session's header shows its title, a Working pill and the agent's terminal output"
 />
 
-- Everything you have open sits at the top of the sidebar, from every project: **Needs you**
-  (waiting for you, or finished while you were away), **Working**, **Open** (stopped) and
-  **Pull requests**. It stays after the process exits, until you close it.
-- Open sessions return, stopped, on relaunch (**off**: **Settings → Sessions → Restore open tabs
-  on launch**).
-- `Mod+W` closes the session you are on, `Mod+PageDown` / `Mod+PageUp` step through the list,
-  middle-click closes a row.
+- Each open session is a tab in the top bar, grouped by project; it stays after the process
+  exits. Drag to reorder. Git mode has its own tabs, one per repository.
+- Tabs return, stopped, on relaunch (**off**: **Settings → Sessions → Restore open tabs on
+  launch**).
+- `Mod+W` closes the focused tab, `Mod+PageDown` / `Mod+PageUp` step through tabs, middle-click
+  closes a tab.
 - Closing a working session asks first. **Settings → Confirmations**: **Ask before closing
   a running session** and **Ask when a middle-click closes a tab**.
-- `Mod+K` opens the command palette: sessions, projects and actions in one field. The grid
-  button in the top bar opens the **Board**, every open session in a column per state.
+- `Mod+K` opens the command palette: sessions, projects and actions in one field.
 
 ## Answering the agent
 

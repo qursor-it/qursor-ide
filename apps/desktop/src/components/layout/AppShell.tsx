@@ -1,5 +1,4 @@
 import { AppRail } from '@components/layout/AppRail';
-import { InboxColumn, OpenListKeys } from '@components/layout/Inbox';
 import { CommandPalette } from '@components/layout/CommandPalette';
 import { Toaster } from '@factorai/ui';
 import type { ReactNode } from 'react';
@@ -50,7 +49,6 @@ export function AppShell({ children }: AppShellProps) {
 
 	const storedSidebarWidth = useSidebarStore((s) => s.width);
 	const sidebarCollapsed = useSidebarStore((s) => s.collapsed);
-	const sidebarView = useSidebarStore((s) => s.view);
 	const setSidebarWidth = useSidebarStore((s) => s.setWidth);
 	// **What the layout is told**, which is the rail's 48 while collapsed (F1,
 	// ADR-0038). Every rule below asks how much room the sidebar is taking, and
@@ -226,15 +224,15 @@ export function AppShell({ children }: AppShellProps) {
 				{/* Git mode hides this body rather than unmounting it: the terminals in
 			    it must keep running (F35). */}
 				<div ref={row} className={gitMode ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}>
-					{/* The column beside the rail: the Inbox or the project tree. Collapsed,
-				    it is gone and the rail is all that is left (ADR-0093). */}
+					{/* The project tree beside the rail (ADR-0100). Collapsed, it is gone
+				    and the rail is all that is left (ADR-0093). */}
 					{!sidebarCollapsed && (
 						<aside
 							data-testid="sidebar"
 							style={{ width: storedSidebarWidth }}
 							className="flex shrink-0 flex-col bg-chrome"
 						>
-							{sidebarView === 'inbox' ? <InboxColumn /> : <Sidebar />}
+							<Sidebar />
 						</aside>
 					)}
 					{/* Mirror of the file panel's handle: this one is on the sidebar's
@@ -311,7 +309,6 @@ export function AppShell({ children }: AppShellProps) {
 			<RestartConfirm />
 			<ImportDialog />
 			<CommandPalette />
-			<OpenListKeys />
 			{/* The one place a toast appears (ADR-0065). Here rather than at the
 			    root so it is only ever mounted with the app around it. */}
 			<Toaster />

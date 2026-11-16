@@ -3,9 +3,10 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { type AppMode, useGitModeStore } from '@store/gitModeStore';
 import { useAttentionStore } from '@store/attentionStore';
+import { useSidebarStore } from '@store/sidebarStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { GitBranch, Inbox as InboxIcon } from 'lucide-react';
+import { FolderTree, GitBranch } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
 
 /** Conflicts appear when a merge or rebase stops, not per keystroke. */
@@ -15,18 +16,10 @@ const REPO_STATE_POLL_MS = 10_000;
  * The `Sessions | Git` switch (specs/05-features.md F35). Each half carries the
  * other mode's news: sessions working, files in conflict.
  */
-export function ModeSwitch({
-	highlightSessions = true,
-	onPick,
-	children,
-}: {
-	/** Whether the Sessions icon is the rail's current place, beyond the mode. */
-	highlightSessions?: boolean;
-	onPick?: (mode: AppMode) => void;
-	/** Rail items that sit between the two modes (Projects, Board). */
-	children?: ReactNode;
-}) {
+export function ModeSwitch() {
 	const mode = useGitModeStore((s) => s.mode);
+	const collapsed = useSidebarStore((s) => s.collapsed);
+	const toggleCollapsed = useSidebarStore((s) => s.toggleCollapsed);
 	const setMode = useGitModeStore((s) => s.setMode);
 	const tabs = useGitModeStore((s) => s.tabs);
 	const openTab = useGitModeStore((s) => s.openTab);
@@ -39,7 +32,7 @@ export function ModeSwitch({
 		[sessionTabs],
 	);
 
-	// The Inbox's own count: sessions that need you (F36), waiting or unseen.
+	// Sessions that need you, waiting or unseen: the Sessions icon's badge.
 	const unseen = useAttentionStore((s) => s.unseen);
 	const needsYou = useTerminalStore(
 		(s) =>
@@ -67,6 +60,8 @@ export function ModeSwitch({
 			if (tabs.length === 0 && project && root) openTab(project.id, root);
 			ensureTabs(fromSessions);
 		}
+		// The Sessions icon is also the way back to a collapsed project tree.
+		else if (mode === 'sessions' && collapsed) toggleCollapsed();
 		setMode(next);
 	};
 
@@ -82,14 +77,11 @@ export function ModeSwitch({
 			title={label}
 			data-testid={`mode-${value}`}
 			className={`relative flex size-9 items-center justify-center rounded-lg [&_svg]:size-4.5 ${
-				mode === value && (value === 'git' || highlightSessions)
+				mode === value
 					? 'bg-background text-foreground shadow-sm'
 					: 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
 			}`}
-			onClick={() => {
-				pick(value);
-				onPick?.(value);
-			}}
+			onClick={() => pick(value)}
 		>
 			{icon}
 			{count > 0 && (
@@ -110,8 +102,7 @@ export function ModeSwitch({
 			aria-orientation="vertical"
 			className="flex flex-col items-center gap-1"
 		>
-			{half('sessions', 'Sessions', needsYou, <InboxIcon />)}
-			{children}
+			{half('sessions', 'Sessions', needsYou, <FolderTree />)}
 			{half('git', 'Git', conflicts, <GitBranch />)}
 		</div>
 	);

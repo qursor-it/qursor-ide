@@ -1,6 +1,6 @@
 import type { TerminalStatus } from '@factorai/types';
 
-export interface InboxEntry {
+interface InboxEntry {
 	sessionId: string;
 	projectId: string;
 	status: TerminalStatus;

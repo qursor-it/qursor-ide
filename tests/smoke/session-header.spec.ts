@@ -6,7 +6,6 @@ import {
 	fixtureTwoProjectsManySessions,
 	fixtureWithChanges,
 	installMockBridge,
-	showInbox,
 } from './fixtures';
 
 /**
@@ -49,8 +48,7 @@ test.describe('session header', () => {
 
 		await expect(page.getByText('Close this session?')).toHaveCount(0);
 		await expect(page.locator('.xterm:visible')).toBeVisible();
-		await showInbox(page);
-		await expect(page.getByTestId('inbox').locator('li')).toHaveCount(1);
+		await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(1);
 		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
 		expect(calls.some((c) => c.name === 'terminal_kill')).toBe(false);
 	});
@@ -67,11 +65,11 @@ test.describe('session header', () => {
 		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
 		expect(calls.some((c) => c.name === 'terminal_kill')).toBe(true);
 		await expect(page).toHaveURL(new RegExp(`projects/${ZULU_ID}$`));
-		// The open session goes with the PTY, so the Inbox empties too.
-		await expect(page.getByTestId('inbox')).toHaveCount(0);
+		// The tab goes with the PTY, so the strip empties too.
+		await expect(page.getByTestId('session-tabs')).toHaveCount(0);
 	});
 
-	test('@smoke the header and the Inbox open the same dialog', async ({ page }) => {
+	test('@smoke the header and a tab open the same dialog', async ({ page }) => {
 		await installMockBridge(page, fixtureTwoProjectsManySessions());
 		await page.goto('/');
 		await page.getByRole('button', { name: 'Expand zulu' }).click();
@@ -86,7 +84,6 @@ test.describe('session header', () => {
 		const headerText = await page.getByRole('dialog').innerText();
 		await page.getByRole('button', { name: /Keep it running/ }).click();
 
-		await showInbox(page);
 		await fromTab.click();
 		expect(await page.getByRole('dialog').innerText()).toBe(headerText);
 	});

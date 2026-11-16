@@ -351,7 +351,7 @@ brand lockup has to condense 6% to imitate it at large sizes.
   session rows, commit subjects, menu items, buttons. Anything you read to
   navigate.
 - **Heading** (600, 16px/24px): the one title a surface is about — the session
-  in its header, *Review changes*, *Inbox*, *Search*, *All sessions*. One per
+  in its header, *Review changes*, *Search*. One per
   surface; a project page's name is the only 18px heading.
 - **Body** (400, 14px/20px): the same size, unweighted — prose in dialogs,
   settings descriptions, viewer content.
@@ -736,8 +736,14 @@ place in the app that lays out arbitrary key/value data.
 
 ### Session Tabs (signature)
 
-**Git mode only since ADR-0092**: in Sessions mode what is open is the Inbox
-(see Inbox Row). The rules below still describe Git mode's strip.
+**Both modes again since ADR-0100**, each with its own list: sessions in
+Sessions mode, repositories in Git mode, in the top bar's second row. Since
+then a tab is 32px tall with an 8px radius; the active one is a raised
+`background` card (`shadow-sm`, a hairline ring), the others quiet on the
+chrome and lifted to `background` at 60% on hover; the close glyph sits on a
+6px-radius `secondary` hover. A project's group is a 12px-radius 10% tint of
+its swatch around a 28px chip; the 2px line below is gone. The older
+measurements below are kept for the rest.
 
 The horizontal strip that stands in for an editor's file tabs, one tab per live
 agent session.
@@ -816,17 +822,6 @@ dot's right and none on its left, so the mark was off-centre in its own column;
 the gutter is a sibling of the row's link rather than its first child for that
 reason.
 
-### Inbox Row
-
-The sidebar's Inbox (F36) lists sessions from every project, two lines a row:
-the status dot and the title in the foreground colour, then the project's 14px
-tile and name in 12px metadata, indented to the title. 8px radius, no
-background at rest, `secondary` at 60% on hover; the active session's row is
-raised with the `background` fill and `shadow-sm`. A row in *Needs you* carries
-a 3px inset blue edge on its left — blue because it is the human's move. Every row ends in a close `IconButton`, shown on hover, on focus and on the current row. Section
-headers are the 12px uppercase tracked voice of `PROJECTS`, with the count in a
-`secondary` pill.
-
 ### Session Header
 
 Two rows inside the card's `card` strip, 10px vertical padding. Row one is
@@ -842,14 +837,6 @@ Three stat tiles in a row (12px radius, `secondary` at 60%, a 12px label over a
 16px semibold number with its unit in 12px metadata), then the rules card: a
 12px-radius dashed hairline, the accent book glyph, a 14px medium title and a
 12px line under it, with its one action as an outline button.
-
-### Board Card
-
-On a `muted` 40% ground, three columns 16px apart, each headed by a 14px
-medium label and a full-round count tinted like the status pill it matches. A
-card is a 12px-radius `card` with a hairline and `shadow-sm`, lifted to
-`shadow-md` on hover: the project tile and name in 12px metadata with the
-status dot at the right, then the title at 14px medium on up to two lines.
 
 ### Waiting Banner and Reply Box
 

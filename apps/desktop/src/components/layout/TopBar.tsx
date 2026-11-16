@@ -1,5 +1,7 @@
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
+import { GitTabs } from '@components/layout/GitTabs';
+import { SessionTabs } from '@components/layout/SessionTabs';
 import { Button, IconButton } from '@factorai/ui';
 import { useChordLabel, useChordTitle } from '@hooks/useShortcuts';
 import { usePaletteStore } from '@store/paletteStore';
@@ -67,6 +69,15 @@ export function TopBar() {
 					</IconButton>
 				)}
 			</header>
+			{/* Row 2, the work row (ADR-0100): the open sessions in Sessions mode, the
+			    open repositories in Git mode, each its own list. Both stay mounted and
+			    the idle one is hidden, so a mode flip costs the session strip nothing. */}
+			<div className="flex h-10 items-center px-2">
+				<div className={gitMode ? 'hidden' : 'flex min-w-0 flex-1 items-center'}>
+					<SessionTabs />
+				</div>
+				{gitMode && <GitTabs />}
+			</div>
 		</div>
 	);
 }

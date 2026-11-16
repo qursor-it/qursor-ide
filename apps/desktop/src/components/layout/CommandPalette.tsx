@@ -16,7 +16,7 @@ import { usePanelStore } from '@store/panelStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Inbox, LayoutGrid, PanelRight, Plus, Search, Settings } from 'lucide-react';
+import { Inbox, PanelRight, Plus, Search, Settings } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 
 interface Item {
@@ -153,16 +153,6 @@ export function CommandPalette() {
 							},
 						]
 					: []),
-				{
-					key: 'a:board',
-					group: 'Actions',
-					label: 'Open the board of all sessions',
-					icon: <LayoutGrid />,
-					run: () => {
-						close();
-						void navigate({ to: '/board' });
-					},
-				},
 				{
 					key: 'a:panel',
 					group: 'Actions',

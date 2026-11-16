@@ -2938,10 +2938,12 @@ off the file-tree toggle (Q15). It belongs to the keybinding pass.
 
 ## F16 — Session tabs
 
-**Since 2026-11-13 the open sessions are listed in the sidebar's Inbox, not in a
-strip in the top bar (ADR-0092, F36).** The rules below about what is open, how
-it is restored and how it closes still hold; drag, groups and the strip's
-layout no longer apply to Sessions mode, and Git mode keeps its own strip.
+**Back in the top bar since 2026-11-16 (ADR-0100)**, after three days as the
+Inbox (ADR-0092): the work row under the brand row holds the session tabs in
+Sessions mode and the repository tabs in Git mode, each mode its own list. Tabs
+are 32px, 8px radius, raised as a `background` card with a hairline ring when
+active and quiet on the chrome otherwise; a project's group is a 10% tint of its
+swatch around its chip and tabs. Everything below holds.
 
 **Behavior.** The top bar carries a tab per **open session**, for switching
 between agents without going through the sidebar.
@@ -8441,9 +8443,8 @@ the patch of a new file in a new directory is the file's own. Discard (files or
 a hunk) asks for confirmation every time. A commit box under the lists: subject,
 optional body, `Amend`, `✦ Write message`, and a `Commit on <branch>` button.
 
-**The sidebar since ADR-0098.** The *Repositories* list and the rest are split
-by a handle that resizes the list (double-click restores its own height; the
-height is kept). `Branches`, `Remotes`, `Tags`, `Stashes` and `Worktrees` are
+**The sidebar since ADR-0098.** The open repositories are tabs in the top
+bar's work row again (ADR-0100), not a list here. `Branches`, `Remotes`, `Tags`, `Stashes` and `Worktrees` are
 headings that collapse, and branches with a `/` sit in folders by prefix that
 collapse too (`design/…` under *design*). The current branch is bold with a
 check; the others carry a branch glyph. Each remote is a node, closed until
@@ -8603,6 +8604,10 @@ user's own Claude Code settings, so what they commit follows those settings.
 
 ## F36 — The Inbox: who needs you, across every project
 
+**Withdrawn 2026-11-16 (ADR-0100).** The session tab strip (F16) is back, the
+sidebar shows only the project tree, and the Sessions icon's badge still counts
+the sessions that need you. Kept below as it was specified.
+
 **Specified and built 2026-11-13**, the second slice of the layout redesign
 that ADR-0090 started. Code in `components/layout/Inbox.tsx` and
 `lib/inbox.ts`.
@@ -8691,6 +8696,9 @@ before it opens, as a stopped tab is (F16).
 **Not yet.** Files, commands typed with `>`, and Git actions.
 
 ## F38 — The Board
+
+**Withdrawn 2026-11-16 (ADR-0100)**: the route, the rail button and the palette
+action are gone. Kept below as it was specified.
 
 **Specified and built 2026-11-13**, the last slice of the layout redesign
 (ADR-0090). Code in `routes/board.tsx`; the columns come from F36's
