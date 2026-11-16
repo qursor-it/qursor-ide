@@ -4,6 +4,10 @@ import {
 	fixtureOneProjectOneSession,
 	fixtureWithGraph,
 	installMockBridge,
+	SHA_BASE,
+	SHA_MAIN,
+	SHA_SIDE,
+	SHA_TIP,
 	type TestFixture,
 	showInbox,
 } from './fixtures';
@@ -142,6 +146,24 @@ test.describe('git-mode', () => {
 		await expect(
 			page.getByTestId('git-tabs').getByTestId('tab-group-chip').filter({ hasText: 'zeta' }),
 		).toBeVisible();
+	});
+
+	test('@smoke no hover card; HEAD is bold and what it lacks is dimmed', async ({ page }) => {
+		const fx = fixtureWithRefs();
+		const root = fx.projects?.[0]?.realPath ?? '';
+		const refs = fx.gitRefs?.[root];
+		if (refs) refs.headSha = SHA_MAIN;
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		const row = (sha: string) => page.locator(`[data-testid="commit-row"][data-sha="${sha}"]`);
+		await row(SHA_TIP).hover();
+		await page.waitForTimeout(800);
+		await expect(page.locator('[data-radix-popper-content-wrapper]')).toHaveCount(0);
+		await expect(row(SHA_MAIN).locator('.font-semibold')).toHaveCount(1);
+		await expect(row(SHA_TIP)).toHaveClass(/opacity-55/);
+		await expect(row(SHA_SIDE)).toHaveClass(/opacity-55/);
+		await expect(row(SHA_BASE)).not.toHaveClass(/opacity-55/);
 	});
 
 	test('@smoke branches sit in folders by prefix, and sections collapse', async ({ page }) => {

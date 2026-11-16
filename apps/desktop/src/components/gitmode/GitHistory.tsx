@@ -16,6 +16,7 @@ import {
 import { useGitHistory } from '@hooks/useGitHistory';
 import { lanePitch, railWidth, ROW_PAD_LEFT } from '@lib/gitGraph';
 import { queryKeys } from '@lib/queryKeys';
+import { reachableFrom } from '@lib/reachable';
 import { sessionDuring } from '@lib/sessionDuring';
 import { isLooseRepo } from '@store/gitModeStore';
 import { cmd, copyText } from '@lib/tauri';
@@ -77,6 +78,9 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 	const { run, running } = useGitOp(dir);
 	const refsQ = useQuery({ queryKey: queryKeys.gitRefs(dir), queryFn: () => cmd.gitRefs(dir) });
 	const current = refsQ.data?.head ?? 'HEAD';
+	const headSha = refsQ.data?.headSha ?? null;
+	// What HEAD contains, so the rest can be dimmed (F35).
+	const onHead = useMemo(() => reachableFrom(headSha, commits), [headSha, commits]);
 	const [naming, setNaming] = useState<{ kind: 'branch' | 'tag'; sha: string } | null>(null);
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 	// The row the context menu was opened on, found from the event target.
@@ -147,6 +151,8 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 									columns
 									session={sessionOf.get(commit.sha) ?? null}
 									rowHeight={TABLE_ROW_HEIGHT}
+									head={commit.sha === headSha}
+									away={onHead.size > 0 && !onHead.has(commit.sha)}
 								/>
 							))}
 						</ul>

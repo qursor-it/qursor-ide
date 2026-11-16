@@ -142,6 +142,10 @@ interface CommitRowProps {
 	session?: string | null;
 	/** Row height; defaults to the panel list's. */
 	rowHeight?: number;
+	/** The commit HEAD is on: its subject is bold (F35, as desktop Git clients). */
+	head?: boolean;
+	/** Not reachable from HEAD — on another branch, or not pulled yet: dimmed. */
+	away?: boolean;
 }
 
 /**
@@ -166,6 +170,8 @@ export const CommitRow = memo(function CommitRow({
 	columns = false,
 	session = null,
 	rowHeight = ROW_HEIGHT,
+	head = false,
+	away = false,
 }: CommitRowProps) {
 	const chips = foldRefs(commit.refs);
 	const { shown, hiddenCount } = fitRefs(chips, textWidth);
@@ -175,7 +181,9 @@ export const CommitRow = memo(function CommitRow({
 	return (
 		<li>
 			<HoverCard
-				open={cardOpen}
+				// Git mode's table has the detail column beside it, so no card: it
+				// covered the rows you were reading (F35).
+				open={columns ? false : cardOpen}
 				onOpenChange={(open) => onCardOpen(commit.sha, open)}
 				openDelay={HOVER_OPEN_MS}
 				closeDelay={HOVER_CLOSE_MS}
@@ -196,7 +204,7 @@ export const CommitRow = memo(function CommitRow({
 						style={{ height: rowHeight, paddingLeft: ROW_PAD_LEFT }}
 						className={`group flex w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors ${
 							selected ? 'bg-secondary' : 'hover:bg-secondary/50'
-						}`}
+						} ${away && !selected ? 'opacity-55' : ''}`}
 						onClick={() => onSelect(commit.sha)}
 					>
 						<GraphRail
@@ -232,8 +240,8 @@ export const CommitRow = memo(function CommitRow({
 						    Selected keeps full foreground rather than waiting for a hover:
 						    it is a state, the same reasoning the panel toggle carries. */}
 						<span
-							className={`min-w-0 flex-1 truncate ${
-								selected
+							className={`min-w-0 flex-1 truncate ${head ? 'font-semibold' : ''} ${
+								selected || head
 									? 'text-foreground'
 									: 'text-secondary-foreground group-hover:text-foreground'
 							}`}

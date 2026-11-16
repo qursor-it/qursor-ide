@@ -8451,7 +8451,10 @@ opened, holding its branches the same way. What is collapsed is kept.
 
 **The table and the detail since ADR-0098.** 36px rows under column heads
 (Graph, Subject, Session, Date, SHA); the author is in the detail, not a
-column. The detail column reads top to bottom: the subject at 16px, sha, author
+column. No hover card on a row: the detail is beside it. The commit HEAD is on
+has a bold subject, and the commits HEAD does not contain (another branch, or
+not pulled yet) are dimmed, as desktop Git clients show them; when HEAD is past
+the loaded page nothing is dimmed. The detail column reads top to bottom: the subject at 16px, sha, author
 and parents, the files; the session it was made in as a card; *Ask about this
 commit* (the ✦ questions as full-width buttons); *Actions* (Cherry-pick, Revert,
 New branch here, Tag, Checkout, the last confirmed). The action bar's buttons
