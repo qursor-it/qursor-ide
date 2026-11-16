@@ -148,6 +148,32 @@ test.describe('git-mode', () => {
 		).toBeVisible();
 	});
 
+	test('@smoke right-clicking a branch offers the Git client menu', async ({ page }) => {
+		await installMockBridge(page, fixtureWithRefs());
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.locator('[data-branch="side"]').click({ button: 'right' });
+		const menu = page.getByRole('menu');
+		for (const item of [
+			'Checkout…',
+			"Merge 'side' into 'main'…",
+			"Rebase 'main' on 'side'…",
+			'New Branch…',
+			'New Tag…',
+			'Rename…',
+			'Delete…',
+			'Copy Branch Name',
+		]) {
+			await expect(menu.getByRole('menuitem', { name: item, exact: true })).toBeVisible();
+		}
+		await menu.getByRole('menuitem', { name: 'New Tag…' }).click();
+		await page.getByRole('dialog').getByRole('textbox').fill('v1.0.0');
+		await page.getByRole('button', { name: 'Create tag' }).click();
+		await expect
+			.poll(() => gitOps(page))
+			.toEqual([{ kind: 'createTag', name: 'v1.0.0', at: 'side' }]);
+	});
+
 	test('@smoke a running operation turns its button glyph into a spinner', async ({ page }) => {
 		await installMockBridge(page, fixtureWithRefs({ gitOpDelayMs: 1500 }));
 		await page.goto(PROJECT);

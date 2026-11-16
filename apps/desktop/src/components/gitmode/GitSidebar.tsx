@@ -4,12 +4,15 @@ import {
 	ContextMenuContent,
 	ContextMenuItem,
 	ContextMenuSeparator,
+	ContextMenuSub,
+	ContextMenuSubContent,
+	ContextMenuSubTrigger,
 	ContextMenuTrigger,
 } from '@factorai/ui';
 import { useWorktrees } from '@hooks/useWorktrees';
 import { type BranchNode, branchTree } from '@lib/branchTree';
 import { queryKeys } from '@lib/queryKeys';
-import { cmd } from '@lib/tauri';
+import { cmd, copyText } from '@lib/tauri';
 import { isOpen, useGitModeStore } from '@store/gitModeStore';
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -56,6 +59,8 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 	const refs = refsQ.data;
 	const changes = statusQ.data?.changes.length ?? 0;
 	const [renaming, setRenaming] = useState<string | null>(null);
+	const [naming, setNaming] = useState<{ kind: 'branch' | 'tag'; at: string } | null>(null);
+	const head = refs?.head ?? null;
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 
 	const toggled = useGitModeStore((s) => s.toggled);
@@ -139,36 +144,49 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 						)}
 					</Button>
 				</ContextMenuTrigger>
+				{/* The branch menu, as desktop Git clients have it (F35): checkout,
+				    sync with the remote, integrate with the current branch, new refs
+				    here, then naming and deleting. */}
 				<ContextMenuContent>
-					<ContextMenuItem onSelect={() => run({ kind: 'checkout', branch: b.name })}>
-						Checkout
-					</ContextMenuItem>
 					<ContextMenuItem
 						disabled={b.current}
-						onSelect={() => setIntegrate({ kind: 'merge', target: b.name })}
+						onSelect={() => run({ kind: 'checkout', branch: b.name })}
 					>
-						Merge into current
+						Checkout…
 					</ContextMenuItem>
-					<ContextMenuItem
-						disabled={b.current}
-						onSelect={() => setIntegrate({ kind: 'rebase', target: b.name })}
-					>
-						Rebase current onto it
-					</ContextMenuItem>
-					{quick.enabled && !b.current && refs?.head && (
-						<ContextMenuItem
-							disabled={quick.busy}
-							onSelect={() =>
-								void quick.show(`Summarise ${b.name}`, {
-									kind: 'summariseBranch',
-									branch: b.name,
-									against: refs.head ?? 'HEAD',
-								})
-							}
-						>
-							✦ Summarise this branch against {refs.head}
-						</ContextMenuItem>
+					{b.current && (
+						<>
+							<ContextMenuSeparator />
+							{b.upstream && (
+								<ContextMenuItem onSelect={() => run({ kind: 'pull' })}>
+									Pull from '{b.upstream}'
+								</ContextMenuItem>
+							)}
+							<ContextMenuItem
+								onSelect={() => run({ kind: 'push', setUpstream: b.upstream === null })}
+							>
+								Push to '{b.upstream?.split('/')[0] ?? 'origin'}'
+							</ContextMenuItem>
+						</>
 					)}
+					{!b.current && head && (
+						<>
+							<ContextMenuSeparator />
+							<ContextMenuItem onSelect={() => setIntegrate({ kind: 'merge', target: b.name })}>
+								Merge '{b.name}' into '{head}'…
+							</ContextMenuItem>
+							<ContextMenuItem onSelect={() => setIntegrate({ kind: 'rebase', target: b.name })}>
+								Rebase '{head}' on '{b.name}'…
+							</ContextMenuItem>
+						</>
+					)}
+					<ContextMenuSeparator />
+					<ContextMenuItem onSelect={() => setNaming({ kind: 'branch', at: b.name })}>
+						New Branch…
+					</ContextMenuItem>
+					<ContextMenuItem onSelect={() => setNaming({ kind: 'tag', at: b.name })}>
+						New Tag…
+					</ContextMenuItem>
 					<ContextMenuSeparator />
 					<ContextMenuItem onSelect={() => setRenaming(b.name)}>Rename…</ContextMenuItem>
 					<ContextMenuItem
@@ -182,6 +200,30 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 					>
 						Delete…
 					</ContextMenuItem>
+					{quick.enabled && !b.current && head && (
+						<>
+							<ContextMenuSeparator />
+							<ContextMenuSub>
+								<ContextMenuSubTrigger>AI</ContextMenuSubTrigger>
+								<ContextMenuSubContent>
+									<ContextMenuItem
+										disabled={quick.busy}
+										onSelect={() =>
+											void quick.show(`Summarise ${b.name}`, {
+												kind: 'summariseBranch',
+												branch: b.name,
+												against: head,
+											})
+										}
+									>
+										✦ Summarise '{b.name}' against '{head}'
+									</ContextMenuItem>
+								</ContextMenuSubContent>
+							</ContextMenuSub>
+						</>
+					)}
+					<ContextMenuSeparator />
+					<ContextMenuItem onSelect={() => void copyText(b.name)}>Copy Branch Name</ContextMenuItem>
 				</ContextMenuContent>
 			</ContextMenu>
 		);
@@ -337,6 +379,24 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 			</div>
 
 			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
+			<PromptDialog
+				title={
+					naming?.kind === 'tag' ? `New tag at ${naming.at}` : `New branch from ${naming?.at ?? ''}`
+				}
+				initial={naming ? '' : null}
+				confirmLabel={naming?.kind === 'tag' ? 'Create tag' : 'Create branch'}
+				onCancel={() => setNaming(null)}
+				onSubmit={(name) => {
+					const n = naming;
+					setNaming(null);
+					if (!n) return;
+					void run(
+						n.kind === 'tag'
+							? { kind: 'createTag', name, at: n.at }
+							: { kind: 'createBranch', name, at: n.at, checkout: true },
+					);
+				}}
+			/>
 			<PromptDialog
 				title="Rename branch"
 				initial={renaming}

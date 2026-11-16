@@ -8478,7 +8478,7 @@ text, unedited.
 | Area | Operations |
 |---|---|
 | Changes | stage / unstage a file or a hunk, discard a file or a hunk (confirmed), commit, amend |
-| Branches | checkout (double-click), new branch from the selected commit, rename, delete (confirmed) |
+| Branches | checkout (double-click), new branch from the selected commit, rename, delete (confirmed); a branch's right-click menu as desktop Git clients have it: Checkout…, Pull from / Push to its remote (current branch), Merge it into / Rebase the current branch on it…, New Branch… / New Tag… at it, Rename…, Delete…, AI › Summarise, Copy Branch Name |
 | Integrate | merge a branch into the current one, rebase the current branch onto another (non-interactive) |
 | Commit (history context menu) | checkout the commit (detached, confirmed), new branch here, new tag here, cherry-pick, revert (a merge commit against its first parent, `-m 1`), merge it into the current branch, rebase the current branch onto it, reset the current branch to it (soft / mixed / hard; hard confirmed), copy SHA, copy message |
 | Remote | fetch, pull, push, set upstream on the first push |
