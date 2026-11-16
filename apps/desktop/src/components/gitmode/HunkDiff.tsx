@@ -17,6 +17,8 @@ export function HunkDiff({ dir, path, staged }: { dir: string; path: string; sta
 	const patchQ = useQuery({
 		queryKey: queryKeys.gitFilePatch(dir, path, staged),
 		queryFn: () => cmd.gitFilePatch(dir, path, staged),
+		// The file keeps changing under an agent; the list beside it polls too.
+		refetchInterval: 5_000,
 	});
 	if (patchQ.isPending) return <div className="p-3 text-muted-foreground text-sm">Loading…</div>;
 	const { header, hunks } = splitHunks(patchQ.data ?? '');

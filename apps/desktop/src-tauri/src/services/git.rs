@@ -1232,6 +1232,9 @@ pub fn file_patch(project_path: &str, path: &str, staged: bool) -> AppResult<Str
 	let mut opts = DiffOptions::new();
 	opts.pathspec(rel.to_string_lossy().replace('\\', "/"))
 		.include_untracked(true)
+		// Without it a file in an untracked directory is the directory's one
+		// delta, which the file's pathspec never matches (F35).
+		.recurse_untracked_dirs(true)
 		.show_untracked_content(true);
 	let diff = if staged {
 		let head = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
@@ -2616,5 +2619,27 @@ three
 
 		stage(&repo, "tracked.txt");
 		assert!(file_patch(&root(&dir), &abs, true).unwrap().contains("@@ -1,3 +1,3 @@"));
+	}
+
+	#[test]
+	fn file_patch_reads_a_new_file_in_a_new_directory() {
+		let (dir, _repo) = repo_with_commit();
+		std::fs::create_dir_all(dir.path().join("fresh")).unwrap();
+		write(dir.path(), "fresh/new.ts", "export const a = 1;\n");
+		let abs = dir.path().join("fresh/new.ts").to_string_lossy().into_owned();
+		let patch = file_patch(&root(&dir), &abs, false).unwrap();
+		assert!(patch.contains("+export const a = 1;"), "{patch}");
+	}
+
+	#[test]
+	fn file_patch_takes_a_bracketed_name_literally() {
+		let (dir, repo) = repo_with_commit();
+		std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+		write(dir.path(), "pages/[id].tsx", "one\n");
+		stage(&repo, "pages/[id].tsx");
+		write(dir.path(), "pages/[id].tsx", "two\n");
+		let abs = dir.path().join("pages/[id].tsx").to_string_lossy().into_owned();
+		let patch = file_patch(&root(&dir), &abs, false).unwrap();
+		assert!(patch.contains("+two"), "{patch}");
 	}
 }
