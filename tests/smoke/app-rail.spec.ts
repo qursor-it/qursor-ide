@@ -40,11 +40,10 @@ test.describe('app rail', () => {
 		await expect(page.getByTestId('projects')).toBeVisible();
 	});
 
-	test('@smoke a project tile opens its page, and the rail stays in Git mode', async ({ page }) => {
+	test('@smoke has no project tiles, and stays in Git mode', async ({ page }) => {
 		await installMockBridge(page, fixtureOneProjectOneSession());
-		await page.goto('/');
-		await page.getByTestId(`rail-project-${FOO_ID}`).click();
-		await expect(page).toHaveURL(new RegExp(`projects/${FOO_ID}$`));
+		await page.goto(`/#/projects/${FOO_ID}`);
+		await expect(page.getByTestId('app-rail').getByRole('button', { name: 'foo' })).toHaveCount(0);
 
 		await page.getByRole('tab', { name: 'Git' }).click();
 		await expect(page.getByTestId('app-rail')).toBeVisible();

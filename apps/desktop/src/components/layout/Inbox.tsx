@@ -301,12 +301,11 @@ function Inbox({ empty = null }: { empty?: ReactNode }) {
 						background={!tabIds.has(e.sessionId)}
 						unseen={unseen[e.sessionId] === true}
 					/>
-					<span className="truncate text-foreground">{title}</span>
+					<ProjectIcon name={name} size={16} />
+					<span className="truncate font-medium text-foreground">{name}</span>
 				</span>
-				<span className="flex min-w-0 items-center gap-1.5 pl-4 text-muted-foreground text-xs">
-					<ProjectIcon name={name} size={14} />
-					<span className="truncate">{name}</span>
-				</span>
+				{/* The project leads: it is how you find a row among many (F36). */}
+				<span className="truncate pl-4 text-muted-foreground text-xs">{title}</span>
 			</>,
 			() => openSession(e.sessionId, e.projectId),
 			(gesture) => requestClose(e, gesture),
@@ -359,12 +358,12 @@ function Inbox({ empty = null }: { empty?: ReactNode }) {
 						<>
 							<span className="flex min-w-0 items-center gap-2">
 								<GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-								<span className="truncate text-foreground">{label}</span>
+								<ProjectIcon name={projectName.get(t.projectId) ?? ''} size={16} />
+								<span className="truncate font-medium text-foreground">
+									{projectName.get(t.projectId) ?? ''}
+								</span>
 							</span>
-							<span className="flex min-w-0 items-center gap-1.5 pl-5 text-muted-foreground text-xs">
-								<ProjectIcon name={projectName.get(t.projectId) ?? ''} size={14} />
-								<span className="truncate">{projectName.get(t.projectId) ?? ''}</span>
-							</span>
+							<span className="truncate pl-5 text-muted-foreground text-xs">{label}</span>
 						</>,
 						() => openPr(t.projectId, t.number),
 						() => closePr(t.projectId, t.number),

@@ -58,7 +58,9 @@ test.describe('inbox', () => {
 		await expect(page.locator('.xterm:visible')).toBeVisible();
 
 		await showInbox(page);
-		await page.getByTestId(`rail-project-${FOO_ID}`).click();
+		await page.evaluate((id) => {
+			location.hash = `#/projects/${id}`;
+		}, FOO_ID);
 		await expect(page).not.toHaveURL(/sessions/);
 		await page.getByTestId(`inbox-row-${SESSION_ID}`).click();
 		await expect(page).toHaveURL(new RegExp(`sessions/${SESSION_ID}`));
