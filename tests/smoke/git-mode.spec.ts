@@ -161,9 +161,9 @@ test.describe('git-mode', () => {
 		await page.waitForTimeout(800);
 		await expect(page.locator('[data-radix-popper-content-wrapper]')).toHaveCount(0);
 		await expect(row(SHA_MAIN).locator('.font-semibold')).toHaveCount(1);
-		await expect(row(SHA_TIP)).toHaveClass(/opacity-55/);
-		await expect(row(SHA_SIDE)).toHaveClass(/opacity-55/);
-		await expect(row(SHA_BASE)).not.toHaveClass(/opacity-55/);
+		await expect(row(SHA_TIP)).toHaveClass(/opacity-75/);
+		await expect(row(SHA_SIDE)).toHaveClass(/opacity-75/);
+		await expect(row(SHA_BASE)).not.toHaveClass(/opacity-75/);
 	});
 
 	test('@smoke branches sit in folders by prefix, and sections collapse', async ({ page }) => {

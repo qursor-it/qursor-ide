@@ -204,7 +204,7 @@ export const CommitRow = memo(function CommitRow({
 						style={{ height: rowHeight, paddingLeft: ROW_PAD_LEFT }}
 						className={`group flex w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors ${
 							selected ? 'bg-secondary' : 'hover:bg-secondary/50'
-						} ${away && !selected ? 'opacity-55' : ''}`}
+						} ${away && !selected ? 'opacity-75' : ''}`}
 						onClick={() => onSelect(commit.sha)}
 					>
 						<GraphRail
