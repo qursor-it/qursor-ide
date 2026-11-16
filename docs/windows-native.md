@@ -34,7 +34,7 @@ $env:CARGO_BUILD_JOBS = '2'
 pnpm build:windows
 ```
 
-The output is under the workspace `target\release\bundle\nsis` directory. The product and executable use the `qursor-ide` name, and version 0.57.1 produces `qursor-ide_0.57.1_x64-setup.exe`. The application identifier is `it.qursor.ide`, which sets the data location; data from `dev.factorai` builds is not migrated (ADR-0088). The Windows configuration selects NSIS and points the updater at this fork's own signed feed (see below); it never polls the upstream project. Local builds do not produce updater artifacts, so a local build is updated by installing a newer setup executable.
+The output is under the workspace `target\release\bundle\nsis` directory. The product and executable use the `qursor-ide` name, and version 0.58.0 produces `qursor-ide_0.58.0_x64-setup.exe`. The application identifier is `it.qursor.ide`, which sets the data location; data from `dev.factorai` builds is not migrated (ADR-0088). The Windows configuration selects NSIS and points the updater at this fork's own signed feed (see below); it never polls the upstream project. Local builds do not produce updater artifacts, so a local build is updated by installing a newer setup executable.
 
 Run `pnpm windows:check` to verify the native bundle defaults before packaging.
 
