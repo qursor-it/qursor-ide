@@ -3401,6 +3401,10 @@ are guarded: `lib/crashReport.test.ts` on the building side and
 
 ## F18 — Git graph
 
+**Since 2026-11-16 the panel's Graph tab renders F35's Git mode view (ADR-0102);**
+the rail, chips and node rules below still apply to its rows, the hover card,
+working row and tabbed detail pane do not.
+
 **Specified 2026-08-17**, from the clarify-needs interview roadmap item 1 (#13) was
 gated on. Not built yet.
 
@@ -8442,6 +8446,18 @@ per-hunk `Stage hunk` / `Unstage hunk`, re-read every 5s like the list, and
 the patch of a new file in a new directory is the file's own. Discard (files or
 a hunk) asks for confirmation every time. A commit box under the lists: subject,
 optional body, `Amend`, `✦ Write message`, and a `Commit on <branch>` button.
+
+**The panel's Graph tab is Git mode in the panel (2026-11-16, ADR-0102).** In
+Sessions mode the right panel's *Graph* tab shows the active checkout as Git
+mode does: the branch with ahead/behind, *Commits* / *Changes n* to switch
+between the history table and Local changes, *Open in Git mode*, the action bar
+(wrapping, without the ask field), the table with the commit docked under it,
+and the last operation's output. Columns are container-sized: at the panel's
+default width the table shows graph and subject; widening the panel by its edge
+brings back SHA, Date, Author and Session, and the commit's Ask and Actions move
+beside it. Local changes stack the lists above the diff when narrow. Git's
+confirm and error dialogs are mounted once in the shell, for both. The panel's
+tab row scrolls when the tabs outgrow it.
 
 **The sidebar since ADR-0098.** The open repositories are tabs in the top
 bar's work row again (ADR-0100), not a list here. The strip ends in a labelled

@@ -74,7 +74,7 @@ export function GitCommitPane({
 					</Row>
 				)}
 				<Row label="SHA">
-					<span className="flex items-center gap-1 font-mono text-xs">
+					<span className="flex min-w-0 items-center gap-1 break-all font-mono text-xs">
 						{d.sha}
 						<IconButton aria-label="Copy SHA" title="Copy SHA" onClick={() => void copyText(d.sha)}>
 							<Copy />

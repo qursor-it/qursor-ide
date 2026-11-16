@@ -8,8 +8,8 @@ import { IconButton } from '@factorai/ui';
 import { ChangesView } from '@components/files/ChangesView';
 import { FileTreeNode } from '@components/files/FileTreeNode';
 import { FileTreeProvider } from '@components/files/fileTreeContext';
-import { GraphView } from '@components/graph/GraphView';
 import { PrsView } from '@components/prs/PrsView';
+import { GitPanel } from '@components/gitmode/GitPanel';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
 import { useGitDecorations } from '@hooks/useGitDecorations';
 import { checkoutLabel } from '@hooks/useWorktrees';
@@ -154,7 +154,11 @@ function PanelBody() {
 				    requests took a fourth slot). Appended rather than reordered, so
 				    Files, Changes and Graph keep the positions muscle memory already
 				    has. */}
-				<div className="flex flex-1 items-center gap-0.5" role="tablist" aria-label="Panel">
+				<div
+					className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+					role="tablist"
+					aria-label="Panel"
+				>
 					<TabButton tab="review" label="Review" />
 					<TabButton tab="files" label="Files" />
 					<TabButton tab="changes" label="Changes" />
@@ -204,7 +208,7 @@ function PanelBody() {
 			{tab === 'review' ? (
 				<ReviewView />
 			) : tab === 'graph' ? (
-				<GraphView />
+				<GitPanel />
 			) : tab === 'prs' ? (
 				<PrsView />
 			) : (
@@ -327,7 +331,7 @@ function TabButton({ tab, label }: { tab: PanelTab; label: string }) {
 			type="button"
 			role="tab"
 			aria-selected={active}
-			className={`rounded px-1.5 py-0.5 font-medium text-sm transition-colors ${
+			className={`shrink-0 rounded px-1.5 py-0.5 font-medium text-sm transition-colors ${
 				active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
 			}`}
 			onClick={() => setTab(tab)}

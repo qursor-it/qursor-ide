@@ -259,14 +259,14 @@ export const CommitRow = memo(function CommitRow({
 								{session !== undefined && (
 									<span
 										data-testid="commit-row-session"
-										className="w-40 shrink-0 truncate text-left text-primary text-xs"
+										className="hidden w-40 shrink-0 truncate text-left text-primary text-xs @4xl:block"
 										title={session ? `Made while “${session}” was running` : undefined}
 									>
 										{session ? `✦ ${session}` : ''}
 									</span>
 								)}
 								{/* Author, sha and the full date, as desktop Git clients list them. */}
-								<span className="flex w-28 shrink-0 items-center gap-1.5 text-muted-foreground text-xs">
+								<span className="hidden w-28 shrink-0 items-center gap-1.5 text-muted-foreground text-xs @2xl:flex">
 									<span
 										aria-hidden="true"
 										style={{ background: avatar.colour, color: avatar.ink }}
@@ -276,10 +276,10 @@ export const CommitRow = memo(function CommitRow({
 									</span>
 									<span className="truncate">{commit.authorName}</span>
 								</span>
-								<span className="w-16 shrink-0 font-mono text-muted-foreground text-xs">
+								<span className="hidden w-16 shrink-0 font-mono text-muted-foreground text-xs @lg:block">
 									{commit.shortSha}
 								</span>
-								<span className="w-32 shrink-0 truncate text-muted-foreground text-xs tabular-nums">
+								<span className="hidden w-32 shrink-0 truncate text-muted-foreground text-xs tabular-nums @xl:block">
 									{formatAbsolute(commit.authorTime)}
 								</span>
 							</>

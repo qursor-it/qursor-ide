@@ -112,7 +112,7 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 		// The commit list, and the selected commit docked under it as desktop Git
 		// clients have it (F35, ADR-0099).
 		<div data-testid="git-history" className="flex min-h-0 min-w-0 flex-1 flex-col">
-			<div className="min-h-0 min-w-0 flex-1 overflow-auto pb-1">
+			<div className="@container min-h-0 min-w-0 flex-1 overflow-auto pb-1">
 				{/* The table's column heads, as in the mock-up (F35, ADR-0095). */}
 				<div
 					aria-hidden
@@ -123,10 +123,10 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 						Graph
 					</span>
 					<span className="min-w-0 flex-1">Subject</span>
-					{sessionOf.size > 0 && <span className="w-40 shrink-0">Session</span>}
-					<span className="w-28 shrink-0">Author</span>
-					<span className="w-16 shrink-0">SHA</span>
-					<span className="w-32 shrink-0">Date</span>
+					{sessionOf.size > 0 && <span className="hidden w-40 shrink-0 @4xl:block">Session</span>}
+					<span className="hidden w-28 shrink-0 @2xl:block">Author</span>
+					<span className="hidden w-16 shrink-0 @lg:block">SHA</span>
+					<span className="hidden w-32 shrink-0 @xl:block">Date</span>
 				</div>
 				<ContextMenu>
 					<ContextMenuTrigger asChild>
@@ -341,117 +341,119 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 					<div
 						data-testid="commit-detail"
 						style={{ height: detailHeight }}
-						className="flex shrink-0"
+						className="@container flex shrink-0 overflow-y-auto"
 					>
-						<div className="min-w-0 flex-1 overflow-y-auto">
-							<div className="pt-3 empty:hidden">
-								<CommitSession projectId={projectId} dir={dir} sha={selected} />
+						<div className="flex min-w-0 flex-1 flex-col @3xl:flex-row">
+							<div className="min-w-0 flex-1 @3xl:overflow-y-auto">
+								<div className="pt-3 empty:hidden">
+									<CommitSession projectId={projectId} dir={dir} sha={selected} />
+								</div>
+								<GitCommitPane
+									dir={dir}
+									sha={selected}
+									refs={commits.find((c) => c.sha === selected)?.refs ?? []}
+									onSelectSha={select}
+								/>
 							</div>
-							<GitCommitPane
-								dir={dir}
-								sha={selected}
-								refs={commits.find((c) => c.sha === selected)?.refs ?? []}
-								onSelectSha={select}
-							/>
-						</div>
-						<aside className="w-72 shrink-0 overflow-y-auto border-border border-l">
-							{/* The context menu's ✦ questions and its actions, laid out in the
+							<aside className="border-border border-t @3xl:w-72 @3xl:shrink-0 @3xl:overflow-y-auto @3xl:border-t-0 @3xl:border-l">
+								{/* The context menu's ✦ questions and its actions, laid out in the
 					    detail as the mock-up has them (F35, ADR-0095). */}
-							{quick.enabled && (
-								<DetailSection title="Ask about this commit">
-									<div data-testid="commit-ask" className="flex flex-col gap-1.5">
-										{(
-											[
-												['Explain this commit', { kind: 'explainCommit', sha: selected }],
-												['Find bugs introduced here', { kind: 'findBugs', sha: selected }],
-												['Write a release note', { kind: 'releaseNote', sha: selected }],
-											] as const
-										).map(([label, task]) => (
+								{quick.enabled && (
+									<DetailSection title="Ask about this commit">
+										<div data-testid="commit-ask" className="flex flex-col gap-1.5">
+											{(
+												[
+													['Explain this commit', { kind: 'explainCommit', sha: selected }],
+													['Find bugs introduced here', { kind: 'findBugs', sha: selected }],
+													['Write a release note', { kind: 'releaseNote', sha: selected }],
+												] as const
+											).map(([label, task]) => (
+												<Button
+													key={label}
+													variant="outline"
+													disabled={quick.busy}
+													onClick={() => void quick.show(label, task)}
+													className="justify-start gap-2 font-normal"
+												>
+													<span className="text-primary">✦</span> {label}
+												</Button>
+											))}
 											<Button
-												key={label}
 												variant="outline"
 												disabled={quick.busy}
-												onClick={() => void quick.show(label, task)}
+												onClick={() =>
+													void quick.show(
+														'Undo this commit safely',
+														{ kind: 'undoCommit', sha: selected },
+														{
+															request: `Undo commit ${selected} safely, without rewriting shared history.`,
+														},
+													)
+												}
 												className="justify-start gap-2 font-normal"
 											>
-												<span className="text-primary">✦</span> {label}
+												<span className="text-primary">✦</span> Undo this commit safely
 											</Button>
-										))}
+										</div>
+									</DetailSection>
+								)}
+								<DetailSection title="Actions">
+									<div data-testid="commit-actions" className="flex flex-wrap gap-1.5">
 										<Button
-											variant="outline"
-											disabled={quick.busy}
+											size="sm"
+											variant="secondary"
+											disabled={running}
 											onClick={() =>
-												void quick.show(
-													'Undo this commit safely',
-													{ kind: 'undoCommit', sha: selected },
+												void run({ kind: 'cherryPick', sha: selected, mergeCommit: selectedMerge })
+											}
+										>
+											Cherry-pick
+										</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={running}
+											onClick={() =>
+												void run({ kind: 'revert', sha: selected, mergeCommit: selectedMerge })
+											}
+										>
+											Revert
+										</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={running}
+											onClick={() => setNaming({ kind: 'branch', sha: selected })}
+										>
+											New branch here
+										</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={running}
+											onClick={() => setNaming({ kind: 'tag', sha: selected })}
+										>
+											Tag
+										</Button>
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={running}
+											onClick={() =>
+												void run(
+													{ kind: 'checkoutCommit', sha: selected },
 													{
-														request: `Undo commit ${selected} safely, without rewriting shared history.`,
+														confirm: `Check out ${selected.slice(0, 8)}? HEAD will be detached: new commits will not be on any branch.`,
 													},
 												)
 											}
-											className="justify-start gap-2 font-normal"
 										>
-											<span className="text-primary">✦</span> Undo this commit safely
+											Checkout
 										</Button>
 									</div>
 								</DetailSection>
-							)}
-							<DetailSection title="Actions">
-								<div data-testid="commit-actions" className="flex flex-wrap gap-1.5">
-									<Button
-										size="sm"
-										variant="secondary"
-										disabled={running}
-										onClick={() =>
-											void run({ kind: 'cherryPick', sha: selected, mergeCommit: selectedMerge })
-										}
-									>
-										Cherry-pick
-									</Button>
-									<Button
-										size="sm"
-										variant="secondary"
-										disabled={running}
-										onClick={() =>
-											void run({ kind: 'revert', sha: selected, mergeCommit: selectedMerge })
-										}
-									>
-										Revert
-									</Button>
-									<Button
-										size="sm"
-										variant="secondary"
-										disabled={running}
-										onClick={() => setNaming({ kind: 'branch', sha: selected })}
-									>
-										New branch here
-									</Button>
-									<Button
-										size="sm"
-										variant="secondary"
-										disabled={running}
-										onClick={() => setNaming({ kind: 'tag', sha: selected })}
-									>
-										Tag
-									</Button>
-									<Button
-										size="sm"
-										variant="secondary"
-										disabled={running}
-										onClick={() =>
-											void run(
-												{ kind: 'checkoutCommit', sha: selected },
-												{
-													confirm: `Check out ${selected.slice(0, 8)}? HEAD will be detached: new commits will not be on any branch.`,
-												},
-											)
-										}
-									>
-										Checkout
-									</Button>
-								</div>
-							</DetailSection>
-						</aside>
+							</aside>
+						</div>
 					</div>
 				</>
 			)}

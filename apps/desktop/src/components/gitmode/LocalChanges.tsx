@@ -143,40 +143,42 @@ export function LocalChanges({ dir }: { dir: string }) {
 	};
 
 	return (
-		<div data-testid="local-changes" className="flex min-h-0 flex-1">
-			<div className="flex w-80 shrink-0 flex-col border-r border-border">
-				<div className="min-h-0 flex-1 overflow-y-auto py-1">
-					{section('Staged', staged, true)}
-					{section('Unstaged', unstaged, false)}
+		<div data-testid="local-changes" className="@container flex min-h-0 flex-1 flex-col">
+			<div className="flex min-h-0 flex-1 flex-col @3xl:flex-row">
+				<div className="flex max-h-[55%] shrink-0 flex-col border-border border-b @3xl:max-h-none @3xl:w-80 @3xl:border-r @3xl:border-b-0">
+					<div className="min-h-0 flex-1 overflow-y-auto py-1">
+						{section('Staged', staged, true)}
+						{section('Unstaged', unstaged, false)}
+					</div>
+					<CommitBox dir={dir} branch={statusQ.data?.branch ?? null} staged={staged.length} />
 				</div>
-				<CommitBox dir={dir} branch={statusQ.data?.branch ?? null} staged={staged.length} />
-			</div>
-			<div className="flex min-w-0 flex-1 flex-col">
-				{selected ? (
-					<>
-						<div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
-							<span className="min-w-0 truncate text-foreground">{selected.path}</span>
-							<span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary">
-								{selected.staged ? 'staged' : 'unstaged'}
-							</span>
-							<span className="flex-1" />
-							<Button
-								variant="ghost"
-								size="sm"
-								className={SMALL}
-								onClick={() => {
-									setMode('sessions');
-									open(selected.path, { diff: selected.staged ? 'staged' : 'unstaged' });
-								}}
-							>
-								Open side by side
-							</Button>
-						</div>
-						<HunkDiff key={`${selected.path}:${selected.staged}`} dir={dir} {...selected} />
-					</>
-				) : (
-					<PanelEmpty>{changes.length === 0 ? 'No changes.' : 'Select a file.'}</PanelEmpty>
-				)}
+				<div className="flex min-w-0 flex-1 flex-col">
+					{selected ? (
+						<>
+							<div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
+								<span className="min-w-0 truncate text-foreground">{selected.path}</span>
+								<span className="rounded-full bg-primary/15 px-2 py-0.5 text-primary">
+									{selected.staged ? 'staged' : 'unstaged'}
+								</span>
+								<span className="flex-1" />
+								<Button
+									variant="ghost"
+									size="sm"
+									className={SMALL}
+									onClick={() => {
+										setMode('sessions');
+										open(selected.path, { diff: selected.staged ? 'staged' : 'unstaged' });
+									}}
+								>
+									Open side by side
+								</Button>
+							</div>
+							<HunkDiff key={`${selected.path}:${selected.staged}`} dir={dir} {...selected} />
+						</>
+					) : (
+						<PanelEmpty>{changes.length === 0 ? 'No changes.' : 'Select a file.'}</PanelEmpty>
+					)}
+				</div>
 			</div>
 		</div>
 	);

@@ -9,11 +9,10 @@ import { useState } from 'react';
 import { AgentPopover } from './AgentPopover';
 import { ConflictBanner } from './ConflictBanner';
 import { GitActionBar } from './GitActionBar';
-import { GitErrorHost } from './GitErrorDialog';
 import { GitHistory } from './GitHistory';
 import { type GitSection, GitSidebar } from './GitSidebar';
 import { LocalChanges } from './LocalChanges';
-import { GitConfirmHost, OpLog } from './OpLog';
+import { OpLog } from './OpLog';
 
 /** The full-window view of the selected Git tab (specs/05-features.md F35). */
 export function GitModeView() {
@@ -33,8 +32,6 @@ export function GitModeView() {
 					</div>
 				</div>
 			)}
-			<GitConfirmHost />
-			<GitErrorHost />
 		</div>
 	);
 }

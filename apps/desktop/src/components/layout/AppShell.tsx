@@ -6,6 +6,8 @@ import { useEffect, useRef } from 'react';
 import { ImportProjects } from '@components/dialog/ImportProjects';
 import { FileTreePanel } from '@components/files/FileTreePanel';
 import { GitModeView } from '@components/gitmode/GitModeView';
+import { GitErrorHost } from '@components/gitmode/GitErrorDialog';
+import { GitConfirmHost } from '@components/gitmode/OpLog';
 import { ShellDock } from '@components/terminal/ShellDock';
 import { ViewerPane } from '@components/viewer/ViewerPane';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
@@ -309,6 +311,10 @@ export function AppShell({ children }: AppShellProps) {
 			<RestartConfirm />
 			<ImportDialog />
 			<CommandPalette />
+			{/* Git's confirm and error dialogs, once, for Git mode and the panel's
+			    Git tab alike (F35). */}
+			<GitConfirmHost />
+			<GitErrorHost />
 			{/* The one place a toast appears (ADR-0065). Here rather than at the
 			    root so it is only ever mounted with the app around it. */}
 			<Toaster />

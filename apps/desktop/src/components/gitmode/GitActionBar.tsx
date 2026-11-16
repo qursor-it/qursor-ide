@@ -32,7 +32,15 @@ const BAR = 'hover:bg-secondary hover:text-foreground';
  * Fetch, Pull, Push, Branch, Merge, Rebase, Stash (specs/05-features.md F35).
  * Every button is disabled while a write runs: one in flight per repository.
  */
-export function GitActionBar({ dir }: { dir: string }) {
+export function GitActionBar({
+	dir,
+	compact = false,
+}: {
+	dir: string;
+	/** The right panel's Git tab: the buttons wrap and the ask field is left to
+	 *  Git mode. */
+	compact?: boolean;
+}) {
 	const { run, running } = useGitOp(dir);
 	const refsQ = useQuery({ queryKey: queryKeys.gitRefs(dir), queryFn: () => cmd.gitRefs(dir) });
 	const local = refsQ.data?.local ?? [];
@@ -76,7 +84,9 @@ export function GitActionBar({ dir }: { dir: string }) {
 	return (
 		<div
 			data-testid="git-action-bar"
-			className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3"
+			className={`flex shrink-0 items-center gap-1 px-3 ${
+				compact ? 'flex-wrap py-2' : 'h-12 border-b border-border'
+			}`}
 		>
 			<Button
 				variant="ghost"
@@ -138,7 +148,7 @@ export function GitActionBar({ dir }: { dir: string }) {
 			>
 				{icon('stash', <Archive />)} Stash
 			</Button>
-			<AskAgentField dir={dir} />
+			{!compact && <AskAgentField dir={dir} />}
 			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
 			<PromptDialog
 				title="New branch from HEAD"
