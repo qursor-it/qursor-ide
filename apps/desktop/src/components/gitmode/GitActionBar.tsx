@@ -8,11 +8,23 @@ import {
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import {
+	Archive,
+	ArrowDownToLine,
+	ArrowUpFromLine,
+	CloudDownload,
+	GitBranchPlus,
+	GitMerge,
+	GitPullRequestArrow,
+} from 'lucide-react';
+import { type ReactNode, useState } from 'react';
 import { AskAgentField } from './AskAgentField';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
+
+/** The bar's buttons hover like the rows beside them, not in the accent. */
+const BAR = 'hover:bg-secondary hover:text-foreground';
 
 /**
  * Fetch, Pull, Push, Branch, Merge, Rebase, Stash (specs/05-features.md F35).
@@ -27,10 +39,11 @@ export function GitActionBar({ dir }: { dir: string }) {
 	const [naming, setNaming] = useState(false);
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 
-	const branchMenu = (label: string, pick: (name: string) => void) => (
+	const branchMenu = (label: string, icon: ReactNode, pick: (name: string) => void) => (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="outline" size="sm" disabled={running || others.length === 0}>
+				<Button variant="ghost" size="sm" className={BAR} disabled={running || others.length === 0}>
+					{icon}
 					{label}
 				</Button>
 			</DropdownMenuTrigger>
@@ -47,13 +60,25 @@ export function GitActionBar({ dir }: { dir: string }) {
 	return (
 		<div
 			data-testid="git-action-bar"
-			className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-3"
+			className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-3"
 		>
-			<Button variant="outline" size="sm" disabled={running} onClick={() => run({ kind: 'fetch' })}>
-				Fetch
+			<Button
+				variant="ghost"
+				size="sm"
+				className={BAR}
+				disabled={running}
+				onClick={() => run({ kind: 'fetch' })}
+			>
+				<CloudDownload /> Fetch
 			</Button>
-			<Button variant="outline" size="sm" disabled={running} onClick={() => run({ kind: 'pull' })}>
-				Pull
+			<Button
+				variant="ghost"
+				size="sm"
+				className={BAR}
+				disabled={running}
+				onClick={() => run({ kind: 'pull' })}
+			>
+				<ArrowDownToLine /> Pull
 			</Button>
 			<Button
 				variant="outline"
@@ -64,25 +89,38 @@ export function GitActionBar({ dir }: { dir: string }) {
 					run({ kind: 'push', setUpstream: current ? current.upstream === null : false })
 				}
 			>
-				Push
+				<ArrowUpFromLine /> Push
 				{current && current.ahead > 0 && (
-					<span data-testid="push-ahead" className="tabular-nums">
+					<span
+						data-testid="push-ahead"
+						className="rounded-full bg-primary/15 px-1.5 text-primary text-xs tabular-nums"
+					>
 						↑{current.ahead}
 					</span>
 				)}
 			</Button>
-			<Button variant="outline" size="sm" disabled={running} onClick={() => setNaming(true)}>
-				Branch
-			</Button>
-			{branchMenu('Merge…', (target) => setIntegrate({ kind: 'merge', target }))}
-			{branchMenu('Rebase…', (target) => setIntegrate({ kind: 'rebase', target }))}
+			<span className="mx-1 h-5 w-px bg-border" aria-hidden />
 			<Button
-				variant="outline"
+				variant="ghost"
+				size="sm"
+				className={BAR}
+				disabled={running}
+				onClick={() => setNaming(true)}
+			>
+				<GitBranchPlus /> Branch
+			</Button>
+			{branchMenu('Merge…', <GitMerge />, (target) => setIntegrate({ kind: 'merge', target }))}
+			{branchMenu('Rebase…', <GitPullRequestArrow />, (target) =>
+				setIntegrate({ kind: 'rebase', target }),
+			)}
+			<Button
+				variant="ghost"
+				className={BAR}
 				size="sm"
 				disabled={running}
 				onClick={() => run({ kind: 'stashPush', message: null })}
 			>
-				Stash
+				<Archive /> Stash
 			</Button>
 			<AskAgentField dir={dir} />
 			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />

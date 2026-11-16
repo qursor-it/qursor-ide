@@ -32,7 +32,17 @@ interface GitModeState {
 	/** Sessions started from Git mode, for the origin strip. Memory only. */
 	origin: Record<string, { dir: string; title: string } | undefined>;
 	setOrigin: (sessionId: string, origin: { dir: string; title: string }) => void;
+	/** Sidebar nodes flipped from their default open state (F35), by key. */
+	toggled: string[];
+	toggle: (key: string) => void;
+	/** The Repositories list's height in the Git sidebar, or null for its own. */
+	reposHeight: number | null;
+	setReposHeight: (height: number | null) => void;
 }
+
+/** Whether a sidebar node is open: its default, unless the user flipped it. */
+export const isOpen = (toggled: readonly string[], key: string, byDefault = true) =>
+	toggled.includes(key) !== byDefault;
 
 /**
  * The window's mode and its Git tabs (specs/05-features.md F35).
@@ -84,12 +94,27 @@ export const useGitModeStore = create<GitModeState>()(
 			origin: {},
 			setOrigin: (sessionId, origin) =>
 				set((s) => ({ origin: { ...s.origin, [sessionId]: origin } })),
+			toggled: [],
+			toggle: (key) =>
+				set((s) => ({
+					toggled: s.toggled.includes(key)
+						? s.toggled.filter((k) => k !== key)
+						: [...s.toggled, key],
+				})),
+			reposHeight: null,
+			setReposHeight: (reposHeight) => set({ reposHeight }),
 		}),
 		{
 			name: 'factorai.gitmode',
 			version: 1,
 			storage: createJSONStorage(() => localStorage),
-			partialize: (s) => ({ mode: s.mode, tabs: s.tabs, activeDir: s.activeDir }),
+			partialize: (s) => ({
+				mode: s.mode,
+				tabs: s.tabs,
+				activeDir: s.activeDir,
+				toggled: s.toggled,
+				reposHeight: s.reposHeight,
+			}),
 		},
 	),
 );

@@ -1,5 +1,7 @@
 import { GitTabs } from '@components/layout/GitTabs';
+import { PanelResizer } from '@components/layout/PanelResizer';
 import {
+	Button,
 	ContextMenu,
 	ContextMenuContent,
 	ContextMenuItem,
@@ -7,12 +9,26 @@ import {
 	ContextMenuTrigger,
 } from '@factorai/ui';
 import { useWorktrees } from '@hooks/useWorktrees';
+import { type BranchNode, branchTree } from '@lib/branchTree';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
-import { useGitModeStore } from '@store/gitModeStore';
+import { isOpen, useGitModeStore } from '@store/gitModeStore';
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import {
+	Archive,
+	Check,
+	ChevronRight,
+	FilePen,
+	Folder,
+	FolderGit2,
+	FolderOpen,
+	GitBranch,
+	GitCommitVertical,
+	Globe,
+	Tag,
+} from 'lucide-react';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
@@ -44,195 +60,303 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 	const [renaming, setRenaming] = useState<string | null>(null);
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 
-	const row = (label: ReactNode, selected: boolean, onClick: () => void, testid: string) => (
-		<button
-			type="button"
+	const toggled = useGitModeStore((s) => s.toggled);
+	const toggle = useGitModeStore((s) => s.toggle);
+	const reposHeight = useGitModeStore((s) => s.reposHeight);
+	const setReposHeight = useGitModeStore((s) => s.setReposHeight);
+	const reposRef = useRef<HTMLDivElement>(null);
+	const open = (key: string, byDefault = true) => isOpen(toggled, key, byDefault);
+
+	const nav = (
+		label: ReactNode,
+		icon: ReactNode,
+		selected: boolean,
+		onClick: () => void,
+		testid: string,
+	) => (
+		<Button
+			variant="ghost"
 			data-testid={testid}
 			aria-current={selected}
-			className={`flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm ${
-				selected
-					? 'bg-background text-foreground shadow-sm'
-					: 'text-secondary-foreground hover:bg-secondary/60'
-			}`}
+			className={`${ROW} ${selected ? 'bg-background text-foreground shadow-sm' : 'text-secondary-foreground'}`}
 			onClick={onClick}
 		>
+			{icon}
 			{label}
-		</button>
+		</Button>
+	);
+
+	const branchNodes = (nodes: BranchNode[], depth: number, scope: string): ReactNode =>
+		nodes.map((node) =>
+			node.kind === 'folder' ? (
+				<div key={node.path}>
+					<TreeToggle
+						depth={depth}
+						open={open(`${scope}/${node.path}`)}
+						onToggle={() => toggle(`${scope}/${node.path}`)}
+						icon={open(`${scope}/${node.path}`) ? <FolderOpen /> : <Folder />}
+					>
+						{node.name}
+					</TreeToggle>
+					{open(`${scope}/${node.path}`) && branchNodes(node.children, depth + 1, scope)}
+				</div>
+			) : scope === 'local' ? (
+				localBranch(node.full, node.name, depth)
+			) : (
+				<div
+					key={node.full}
+					title={node.full}
+					style={{ paddingLeft: indent(depth) }}
+					className="flex h-7 items-center gap-1.5 truncate pr-2 text-muted-foreground text-sm [&_svg]:size-3.5 [&_svg]:shrink-0"
+				>
+					<GitBranch />
+					<span className="truncate">{node.name}</span>
+				</div>
+			),
+		);
+
+	const localBranch = (name: string, label: string, depth: number) => {
+		const b = refs?.local.find((x) => x.name === name);
+		if (!b) return null;
+		return (
+			<ContextMenu key={name}>
+				<ContextMenuTrigger asChild>
+					<Button
+						variant="ghost"
+						data-testid="git-branch"
+						data-branch={b.name}
+						title={b.upstream ? `${b.name} · tracks ${b.upstream}` : b.name}
+						style={{ paddingLeft: indent(depth) }}
+						className={`${ROW} text-secondary-foreground`}
+						onDoubleClick={() => run({ kind: 'checkout', branch: b.name })}
+					>
+						{b.current ? <Check className="text-foreground" /> : <GitBranch />}
+						<span
+							className={`min-w-0 flex-1 truncate text-left ${b.current ? 'font-semibold text-foreground' : ''}`}
+						>
+							{label}
+						</span>
+						{(b.ahead > 0 || b.behind > 0) && (
+							<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+								{b.ahead > 0 && `↑${b.ahead}`}
+								{b.behind > 0 && ` ↓${b.behind}`}
+							</span>
+						)}
+					</Button>
+				</ContextMenuTrigger>
+				<ContextMenuContent>
+					<ContextMenuItem onSelect={() => run({ kind: 'checkout', branch: b.name })}>
+						Checkout
+					</ContextMenuItem>
+					<ContextMenuItem
+						disabled={b.current}
+						onSelect={() => setIntegrate({ kind: 'merge', target: b.name })}
+					>
+						Merge into current
+					</ContextMenuItem>
+					<ContextMenuItem
+						disabled={b.current}
+						onSelect={() => setIntegrate({ kind: 'rebase', target: b.name })}
+					>
+						Rebase current onto it
+					</ContextMenuItem>
+					{quick.enabled && !b.current && refs?.head && (
+						<ContextMenuItem
+							disabled={quick.busy}
+							onSelect={() =>
+								void quick.show(`Summarise ${b.name}`, {
+									kind: 'summariseBranch',
+									branch: b.name,
+									against: refs.head ?? 'HEAD',
+								})
+							}
+						>
+							✦ Summarise this branch against {refs.head}
+						</ContextMenuItem>
+					)}
+					<ContextMenuSeparator />
+					<ContextMenuItem onSelect={() => setRenaming(b.name)}>Rename…</ContextMenuItem>
+					<ContextMenuItem
+						disabled={b.current}
+						onSelect={() =>
+							run(
+								{ kind: 'deleteBranch', name: b.name },
+								{ confirm: `Delete branch ${b.name}? Commits only on it become unreachable.` },
+							)
+						}
+					>
+						Delete…
+					</ContextMenuItem>
+				</ContextMenuContent>
+			</ContextMenu>
+		);
+	};
+
+	const group = (key: string, title: string, children: ReactNode) => (
+		<section data-testid={`git-section-${key}`}>
+			<TreeToggle
+				depth={0}
+				heading
+				open={open(`section/${key}`)}
+				onToggle={() => toggle(`section/${key}`)}
+			>
+				{title}
+			</TreeToggle>
+			{open(`section/${key}`) && children}
+		</section>
 	);
 
 	return (
 		<nav
 			data-testid="git-sidebar"
 			aria-label="Repository"
-			className="flex w-60 shrink-0 flex-col gap-0.5 overflow-y-auto px-1.5 py-1"
+			className="flex w-60 shrink-0 flex-col px-1.5 py-1"
 		>
-			<GitTabs />
-			<div className="my-1.5 h-px shrink-0 bg-border" />
-			{row(
-				<>
-					Local changes
-					<span className="ml-auto tabular-nums text-muted-foreground">{changes}</span>
-				</>,
-				section === 'changes',
-				() => onSection('changes'),
-				'git-local-changes',
-			)}
-			{row('All commits', section === 'history', () => onSection('history'), 'git-all-commits')}
+			<div
+				ref={reposRef}
+				style={reposHeight === null ? undefined : { height: reposHeight }}
+				className="max-h-[70%] shrink-0 overflow-y-auto"
+			>
+				<GitTabs />
+			</div>
+			<div className="py-1.5">
+				<PanelResizer
+					size={reposHeight ?? reposRef.current?.offsetHeight ?? 120}
+					onSize={setReposHeight}
+					edge="bottom"
+					label="Resize repositories"
+					clamp={(h) => Math.max(40, Math.min(h, 600))}
+					onReset={() => setReposHeight(null)}
+				/>
+			</div>
+			<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+				{nav(
+					<>
+						Local changes
+						<span className="ml-auto tabular-nums text-muted-foreground">{changes}</span>
+					</>,
+					<FilePen />,
+					section === 'changes',
+					() => onSection('changes'),
+					'git-local-changes',
+				)}
+				{nav(
+					'All commits',
+					<GitCommitVertical />,
+					section === 'history',
+					() => onSection('history'),
+					'git-all-commits',
+				)}
 
-			<Heading>Branches</Heading>
-			{refs?.local.map((b) => (
-				<ContextMenu key={b.name}>
-					<ContextMenuTrigger asChild>
-						<button
-							type="button"
-							data-testid="git-branch"
-							data-branch={b.name}
-							title={b.upstream ? `${b.name} · tracks ${b.upstream}` : b.name}
-							className="flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-secondary-foreground hover:bg-secondary/50"
-							onDoubleClick={() => run({ kind: 'checkout', branch: b.name })}
-						>
-							<span
-								className={`min-w-0 flex-1 truncate ${b.current ? 'font-medium text-foreground' : ''}`}
-							>
-								{b.current ? '● ' : ''}
-								{b.name}
-							</span>
-							{(b.ahead > 0 || b.behind > 0) && (
-								<span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-									{b.ahead > 0 && `↑${b.ahead}`}
-									{b.behind > 0 && ` ↓${b.behind}`}
-								</span>
-							)}
-						</button>
-					</ContextMenuTrigger>
-					<ContextMenuContent>
-						<ContextMenuItem onSelect={() => run({ kind: 'checkout', branch: b.name })}>
-							Checkout
-						</ContextMenuItem>
-						<ContextMenuItem
-							disabled={b.current}
-							onSelect={() => setIntegrate({ kind: 'merge', target: b.name })}
-						>
-							Merge into current
-						</ContextMenuItem>
-						<ContextMenuItem
-							disabled={b.current}
-							onSelect={() => setIntegrate({ kind: 'rebase', target: b.name })}
-						>
-							Rebase current onto it
-						</ContextMenuItem>
-						{quick.enabled && !b.current && refs.head && (
-							<ContextMenuItem
-								disabled={quick.busy}
-								onSelect={() =>
-									void quick.show(`Summarise ${b.name}`, {
-										kind: 'summariseBranch',
-										branch: b.name,
-										against: refs.head ?? 'HEAD',
-									})
-								}
-							>
-								✦ Summarise this branch against {refs.head}
-							</ContextMenuItem>
-						)}
-						<ContextMenuSeparator />
-						<ContextMenuItem onSelect={() => setRenaming(b.name)}>Rename…</ContextMenuItem>
-						<ContextMenuItem
-							disabled={b.current}
-							onSelect={() =>
-								run(
-									{ kind: 'deleteBranch', name: b.name },
-									{ confirm: `Delete branch ${b.name}? Commits only on it become unreachable.` },
-								)
-							}
-						>
-							Delete…
-						</ContextMenuItem>
-					</ContextMenuContent>
-				</ContextMenu>
-			))}
+				{refs &&
+					group(
+						'branches',
+						'Branches',
+						branchNodes(branchTree(refs.local.map((b) => b.name)), 1, 'local'),
+					)}
 
-			{refs?.remotes.map((r) => (
-				<div key={r.remote}>
-					<Heading>{r.remote}</Heading>
-					{r.branches.map((name) => (
-						<div
-							key={name}
-							className="truncate rounded-md px-2.5 py-1.5 text-sm text-muted-foreground"
-						>
-							{name}
-						</div>
-					))}
-				</div>
-			))}
-
-			{refs && refs.tags.length > 0 && (
-				<>
-					<Heading>Tags</Heading>
-					{refs.tags.map((t) => (
-						<div
-							key={t}
-							className="truncate rounded-md px-2.5 py-1.5 text-sm text-muted-foreground"
-						>
-							{t}
-						</div>
-					))}
-				</>
-			)}
-
-			{refs && refs.stashes.length > 0 && (
-				<>
-					<Heading>Stashes</Heading>
-					{refs.stashes.map((s) => (
-						<ContextMenu key={s.index}>
-							<ContextMenuTrigger asChild>
-								<div
-									data-testid="git-stash"
-									className="truncate rounded-md px-2.5 py-1.5 text-sm text-secondary-foreground hover:bg-secondary/50"
+				{refs &&
+					refs.remotes.length > 0 &&
+					group(
+						'remotes',
+						'Remotes',
+						refs.remotes.map((r) => (
+							<div key={r.remote}>
+								<TreeToggle
+									depth={1}
+									open={open(`remote/${r.remote}`, false)}
+									onToggle={() => toggle(`remote/${r.remote}`)}
+									icon={<Globe />}
 								>
-									{s.message}
-								</div>
-							</ContextMenuTrigger>
-							<ContextMenuContent>
-								<ContextMenuItem onSelect={() => run({ kind: 'stashApply', index: s.index })}>
-									Apply
-								</ContextMenuItem>
-								<ContextMenuItem onSelect={() => run({ kind: 'stashPop', index: s.index })}>
-									Pop
-								</ContextMenuItem>
-								<ContextMenuItem
-									onSelect={() =>
-										run(
-											{ kind: 'stashDrop', index: s.index },
-											{ confirm: `Drop stash "${s.message}"? It cannot be recovered.` },
-										)
-									}
-								>
-									Drop…
-								</ContextMenuItem>
-							</ContextMenuContent>
-						</ContextMenu>
-					))}
-				</>
-			)}
+									{r.remote}
+								</TreeToggle>
+								{open(`remote/${r.remote}`, false) &&
+									branchNodes(
+										branchTree(r.branches.map((n) => n.replace(`${r.remote}/`, ''))),
+										2,
+										`remote:${r.remote}`,
+									)}
+							</div>
+						)),
+					)}
 
-			{worktrees.length > 1 && (
-				<>
-					<Heading>Worktrees</Heading>
-					{worktrees.map((w) => (
-						<button
-							key={w.path}
-							type="button"
-							data-testid="git-worktree"
-							title={w.path}
-							className="truncate rounded-md px-2.5 py-1.5 text-left text-sm text-secondary-foreground hover:bg-secondary/50"
-							onClick={() => openTab(projectId, w.path)}
-						>
-							{w.name ?? w.branch ?? w.path}
-						</button>
-					))}
-				</>
-			)}
+				{refs &&
+					refs.tags.length > 0 &&
+					group(
+						'tags',
+						'Tags',
+						refs.tags.map((t) => (
+							<div
+								key={t}
+								style={{ paddingLeft: indent(1) }}
+								className="flex h-7 items-center gap-1.5 truncate pr-2 text-muted-foreground text-sm [&_svg]:size-3.5 [&_svg]:shrink-0"
+							>
+								<Tag />
+								<span className="truncate">{t}</span>
+							</div>
+						)),
+					)}
+
+				{refs &&
+					refs.stashes.length > 0 &&
+					group(
+						'stashes',
+						'Stashes',
+						refs.stashes.map((s) => (
+							<ContextMenu key={s.index}>
+								<ContextMenuTrigger asChild>
+									<div
+										data-testid="git-stash"
+										title={s.message}
+										style={{ paddingLeft: indent(1) }}
+										className="flex h-7 items-center gap-1.5 rounded-md pr-2 text-secondary-foreground text-sm hover:bg-secondary/50 [&_svg]:size-3.5 [&_svg]:shrink-0"
+									>
+										<Archive />
+										<span className="truncate">{s.message}</span>
+									</div>
+								</ContextMenuTrigger>
+								<ContextMenuContent>
+									<ContextMenuItem onSelect={() => run({ kind: 'stashApply', index: s.index })}>
+										Apply
+									</ContextMenuItem>
+									<ContextMenuItem onSelect={() => run({ kind: 'stashPop', index: s.index })}>
+										Pop
+									</ContextMenuItem>
+									<ContextMenuItem
+										onSelect={() =>
+											run(
+												{ kind: 'stashDrop', index: s.index },
+												{ confirm: `Drop stash "${s.message}"? It cannot be recovered.` },
+											)
+										}
+									>
+										Drop…
+									</ContextMenuItem>
+								</ContextMenuContent>
+							</ContextMenu>
+						)),
+					)}
+
+				{worktrees.length > 1 &&
+					group(
+						'worktrees',
+						'Worktrees',
+						worktrees.map((w) => (
+							<Button
+								key={w.path}
+								variant="ghost"
+								data-testid="git-worktree"
+								title={w.path}
+								style={{ paddingLeft: indent(1) }}
+								className={`${ROW} text-secondary-foreground`}
+								onClick={() => openTab(projectId, w.path)}
+							>
+								<FolderGit2 />
+								<span className="truncate">{w.name ?? w.branch ?? w.path}</span>
+							</Button>
+						)),
+					)}
+			</div>
 
 			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
 			<PromptDialog
@@ -250,10 +374,37 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 	);
 }
 
-function Heading({ children }: { children: ReactNode }) {
+const ROW =
+	'h-7 w-full justify-start gap-1.5 px-2 font-normal text-sm hover:bg-secondary/60 hover:text-foreground';
+const indent = (depth: number) => `${0.5 + depth * 0.875}rem`;
+
+/** A collapsible row: a section heading, a branch folder or a remote (F35). */
+function TreeToggle({
+	depth,
+	open,
+	onToggle,
+	icon,
+	heading = false,
+	children,
+}: {
+	depth: number;
+	open: boolean;
+	onToggle: () => void;
+	icon?: ReactNode;
+	heading?: boolean;
+	children: ReactNode;
+}) {
 	return (
-		<div className="px-2.5 pt-3 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-			{children}
-		</div>
+		<Button
+			variant="ghost"
+			aria-expanded={open}
+			onClick={onToggle}
+			style={{ paddingLeft: indent(depth) }}
+			className={`${ROW} ${heading ? 'mt-2 font-semibold text-foreground' : 'text-secondary-foreground'}`}
+		>
+			<ChevronRight className={`-ml-1 transition-transform ${open ? 'rotate-90' : ''}`} />
+			{icon}
+			<span className="truncate">{children}</span>
+		</Button>
 	);
 }

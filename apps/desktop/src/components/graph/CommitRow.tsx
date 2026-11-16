@@ -140,6 +140,8 @@ interface CommitRowProps {
 	/** With `columns`: the title of the session running in the checkout when
 	 *  this commit was made (F41), or null. */
 	session?: string | null;
+	/** Row height; defaults to the panel list's. */
+	rowHeight?: number;
 }
 
 /**
@@ -163,6 +165,7 @@ export const CommitRow = memo(function CommitRow({
 	onSelect,
 	columns = false,
 	session = null,
+	rowHeight = ROW_HEIGHT,
 }: CommitRowProps) {
 	const chips = foldRefs(commit.refs);
 	const { shown, hiddenCount } = fitRefs(chips, textWidth);
@@ -190,7 +193,7 @@ export const CommitRow = memo(function CommitRow({
 						tabIndex={tabbable ? 0 : -1}
 						data-testid="commit-row"
 						data-sha={commit.sha}
-						style={{ height: ROW_HEIGHT, paddingLeft: ROW_PAD_LEFT }}
+						style={{ height: rowHeight, paddingLeft: ROW_PAD_LEFT }}
 						className={`group flex w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors ${
 							selected ? 'bg-secondary' : 'hover:bg-secondary/50'
 						}`}
@@ -201,6 +204,7 @@ export const CommitRow = memo(function CommitRow({
 							edges={commit.edges}
 							pitch={pitch}
 							width={railWidth}
+							height={rowHeight}
 							node={
 								dirty
 									? { kind: 'dirty' }
@@ -245,13 +249,10 @@ export const CommitRow = memo(function CommitRow({
 								>
 									{session ? `✦ ${session}` : ''}
 								</span>
-								<span className="w-32 shrink-0 truncate text-right text-muted-foreground text-xs">
-									{commit.authorName}
-								</span>
-								<span className="w-24 shrink-0 truncate text-right text-muted-foreground text-xs">
+								<span className="w-16 shrink-0 truncate text-muted-foreground text-xs">
 									{formatRelative(commit.authorTime)}
 								</span>
-								<span className="w-16 shrink-0 text-right font-mono text-muted-foreground text-xs">
+								<span className="w-16 shrink-0 font-mono text-muted-foreground text-xs">
 									{commit.shortSha}
 								</span>
 							</>

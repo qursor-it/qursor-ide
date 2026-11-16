@@ -20,7 +20,7 @@ import { sessionDuring } from '@lib/sessionDuring';
 import { isLooseRepo } from '@store/gitModeStore';
 import { cmd, copyText } from '@lib/tauri';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
@@ -29,6 +29,8 @@ import { useQuickAgent } from './useQuickAgent';
 /** The width the rail and ref chips are laid out for; the table is wider than
  *  the panel the graph was designed in, but its rows are still one line. */
 const LAYOUT_WIDTH = 600;
+/** The table's rows are taller than the panel list's, as in the mock-up. */
+const TABLE_ROW_HEIGHT = 36;
 
 const RESET_MODES = [
 	{
@@ -86,6 +88,7 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 	const onSelect = useCallback((sha: string) => select(sha), []);
 
 	const short = menuSha?.slice(0, 8) ?? '';
+	const selectedMerge = (commits.find((c) => c.sha === selected)?.parents.length ?? 0) > 1;
 	// A merge commit is picked or reverted against its first parent.
 	const mergeCommit = (commits.find((c) => c.sha === menuSha)?.parents.length ?? 0) > 1;
 
@@ -94,14 +97,29 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 	if (commits.length === 0) return <PanelEmpty>No commits yet.</PanelEmpty>;
 
 	const pitch = lanePitch(laneCount, LAYOUT_WIDTH);
-	const rail = railWidth(laneCount, pitch);
+	// At least as wide as its column head.
+	const rail = Math.max(48, railWidth(laneCount, pitch));
 	const textWidth = Math.max(0, LAYOUT_WIDTH - rail - ROW_PAD_LEFT - 24);
 
 	return (
 		// The commit list, and the selected commit's detail in a column on its
 		// right rather than docked under it (F35, ADR-0095).
 		<div data-testid="git-history" className="flex min-h-0 min-w-0 flex-1">
-			<div className="min-h-0 min-w-0 flex-1 overflow-auto py-1">
+			<div className="min-h-0 min-w-0 flex-1 overflow-auto pb-1">
+				{/* The table's column heads, as in the mock-up (F35, ADR-0095). */}
+				<div
+					aria-hidden
+					style={{ paddingLeft: ROW_PAD_LEFT }}
+					className="sticky top-0 z-10 flex h-9 items-center gap-1.5 border-border border-b bg-secondary/60 pr-2 font-medium text-muted-foreground text-xs uppercase tracking-wider backdrop-blur"
+				>
+					<span className="shrink-0" style={{ width: rail }}>
+						Graph
+					</span>
+					<span className="min-w-0 flex-1">Subject</span>
+					<span className="w-40 shrink-0">Session</span>
+					<span className="w-16 shrink-0">Date</span>
+					<span className="w-16 shrink-0">SHA</span>
+				</div>
 				<ContextMenu>
 					<ContextMenuTrigger asChild>
 						<ul
@@ -128,6 +146,7 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 									onSelect={onSelect}
 									columns
 									session={sessionOf.get(commit.sha) ?? null}
+									rowHeight={TABLE_ROW_HEIGHT}
 								/>
 							))}
 						</ul>
@@ -302,58 +321,121 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 			{selected && (
 				<aside
 					data-testid="commit-detail"
-					className="flex w-[24rem] shrink-0 flex-col overflow-hidden border-border border-l"
+					className="flex w-[24rem] shrink-0 flex-col overflow-y-auto border-border border-l"
 				>
+					<div className="flex min-h-64 flex-col">
+						<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} roomy />
+					</div>
 					<CommitSession projectId={projectId} dir={dir} sha={selected} />
-					{/* The context menu's ✦ questions about this commit, as buttons in its
-					    detail (F35, ADR-0095). */}
+					{/* The context menu's ✦ questions and its actions, laid out in the
+					    detail as the mock-up has them (F35, ADR-0095). */}
 					{quick.enabled && (
-						<div
-							data-testid="commit-ask"
-							className="flex flex-wrap gap-1.5 border-border border-b px-3 py-2"
-						>
-							{(
-								[
-									['Explain this commit', { kind: 'explainCommit', sha: selected }],
-									['Find bugs introduced here', { kind: 'findBugs', sha: selected }],
-									['Write a release note', { kind: 'releaseNote', sha: selected }],
-								] as const
-							).map(([label, task]) => (
+						<DetailSection title="Ask about this commit">
+							<div data-testid="commit-ask" className="flex flex-col gap-1.5">
+								{(
+									[
+										['Explain this commit', { kind: 'explainCommit', sha: selected }],
+										['Find bugs introduced here', { kind: 'findBugs', sha: selected }],
+										['Write a release note', { kind: 'releaseNote', sha: selected }],
+									] as const
+								).map(([label, task]) => (
+									<Button
+										key={label}
+										variant="outline"
+										disabled={quick.busy}
+										onClick={() => void quick.show(label, task)}
+										className="justify-start gap-2 font-normal"
+									>
+										<span className="text-primary">✦</span> {label}
+									</Button>
+								))}
 								<Button
-									key={label}
-									size="sm"
 									variant="outline"
 									disabled={quick.busy}
-									onClick={() => void quick.show(label, task)}
-									className="h-7 gap-1 text-xs"
+									onClick={() =>
+										void quick.show(
+											'Undo this commit safely',
+											{ kind: 'undoCommit', sha: selected },
+											{
+												request: `Undo commit ${selected} safely, without rewriting shared history.`,
+											},
+										)
+									}
+									className="justify-start gap-2 font-normal"
 								>
-									<span className="text-primary">✦</span> {label}
+									<span className="text-primary">✦</span> Undo this commit safely
 								</Button>
-							))}
+							</div>
+						</DetailSection>
+					)}
+					<DetailSection title="Actions">
+						<div data-testid="commit-actions" className="flex flex-wrap gap-1.5">
 							<Button
 								size="sm"
-								variant="outline"
-								disabled={quick.busy}
+								variant="secondary"
+								disabled={running}
 								onClick={() =>
-									void quick.show(
-										'Undo this commit safely',
-										{ kind: 'undoCommit', sha: selected },
+									void run({ kind: 'cherryPick', sha: selected, mergeCommit: selectedMerge })
+								}
+							>
+								Cherry-pick
+							</Button>
+							<Button
+								size="sm"
+								variant="secondary"
+								disabled={running}
+								onClick={() =>
+									void run({ kind: 'revert', sha: selected, mergeCommit: selectedMerge })
+								}
+							>
+								Revert
+							</Button>
+							<Button
+								size="sm"
+								variant="secondary"
+								disabled={running}
+								onClick={() => setNaming({ kind: 'branch', sha: selected })}
+							>
+								New branch here
+							</Button>
+							<Button
+								size="sm"
+								variant="secondary"
+								disabled={running}
+								onClick={() => setNaming({ kind: 'tag', sha: selected })}
+							>
+								Tag
+							</Button>
+							<Button
+								size="sm"
+								variant="secondary"
+								disabled={running}
+								onClick={() =>
+									void run(
+										{ kind: 'checkoutCommit', sha: selected },
 										{
-											request: `Undo commit ${selected} safely, without rewriting shared history.`,
+											confirm: `Check out ${selected.slice(0, 8)}? HEAD will be detached: new commits will not be on any branch.`,
 										},
 									)
 								}
-								className="h-7 gap-1 text-xs"
 							>
-								<span className="text-primary">✦</span> Undo this commit safely
+								Checkout
 							</Button>
 						</div>
-					)}
-					<div className="min-h-0 flex-1">
-						<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} />
-					</div>
+					</DetailSection>
 				</aside>
 			)}
 		</div>
+	);
+}
+
+function DetailSection({ title, children }: { title: string; children: ReactNode }) {
+	return (
+		<section className="border-border border-t px-4 py-3">
+			<h3 className="mb-2 font-medium text-muted-foreground text-xs uppercase tracking-wider">
+				{title}
+			</h3>
+			{children}
+		</section>
 	);
 }

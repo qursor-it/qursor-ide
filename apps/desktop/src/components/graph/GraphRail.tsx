@@ -37,6 +37,8 @@ interface GraphRailProps {
 	pitch: number;
 	width: number;
 	node: RailNode;
+	/** The row's height; Git mode's table is airier than the panel's list. */
+	height?: number;
 }
 
 /**
@@ -50,9 +52,16 @@ interface GraphRailProps {
  * Lane assignment is not here — it arrives in the payload from Rust (Q23). This
  * turns lane indices into pixels and nothing else.
  */
-export function GraphRail({ lane, edges, pitch, width, node }: GraphRailProps) {
+export function GraphRail({
+	lane,
+	edges,
+	pitch,
+	width,
+	node,
+	height = ROW_HEIGHT,
+}: GraphRailProps) {
 	const centre = (index: number) => laneCentre(index, pitch);
-	const mid = ROW_HEIGHT / 2;
+	const mid = height / 2;
 	const cx = centre(lane);
 	const colour = laneColour(lane);
 	const showAvatar = node.kind === 'commit' && pitch >= AVATAR_MIN_PITCH;
@@ -60,8 +69,8 @@ export function GraphRail({ lane, edges, pitch, width, node }: GraphRailProps) {
 	return (
 		<svg
 			width={width}
-			height={ROW_HEIGHT}
-			viewBox={`0 0 ${width} ${ROW_HEIGHT}`}
+			height={height}
+			viewBox={`0 0 ${width} ${height}`}
 			data-testid="graph-rail"
 			className="shrink-0"
 			// The rail is decoration for the refs and subject beside it, which carry
@@ -75,7 +84,7 @@ export function GraphRail({ lane, edges, pitch, width, node }: GraphRailProps) {
 					// row's lanes every poll, so the index *is* the identity.
 					// oxlint-disable-next-line react/no-array-index-key -- see above
 					key={`${edge.kind}:${edge.fromLane}:${edge.toLane}:${index}`}
-					d={pathFor(edge, centre, mid)}
+					d={pathFor(edge, centre, mid, height)}
 					fill="none"
 					stroke={laneColour(edge.lane)}
 					strokeWidth={STROKE}
@@ -138,17 +147,22 @@ export function GraphRail({ lane, edges, pitch, width, node }: GraphRailProps) {
 	);
 }
 
-function pathFor(edge: GitGraphEdge, centre: (index: number) => number, mid: number): string {
+function pathFor(
+	edge: GitGraphEdge,
+	centre: (index: number) => number,
+	mid: number,
+	height: number,
+): string {
 	const from = centre(edge.fromLane);
 	const to = centre(edge.toLane);
 
 	if (edge.kind === 'through') {
-		return `M ${from} 0 L ${from} ${ROW_HEIGHT}`;
+		return `M ${from} 0 L ${from} ${height}`;
 	}
 	// An incoming edge arrives from the row above and stops at the node; an
 	// outgoing one starts there and leaves through the bottom. Splitting them this
 	// way is why a tip has no stub above it and a root none below.
-	const [startY, endY] = edge.kind === 'incoming' ? [0, mid] : [mid, ROW_HEIGHT];
+	const [startY, endY] = edge.kind === 'incoming' ? [0, mid] : [mid, height];
 	if (from === to) return `M ${from} ${startY} L ${to} ${endY}`;
 
 	// Control points on the vertical through each endpoint, so the curve leaves

@@ -42,7 +42,7 @@ export function CommitSession({
 	return (
 		<div
 			data-testid="commit-session"
-			className="flex shrink-0 items-center gap-2 border-border border-b bg-primary/10 px-3 py-1.5 text-xs"
+			className="mx-4 mb-3 flex shrink-0 items-center gap-2 rounded-xl bg-primary/10 px-3 py-2 text-sm"
 		>
 			<Sparkles className="size-3.5 shrink-0 text-primary" aria-hidden />
 			<span className="min-w-0 truncate">

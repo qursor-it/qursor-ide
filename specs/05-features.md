@@ -8428,11 +8428,34 @@ the selected file (the existing Monaco diff, side by side or inline). Reuses
 `GraphRail`, `CommitDetail` and the diff viewer; only the hosting is new, which
 is the "phase 2" F18 already deferred.
 
-**Local changes.** Two lists, `Unstaged` and `Staged`, each with stage-all /
-unstage-all. The diff of the selected file with a per-hunk `Stage hunk` /
-`Unstage hunk`. Discard (a file or a hunk) asks for confirmation every time. A
-commit box under the lists: subject, optional body, `Amend`, `✦ Write message`,
-and a `Commit on <branch>` button.
+**Local changes.** Two lists, `Staged` then `Unstaged`, each row a file's icon,
+its folder dimmed and its name, and `+N −M`. A click picks a row and shows its
+diff; Ctrl/Cmd+click adds or removes a row, Shift+click takes the range from
+the last plain click, within one list. The list's heading acts on the rows
+picked in it, or on every row when none is: `Stage n` / `Stage all`,
+`Unstage n` / `Unstage all`, and on `Unstaged` `Discard n` / `Discard all`.
+Rows carry no buttons of their own (ADR-0098). A double-click stages an
+unstaged row and unstages a staged one. The diff of the selected file with a
+per-hunk `Stage hunk` / `Unstage hunk`, re-read every 5s like the list, and
+the patch of a new file in a new directory is the file's own. Discard (files or
+a hunk) asks for confirmation every time. A commit box under the lists: subject,
+optional body, `Amend`, `✦ Write message`, and a `Commit on <branch>` button.
+
+**The sidebar since ADR-0098.** The *Repositories* list and the rest are split
+by a handle that resizes the list (double-click restores its own height; the
+height is kept). `Branches`, `Remotes`, `Tags`, `Stashes` and `Worktrees` are
+headings that collapse, and branches with a `/` sit in folders by prefix that
+collapse too (`design/…` under *design*). The current branch is bold with a
+check; the others carry a branch glyph. Each remote is a node, closed until
+opened, holding its branches the same way. What is collapsed is kept.
+
+**The table and the detail since ADR-0098.** 36px rows under column heads
+(Graph, Subject, Session, Date, SHA); the author is in the detail, not a
+column. The detail column reads top to bottom: the subject at 16px, sha, author
+and parents, the files; the session it was made in as a card; *Ask about this
+commit* (the ✦ questions as full-width buttons); *Actions* (Cherry-pick, Revert,
+New branch here, Tag, Checkout, the last confirmed). The action bar's buttons
+carry glyphs, Push outlined with its ahead count, a rule after it.
 
 ### v1 operations
 
@@ -8602,8 +8625,9 @@ tabs, in tab order, then live sessions with no tab (a routine's, F22, whose dot
 takes the "no tab" modifier). Tabs and live sessions of a project that no longer
 exists are dropped, as the strip drops them (F16).
 
-**A row** is the session's status dot and title, and under it the project's
-tile at 14px and its name. The row of the session you are looking at is raised
+**A row** is the session's status dot, the project's tile at 16px and its name
+in medium weight, and under it the session's title in 12px metadata: the
+project leads, since it is how a row is found among many (ADR-0098). The row of the session you are looking at is raised
 (`aria-current="page"`). A click opens the session; one that stopped is
 restarted first, exactly as a click on a stopped tab is (F16).
 
