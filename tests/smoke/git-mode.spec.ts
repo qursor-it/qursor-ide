@@ -160,7 +160,12 @@ test.describe('git-mode', () => {
 		await row(SHA_TIP).hover();
 		await page.waitForTimeout(800);
 		await expect(page.locator('[data-radix-popper-content-wrapper]')).toHaveCount(0);
-		await expect(row(SHA_MAIN).locator('.font-semibold')).toHaveCount(1);
+		await expect(row(SHA_MAIN).getByTestId('commit-subject')).toHaveClass(/font-semibold/);
+		await expect(row(SHA_BASE).getByTestId('commit-subject')).not.toHaveClass(/font-semibold/);
+		// The conventional-commit prefix is bold on every row.
+		await expect(row(SHA_BASE).getByTestId('commit-subject').locator('.font-semibold')).toHaveText(
+			'chore:',
+		);
 		await expect(row(SHA_TIP)).toHaveClass(/opacity-75/);
 		await expect(row(SHA_SIDE)).toHaveClass(/opacity-75/);
 		await expect(row(SHA_BASE)).not.toHaveClass(/opacity-75/);

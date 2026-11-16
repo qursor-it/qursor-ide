@@ -27,8 +27,6 @@ interface CommitDetailProps {
 	sha: string;
 	/** Select another commit in the graph — what a parent chip does. */
 	onSelectSha: (sha: string) => void;
-	/** Git mode's column: a larger title and more room (F35). */
-	roomy?: boolean;
 }
 
 /**
@@ -38,7 +36,7 @@ interface CommitDetailProps {
  * because a body and a file list want room and a card big enough for them would
  * cover the graph you are reading.
  */
-export function CommitDetail({ projectPath, sha, onSelectSha, roomy = false }: CommitDetailProps) {
+export function CommitDetail({ projectPath, sha, onSelectSha }: CommitDetailProps) {
 	const { open } = useFileViewer();
 	// **Changes first**, because it is what the pane is for and what the feedback
 	// was about — the hover card already carries the subject, refs, author and
@@ -72,15 +70,12 @@ export function CommitDetail({ projectPath, sha, onSelectSha, roomy = false }: C
 			    is the question you least want to trade the file list for. It also
 			    means the parent chips — how you walk history — stay one click away
 			    whichever tab is open. */}
-			<div className={`shrink-0 ${roomy ? 'px-4 pt-4 pb-3' : 'px-3 pt-2 pb-1.5'}`}>
+			<div className="shrink-0 px-3 pt-2 pb-1.5">
 				<div className="flex items-start gap-1">
 					{/* Clamped to two lines: a long subject would otherwise push the tab
 					    strip down and take back the room this whole change is about. The
 					    full text is on the hover card, and on `title` here. */}
-					<p
-						className={`line-clamp-2 min-w-0 flex-1 ${roomy ? 'font-semibold text-base' : 'font-medium text-sm'}`}
-						title={detail.subject}
-					>
+					<p className="line-clamp-2 min-w-0 flex-1 font-medium text-sm" title={detail.subject}>
 						{detail.subject || <em className="text-muted-foreground">no message</em>}
 					</p>
 					<CopySha sha={detail.sha} shortSha={detail.shortSha} />

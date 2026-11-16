@@ -1,7 +1,7 @@
-import { CommitDetail } from '@components/graph/CommitDetail';
 import { CommitSession } from '@components/gitmode/CommitSession';
 import { CommitRow } from '@components/graph/CommitRow';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
+import { PanelResizer } from '@components/layout/PanelResizer';
 import {
 	Button,
 	ContextMenu,
@@ -18,10 +18,11 @@ import { lanePitch, railWidth, ROW_PAD_LEFT } from '@lib/gitGraph';
 import { queryKeys } from '@lib/queryKeys';
 import { reachableFrom } from '@lib/reachable';
 import { sessionDuring } from '@lib/sessionDuring';
-import { isLooseRepo } from '@store/gitModeStore';
+import { clampGitDetailHeight, isLooseRepo, useGitModeStore } from '@store/gitModeStore';
 import { cmd, copyText } from '@lib/tauri';
 import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
+import { GitCommitPane } from './GitCommitPane';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
@@ -30,8 +31,8 @@ import { useQuickAgent } from './useQuickAgent';
 /** The width the rail and ref chips are laid out for; the table is wider than
  *  the panel the graph was designed in, but its rows are still one line. */
 const LAYOUT_WIDTH = 600;
-/** The table's rows are taller than the panel list's, as in the mock-up. */
-const TABLE_ROW_HEIGHT = 36;
+/** Dense, as desktop Git clients list commits. */
+const TABLE_ROW_HEIGHT = 24;
 
 const RESET_MODES = [
 	{
@@ -74,6 +75,8 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 		return map;
 	}, [commits, sessionsQ.data, dir]);
 	const [selected, select] = useState<string | null>(null);
+	const detailHeight = useGitModeStore((s) => s.detailHeight);
+	const setDetailHeight = useGitModeStore((s) => s.setDetailHeight);
 	const quick = useQuickAgent(dir);
 	const { run, running } = useGitOp(dir);
 	const refsQ = useQuery({ queryKey: queryKeys.gitRefs(dir), queryFn: () => cmd.gitRefs(dir) });
@@ -106,23 +109,24 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 	const textWidth = Math.max(0, LAYOUT_WIDTH - rail - ROW_PAD_LEFT - 24);
 
 	return (
-		// The commit list, and the selected commit's detail in a column on its
-		// right rather than docked under it (F35, ADR-0095).
-		<div data-testid="git-history" className="flex min-h-0 min-w-0 flex-1">
+		// The commit list, and the selected commit docked under it as desktop Git
+		// clients have it (F35, ADR-0099).
+		<div data-testid="git-history" className="flex min-h-0 min-w-0 flex-1 flex-col">
 			<div className="min-h-0 min-w-0 flex-1 overflow-auto pb-1">
 				{/* The table's column heads, as in the mock-up (F35, ADR-0095). */}
 				<div
 					aria-hidden
 					style={{ paddingLeft: ROW_PAD_LEFT }}
-					className="sticky top-0 z-10 flex h-9 items-center gap-1.5 border-border border-b bg-secondary/60 pr-2 font-medium text-muted-foreground text-xs uppercase tracking-wider backdrop-blur"
+					className="sticky top-0 z-10 flex h-8 items-center gap-1.5 border-border border-b bg-secondary/60 pr-2 font-medium text-muted-foreground text-xs uppercase tracking-wider backdrop-blur"
 				>
 					<span className="shrink-0" style={{ width: rail }}>
 						Graph
 					</span>
 					<span className="min-w-0 flex-1">Subject</span>
-					<span className="w-40 shrink-0">Session</span>
-					<span className="w-16 shrink-0">Date</span>
+					{sessionOf.size > 0 && <span className="w-40 shrink-0">Session</span>}
+					<span className="w-28 shrink-0">Author</span>
 					<span className="w-16 shrink-0">SHA</span>
+					<span className="w-32 shrink-0">Date</span>
 				</div>
 				<ContextMenu>
 					<ContextMenuTrigger asChild>
@@ -149,7 +153,8 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 									onCardOpen={onCardOpen}
 									onSelect={onSelect}
 									columns
-									session={sessionOf.get(commit.sha) ?? null}
+									// The column only when some commit has a session to show.
+									session={sessionOf.size > 0 ? (sessionOf.get(commit.sha) ?? null) : undefined}
 									rowHeight={TABLE_ROW_HEIGHT}
 									head={commit.sha === headSha}
 									away={onHead.size > 0 && !onHead.has(commit.sha)}
@@ -325,111 +330,130 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 				/>
 			</div>
 			{selected && (
-				<aside
-					data-testid="commit-detail"
-					className="flex w-[24rem] shrink-0 flex-col overflow-y-auto border-border border-l"
-				>
-					<div className="flex min-h-64 flex-col">
-						<CommitDetail projectPath={dir} sha={selected} onSelectSha={select} roomy />
-					</div>
-					<CommitSession projectId={projectId} dir={dir} sha={selected} />
-					{/* The context menu's ✦ questions and its actions, laid out in the
-					    detail as the mock-up has them (F35, ADR-0095). */}
-					{quick.enabled && (
-						<DetailSection title="Ask about this commit">
-							<div data-testid="commit-ask" className="flex flex-col gap-1.5">
-								{(
-									[
-										['Explain this commit', { kind: 'explainCommit', sha: selected }],
-										['Find bugs introduced here', { kind: 'findBugs', sha: selected }],
-										['Write a release note', { kind: 'releaseNote', sha: selected }],
-									] as const
-								).map(([label, task]) => (
-									<Button
-										key={label}
-										variant="outline"
-										disabled={quick.busy}
-										onClick={() => void quick.show(label, task)}
-										className="justify-start gap-2 font-normal"
-									>
-										<span className="text-primary">✦</span> {label}
-									</Button>
-								))}
-								<Button
-									variant="outline"
-									disabled={quick.busy}
-									onClick={() =>
-										void quick.show(
-											'Undo this commit safely',
-											{ kind: 'undoCommit', sha: selected },
-											{
-												request: `Undo commit ${selected} safely, without rewriting shared history.`,
-											},
-										)
-									}
-									className="justify-start gap-2 font-normal"
-								>
-									<span className="text-primary">✦</span> Undo this commit safely
-								</Button>
+				<>
+					<PanelResizer
+						size={detailHeight}
+						onSize={setDetailHeight}
+						edge="top"
+						label="Resize commit detail"
+						clamp={clampGitDetailHeight}
+					/>
+					<div
+						data-testid="commit-detail"
+						style={{ height: detailHeight }}
+						className="flex shrink-0"
+					>
+						<div className="min-w-0 flex-1 overflow-y-auto">
+							<div className="pt-3 empty:hidden">
+								<CommitSession projectId={projectId} dir={dir} sha={selected} />
 							</div>
-						</DetailSection>
-					)}
-					<DetailSection title="Actions">
-						<div data-testid="commit-actions" className="flex flex-wrap gap-1.5">
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={running}
-								onClick={() =>
-									void run({ kind: 'cherryPick', sha: selected, mergeCommit: selectedMerge })
-								}
-							>
-								Cherry-pick
-							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={running}
-								onClick={() =>
-									void run({ kind: 'revert', sha: selected, mergeCommit: selectedMerge })
-								}
-							>
-								Revert
-							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={running}
-								onClick={() => setNaming({ kind: 'branch', sha: selected })}
-							>
-								New branch here
-							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={running}
-								onClick={() => setNaming({ kind: 'tag', sha: selected })}
-							>
-								Tag
-							</Button>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={running}
-								onClick={() =>
-									void run(
-										{ kind: 'checkoutCommit', sha: selected },
-										{
-											confirm: `Check out ${selected.slice(0, 8)}? HEAD will be detached: new commits will not be on any branch.`,
-										},
-									)
-								}
-							>
-								Checkout
-							</Button>
+							<GitCommitPane
+								dir={dir}
+								sha={selected}
+								refs={commits.find((c) => c.sha === selected)?.refs ?? []}
+								onSelectSha={select}
+							/>
 						</div>
-					</DetailSection>
-				</aside>
+						<aside className="w-72 shrink-0 overflow-y-auto border-border border-l">
+							{/* The context menu's ✦ questions and its actions, laid out in the
+					    detail as the mock-up has them (F35, ADR-0095). */}
+							{quick.enabled && (
+								<DetailSection title="Ask about this commit">
+									<div data-testid="commit-ask" className="flex flex-col gap-1.5">
+										{(
+											[
+												['Explain this commit', { kind: 'explainCommit', sha: selected }],
+												['Find bugs introduced here', { kind: 'findBugs', sha: selected }],
+												['Write a release note', { kind: 'releaseNote', sha: selected }],
+											] as const
+										).map(([label, task]) => (
+											<Button
+												key={label}
+												variant="outline"
+												disabled={quick.busy}
+												onClick={() => void quick.show(label, task)}
+												className="justify-start gap-2 font-normal"
+											>
+												<span className="text-primary">✦</span> {label}
+											</Button>
+										))}
+										<Button
+											variant="outline"
+											disabled={quick.busy}
+											onClick={() =>
+												void quick.show(
+													'Undo this commit safely',
+													{ kind: 'undoCommit', sha: selected },
+													{
+														request: `Undo commit ${selected} safely, without rewriting shared history.`,
+													},
+												)
+											}
+											className="justify-start gap-2 font-normal"
+										>
+											<span className="text-primary">✦</span> Undo this commit safely
+										</Button>
+									</div>
+								</DetailSection>
+							)}
+							<DetailSection title="Actions">
+								<div data-testid="commit-actions" className="flex flex-wrap gap-1.5">
+									<Button
+										size="sm"
+										variant="secondary"
+										disabled={running}
+										onClick={() =>
+											void run({ kind: 'cherryPick', sha: selected, mergeCommit: selectedMerge })
+										}
+									>
+										Cherry-pick
+									</Button>
+									<Button
+										size="sm"
+										variant="secondary"
+										disabled={running}
+										onClick={() =>
+											void run({ kind: 'revert', sha: selected, mergeCommit: selectedMerge })
+										}
+									>
+										Revert
+									</Button>
+									<Button
+										size="sm"
+										variant="secondary"
+										disabled={running}
+										onClick={() => setNaming({ kind: 'branch', sha: selected })}
+									>
+										New branch here
+									</Button>
+									<Button
+										size="sm"
+										variant="secondary"
+										disabled={running}
+										onClick={() => setNaming({ kind: 'tag', sha: selected })}
+									>
+										Tag
+									</Button>
+									<Button
+										size="sm"
+										variant="secondary"
+										disabled={running}
+										onClick={() =>
+											void run(
+												{ kind: 'checkoutCommit', sha: selected },
+												{
+													confirm: `Check out ${selected.slice(0, 8)}? HEAD will be detached: new commits will not be on any branch.`,
+												},
+											)
+										}
+									>
+										Checkout
+									</Button>
+								</div>
+							</DetailSection>
+						</aside>
+					</div>
+				</>
 			)}
 		</div>
 	);

@@ -38,7 +38,12 @@ interface GitModeState {
 	/** The Repositories list's height in the Git sidebar, or null for its own. */
 	reposHeight: number | null;
 	setReposHeight: (height: number | null) => void;
+	/** The commit pane's height under the history (F35). */
+	detailHeight: number;
+	setDetailHeight: (height: number) => void;
 }
+
+export const clampGitDetailHeight = (h: number) => Math.max(140, Math.min(h, 900));
 
 /** Whether a sidebar node is open: its default, unless the user flipped it. */
 export const isOpen = (toggled: readonly string[], key: string, byDefault = true) =>
@@ -103,6 +108,8 @@ export const useGitModeStore = create<GitModeState>()(
 				})),
 			reposHeight: null,
 			setReposHeight: (reposHeight) => set({ reposHeight }),
+			detailHeight: 320,
+			setDetailHeight: (detailHeight) => set({ detailHeight }),
 		}),
 		{
 			name: 'factorai.gitmode',
@@ -114,6 +121,7 @@ export const useGitModeStore = create<GitModeState>()(
 				activeDir: s.activeDir,
 				toggled: s.toggled,
 				reposHeight: s.reposHeight,
+				detailHeight: s.detailHeight,
 			}),
 		},
 	),

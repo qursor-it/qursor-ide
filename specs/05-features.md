@@ -8449,15 +8449,20 @@ collapse too (`design/…` under *design*). The current branch is bold with a
 check; the others carry a branch glyph. Each remote is a node, closed until
 opened, holding its branches the same way. What is collapsed is kept.
 
-**The table and the detail since ADR-0098.** 36px rows under column heads
-(Graph, Subject, Session, Date, SHA); the author is in the detail, not a
-column. No hover card on a row: the detail is beside it. The commit HEAD is on
-has a bold subject, and the commits HEAD does not contain (another branch, or
-not pulled yet) are dimmed, as desktop Git clients show them; when HEAD is past
-the loaded page nothing is dimmed. The detail column reads top to bottom: the subject at 16px, sha, author
-and parents, the files; the session it was made in as a card; *Ask about this
-commit* (the ✦ questions as full-width buttons); *Actions* (Cherry-pick, Revert,
-New branch here, Tag, Checkout, the last confirmed). The action bar's buttons
+**The table and the detail since ADR-0099**, laid out as desktop Git clients
+do. The table runs the card's full width: 24px rows under column heads (Graph,
+Subject, Session — only when some commit has one —, Author with a small avatar,
+SHA, the full date). A conventional-commit prefix (`feat:`, `fix(ui):`) is
+bold. The selected row is filled with the accent. No hover card on a row. The
+commit HEAD is on has a bold subject, and the commits HEAD does not contain
+(another branch, or not pulled yet) are at 75% opacity; when HEAD is past the
+loaded page nothing is dimmed. The selected commit is docked under the table,
+behind a handle that resizes it (the height is kept): on the left the author
+with a large avatar, email and date, then labelled Refs, SHA (copyable) and
+Parents (each selects that commit), the message, and the files; on the right,
+the session it was made in above *Ask about this commit* (the ✦ questions as
+full-width buttons) and *Actions* (Cherry-pick, Revert, New branch here, Tag,
+Checkout, the last confirmed). The action bar's buttons
 carry glyphs, Push outlined with its ahead count, a rule after it.
 
 ### v1 operations

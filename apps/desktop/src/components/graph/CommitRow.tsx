@@ -138,7 +138,7 @@ interface CommitRowProps {
 	 *  columns after the subject (F35). The panel's Graph tab leaves it off. */
 	columns?: boolean;
 	/** With `columns`: the title of the session running in the checkout when
-	 *  this commit was made (F41), or null. */
+	 *  this commit was made (F41), or null; undefined drops the column. */
 	session?: string | null;
 	/** Row height; defaults to the panel list's. */
 	rowHeight?: number;
@@ -168,7 +168,7 @@ export const CommitRow = memo(function CommitRow({
 	onCardOpen,
 	onSelect,
 	columns = false,
-	session = null,
+	session,
 	rowHeight = ROW_HEIGHT,
 	head = false,
 	away = false,
@@ -203,7 +203,12 @@ export const CommitRow = memo(function CommitRow({
 						data-sha={commit.sha}
 						style={{ height: rowHeight, paddingLeft: ROW_PAD_LEFT }}
 						className={`group flex w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors ${
-							selected ? 'bg-secondary' : 'hover:bg-secondary/50'
+							selected
+								? columns
+									? // Git mode's table marks the selection as Git clients do.
+										'bg-primary text-primary-foreground [&_*]:text-primary-foreground'
+									: 'bg-secondary'
+								: 'hover:bg-secondary/50'
 						} ${away && !selected ? 'opacity-75' : ''}`}
 						onClick={() => onSelect(commit.sha)}
 					>
@@ -240,28 +245,42 @@ export const CommitRow = memo(function CommitRow({
 						    Selected keeps full foreground rather than waiting for a hover:
 						    it is a state, the same reasoning the panel toggle carries. */}
 						<span
+							data-testid="commit-subject"
 							className={`min-w-0 flex-1 truncate ${head ? 'font-semibold' : ''} ${
 								selected || head
 									? 'text-foreground'
 									: 'text-secondary-foreground group-hover:text-foreground'
 							}`}
 						>
-							{commit.subject}
+							{columns ? <Subject text={commit.subject} /> : commit.subject}
 						</span>
 						{columns && (
 							<>
-								<span
-									data-testid="commit-row-session"
-									className="w-40 shrink-0 truncate text-left text-primary text-xs"
-									title={session ? `Made while “${session}” was running` : undefined}
-								>
-									{session ? `✦ ${session}` : ''}
-								</span>
-								<span className="w-16 shrink-0 truncate text-muted-foreground text-xs">
-									{formatRelative(commit.authorTime)}
+								{session !== undefined && (
+									<span
+										data-testid="commit-row-session"
+										className="w-40 shrink-0 truncate text-left text-primary text-xs"
+										title={session ? `Made while “${session}” was running` : undefined}
+									>
+										{session ? `✦ ${session}` : ''}
+									</span>
+								)}
+								{/* Author, sha and the full date, as desktop Git clients list them. */}
+								<span className="flex w-28 shrink-0 items-center gap-1.5 text-muted-foreground text-xs">
+									<span
+										aria-hidden="true"
+										style={{ background: avatar.colour, color: avatar.ink }}
+										className="flex size-4 shrink-0 items-center justify-center rounded-sm font-semibold text-[8px]"
+									>
+										{avatar.initials}
+									</span>
+									<span className="truncate">{commit.authorName}</span>
 								</span>
 								<span className="w-16 shrink-0 font-mono text-muted-foreground text-xs">
 									{commit.shortSha}
+								</span>
+								<span className="w-32 shrink-0 truncate text-muted-foreground text-xs tabular-nums">
+									{formatAbsolute(commit.authorTime)}
 								</span>
 							</>
 						)}
@@ -366,5 +385,18 @@ function CommitCard({ commit, remoteHost }: { commit: GitGraphCommit; remoteHost
 				)}
 			</dl>
 		</div>
+	);
+}
+
+/** A conventional-commit prefix (`feat:`, `fix(ui):`) in bold, as Git clients
+ *  set it, so the kind of change reads first (F35). */
+function Subject({ text }: { text: string }) {
+	const m = /^([a-z]+(?:\([^)]*\))?!?:)(.*)$/i.exec(text);
+	if (!m) return text;
+	return (
+		<>
+			<span className="font-semibold">{m[1]}</span>
+			{m[2]}
+		</>
 	);
 }
