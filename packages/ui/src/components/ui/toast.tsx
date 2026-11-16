@@ -21,7 +21,7 @@ function Toaster(props: React.ComponentProps<typeof Sonner>) {
 				unstyled: true,
 				classNames: {
 					toast:
-						'flex w-[356px] items-start gap-2 rounded-md border border-border bg-popover p-3 text-popover-foreground text-sm shadow-md',
+						'flex w-[356px] items-start gap-2 rounded-xl bg-popover p-3 text-popover-foreground text-sm shadow-popover',
 					title: 'font-medium',
 					// A content column that may shrink, and a description that breaks
 					// anywhere: update failures carry a URL with no spaces in it.

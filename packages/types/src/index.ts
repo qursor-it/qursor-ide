@@ -1262,6 +1262,13 @@ export interface ProviderUsage {
 
 /** Tokens and estimated list-price cost of one session. `costUsd` is null when
  *  a model in the session has no known price. */
+/** One entry of the agent's plan (F40). Mirrors Rust `PlanItem`. */
+export interface PlanItem {
+	content: string;
+	/** `pending`, `in_progress` or `completed`, as the agent wrote it. */
+	status: string;
+}
+
 export interface SessionUsage {
 	sessionId: string;
 	model: string | null;

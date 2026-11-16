@@ -130,6 +130,8 @@ export interface TestFixture {
 	gitRepoStates?: Record<string, GitRepoState>;
 	/** Makes `git_op` reject with this error, as a missing `git` does. */
 	gitOpFails?: AppError;
+	/** Holds every `git_op` this long before it answers, as a slow remote does. */
+	gitOpDelayMs?: number;
 	/** Makes `git_op` resolve with this result (a non-zero exit). */
 	gitOpResult?: GitOpResult;
 	gitGraphs?: Record<string, GitGraph>;
@@ -230,6 +232,14 @@ export async function installMockBridge(page: Page, fixture: TestFixture): Promi
 	await serveMediaFixtures(page);
 	await page.addInitScript((fx) => {
 		(window as unknown as { __FACTORAI_TEST__: typeof fx }).__FACTORAI_TEST__ = fx;
+		// The file panel starts closed and on Files, as specs written
+		// before the Review tab expect (ADR-0094).
+		if (!window.localStorage.getItem('factorai.panel')) {
+			window.localStorage.setItem(
+				'factorai.panel',
+				JSON.stringify({ state: { open: false, tab: 'files' }, version: 3 }),
+			);
+		}
 	}, fixture);
 }
 

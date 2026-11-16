@@ -158,26 +158,32 @@ test.describe('settings', () => {
 		);
 	});
 
-	test('@smoke the theme follows the system until one is chosen', async ({ page }) => {
+	test('@smoke the theme is light by default, and System follows the OS', async ({ page }) => {
 		await installMockBridge(page, fixtureOneProjectOneSession());
 		const html = page.locator('html');
 
-		// `system` by default, and it moves with the OS appearance without a reload.
-		await page.emulateMedia({ colorScheme: 'light' });
+		// Light by default, whatever the OS says (ADR-0096).
+		await page.emulateMedia({ colorScheme: 'dark' });
 		await page.goto('/');
 		await expect(html).toHaveAttribute('data-theme', 'light');
-		await page.emulateMedia({ colorScheme: 'dark' });
-		await expect(html).toHaveAttribute('data-theme', 'dark');
 
-		// A choice holds against the OS, and survives a reload: it is applied
-		// before the first render, from the stored preference.
+		// System moves with the OS appearance without a reload.
 		await page.goto('/?settings=appearance');
 		await page.getByTestId('settings-theme').click();
-		await page.getByTestId('settings-theme-light').click();
+		await page.getByTestId('settings-theme-system').click();
 		await page.getByTestId('settings-save').click();
+		await expect(html).toHaveAttribute('data-theme', 'dark');
+		await page.emulateMedia({ colorScheme: 'light' });
 		await expect(html).toHaveAttribute('data-theme', 'light');
+
+		// A choice holds against the OS, and survives a reload.
+		await page.goto('/?settings=appearance');
+		await page.getByTestId('settings-theme').click();
+		await page.getByTestId('settings-theme-dark').click();
+		await page.getByTestId('settings-save').click();
+		await expect(html).toHaveAttribute('data-theme', 'dark');
 		await page.reload();
-		await expect(html).toHaveAttribute('data-theme', 'light');
+		await expect(html).toHaveAttribute('data-theme', 'dark');
 	});
 });
 

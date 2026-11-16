@@ -1,3 +1,4 @@
+import type { GitOp } from '@factorai/types';
 import {
 	Button,
 	DropdownMenu,
@@ -8,17 +9,38 @@ import {
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import {
+	Archive,
+	ArrowDownToLine,
+	ArrowUpFromLine,
+	CloudDownload,
+	GitBranchPlus,
+	GitMerge,
+	GitPullRequestArrow,
+	LoaderCircle,
+} from 'lucide-react';
+import { type ReactNode, useState } from 'react';
 import { AskAgentField } from './AskAgentField';
 import { IntegrateDialog, type IntegrateRequest } from './IntegrateDialog';
 import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
 
+/** The bar's buttons hover like the rows beside them, not in the accent. */
+const BAR = 'hover:bg-secondary hover:text-foreground';
+
 /**
  * Fetch, Pull, Push, Branch, Merge, Rebase, Stash (specs/05-features.md F35).
  * Every button is disabled while a write runs: one in flight per repository.
  */
-export function GitActionBar({ dir }: { dir: string }) {
+export function GitActionBar({
+	dir,
+	compact = false,
+}: {
+	dir: string;
+	/** The right panel's Git tab: the buttons wrap and the ask field is left to
+	 *  Git mode. */
+	compact?: boolean;
+}) {
 	const { run, running } = useGitOp(dir);
 	const refsQ = useQuery({ queryKey: queryKeys.gitRefs(dir), queryFn: () => cmd.gitRefs(dir) });
 	const local = refsQ.data?.local ?? [];
@@ -26,11 +48,26 @@ export function GitActionBar({ dir }: { dir: string }) {
 	const others = local.filter((b) => !b.current);
 	const [naming, setNaming] = useState(false);
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
+	// Which button's operation is running, so its glyph turns into a spinner
+	// while git works (F35). Not behind `motion-safe:`: it is a state, not
+	// decoration.
+	const [busy, setBusy] = useState<string | null>(null);
+	const go = (key: string, op: GitOp) => {
+		setBusy(key);
+		void run(op).finally(() => setBusy(null));
+	};
+	const icon = (key: string, glyph: ReactNode) =>
+		busy === key ? (
+			<LoaderCircle className="animate-spin" data-testid={`git-busy-${key}`} />
+		) : (
+			glyph
+		);
 
-	const branchMenu = (label: string, pick: (name: string) => void) => (
+	const branchMenu = (label: string, icon: ReactNode, pick: (name: string) => void) => (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
-				<Button variant="outline" size="sm" disabled={running || others.length === 0}>
+				<Button variant="ghost" size="sm" className={BAR} disabled={running || others.length === 0}>
+					{icon}
 					{label}
 				</Button>
 			</DropdownMenuTrigger>
@@ -47,13 +84,27 @@ export function GitActionBar({ dir }: { dir: string }) {
 	return (
 		<div
 			data-testid="git-action-bar"
-			className="flex h-9 shrink-0 items-center gap-1.5 border-b border-border px-3"
+			className={`flex shrink-0 items-center gap-1 px-3 ${
+				compact ? 'flex-wrap py-2' : 'h-12 border-b border-border'
+			}`}
 		>
-			<Button variant="outline" size="sm" disabled={running} onClick={() => run({ kind: 'fetch' })}>
-				Fetch
+			<Button
+				variant="ghost"
+				size="sm"
+				className={BAR}
+				disabled={running}
+				onClick={() => go('fetch', { kind: 'fetch' })}
+			>
+				{icon('fetch', <CloudDownload />)} Fetch
 			</Button>
-			<Button variant="outline" size="sm" disabled={running} onClick={() => run({ kind: 'pull' })}>
-				Pull
+			<Button
+				variant="ghost"
+				size="sm"
+				className={BAR}
+				disabled={running}
+				onClick={() => go('pull', { kind: 'pull' })}
+			>
+				{icon('pull', <ArrowDownToLine />)} Pull
 			</Button>
 			<Button
 				variant="outline"
@@ -61,30 +112,43 @@ export function GitActionBar({ dir }: { dir: string }) {
 				disabled={running}
 				// A branch with no upstream publishes itself on the first push.
 				onClick={() =>
-					run({ kind: 'push', setUpstream: current ? current.upstream === null : false })
+					go('push', { kind: 'push', setUpstream: current ? current.upstream === null : false })
 				}
 			>
-				Push
+				{icon('push', <ArrowUpFromLine />)} Push
 				{current && current.ahead > 0 && (
-					<span data-testid="push-ahead" className="tabular-nums">
+					<span
+						data-testid="push-ahead"
+						className="rounded-full bg-primary/15 px-1.5 text-primary text-xs tabular-nums"
+					>
 						↑{current.ahead}
 					</span>
 				)}
 			</Button>
-			<Button variant="outline" size="sm" disabled={running} onClick={() => setNaming(true)}>
-				Branch
-			</Button>
-			{branchMenu('Merge…', (target) => setIntegrate({ kind: 'merge', target }))}
-			{branchMenu('Rebase…', (target) => setIntegrate({ kind: 'rebase', target }))}
+			<span className="mx-1 h-5 w-px bg-border" aria-hidden />
 			<Button
-				variant="outline"
+				variant="ghost"
+				size="sm"
+				className={BAR}
+				disabled={running}
+				onClick={() => setNaming(true)}
+			>
+				{icon('branch', <GitBranchPlus />)} Branch
+			</Button>
+			{branchMenu('Merge…', <GitMerge />, (target) => setIntegrate({ kind: 'merge', target }))}
+			{branchMenu('Rebase…', <GitPullRequestArrow />, (target) =>
+				setIntegrate({ kind: 'rebase', target }),
+			)}
+			<Button
+				variant="ghost"
+				className={BAR}
 				size="sm"
 				disabled={running}
-				onClick={() => run({ kind: 'stashPush', message: null })}
+				onClick={() => go('stash', { kind: 'stashPush', message: null })}
 			>
-				Stash
+				{icon('stash', <Archive />)} Stash
 			</Button>
-			<AskAgentField dir={dir} />
+			{!compact && <AskAgentField dir={dir} />}
 			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
 			<PromptDialog
 				title="New branch from HEAD"
@@ -93,7 +157,7 @@ export function GitActionBar({ dir }: { dir: string }) {
 				onCancel={() => setNaming(false)}
 				onSubmit={(name) => {
 					setNaming(false);
-					void run({ kind: 'createBranch', name, at: 'HEAD', checkout: true });
+					go('branch', { kind: 'createBranch', name, at: 'HEAD', checkout: true });
 				}}
 			/>
 		</div>

@@ -83,7 +83,7 @@ test.describe('remove project', () => {
 		await page.getByRole('button', { name: 'Cancel' }).click();
 
 		await expect(page.getByTestId('confirm-remove-project')).toHaveCount(0);
-		await expect(page.locator('aside').getByText('foo')).toBeVisible();
+		await expect(page.locator('aside nav').getByText('foo')).toBeVisible();
 		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
 		expect(calls.some((c) => c.name === 'remove_project')).toBe(false);
 		expect(calls.some((c) => c.name === 'terminal_kill')).toBe(false);

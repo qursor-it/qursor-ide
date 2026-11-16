@@ -51,7 +51,7 @@ export function TabGroup({
 			data-project-id={projectId}
 			data-collapsed={collapsed}
 			style={{ transform: DndCss.Translate.toString(transform), transition }}
-			className={`relative flex shrink-0 items-center gap-1 pb-0.5 ${isDragging ? 'z-10' : ''}`}
+			className={`relative isolate flex shrink-0 items-center gap-1 rounded-xl p-0.5 ${isDragging ? 'z-10' : ''}`}
 		>
 			<div
 				ref={setActivatorNodeRef}
@@ -64,8 +64,8 @@ export function TabGroup({
 				data-project-id={projectId}
 				{...listeners}
 				title={`${name} · ${collapsed ? 'Show' : 'Hide'} ${count} ${count === 1 ? 'tab' : 'tabs'}`}
-				className={`relative flex h-6 max-w-40 shrink-0 cursor-pointer touch-none items-center gap-1 rounded px-1.5 text-xs font-medium text-foreground ${
-					isDragging ? 'bg-secondary shadow-lg' : ''
+				className={`relative flex h-7 max-w-40 shrink-0 cursor-pointer touch-none items-center gap-1.5 rounded-lg px-2 font-semibold text-foreground text-xs ${
+					isDragging ? 'bg-background shadow-lg' : ''
 				}`}
 				onClick={() => onToggle(projectId)}
 				onKeyDown={(e) => {
@@ -86,7 +86,7 @@ export function TabGroup({
 				    which older WebKitGTK does not parse. */}
 				<span
 					aria-hidden
-					className="pointer-events-none absolute inset-0 rounded opacity-25"
+					className="pointer-events-none absolute inset-0 rounded-lg opacity-25"
 					style={{ backgroundColor: swatch.fill }}
 				/>
 				<ProjectIcon name={name} size={16} />
@@ -98,10 +98,12 @@ export function TabGroup({
 				)}
 			</div>
 			{children}
+			{/* The group's tint under its tabs, lighter than the chip's: which tabs
+			    belong to which project, without a rule under each (ADR-0100). */}
 			<span
 				aria-hidden
 				data-testid="tab-group-line"
-				className="absolute inset-x-0 bottom-0 h-0.5 rounded-full"
+				className="pointer-events-none absolute inset-0 -z-10 rounded-xl opacity-10"
 				style={{ backgroundColor: swatch.fill }}
 			/>
 		</div>

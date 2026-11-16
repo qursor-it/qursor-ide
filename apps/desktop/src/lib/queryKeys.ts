@@ -29,6 +29,7 @@ export const queryKeys = {
 	/** One directory's listing in the file tree. Keyed by absolute path so
 	 *  every expanded node caches independently. */
 	dir: (path: string) => ['dir', path] as const,
+	pathKind: (path: string) => ['pathKind', path] as const,
 	/** One file's contents. Capped and uncapped reads are separate entries, so
 	 *  "Show anyway" fetches rather than reusing the truncated body. */
 	file: (path: string, uncapped: boolean) => ['file', path, uncapped ? 'full' : 'capped'] as const,
@@ -144,4 +145,5 @@ export const queryKeys = {
 	/** One session's tokens and estimated cost (usage monitor), for the status
 	 *  bar. Polled while that session is in front. */
 	sessionUsage: (sessionId: string) => ['sessionUsage', sessionId] as const,
+	sessionPlan: (sessionId: string, status: string) => ['sessionPlan', sessionId, status] as const,
 };

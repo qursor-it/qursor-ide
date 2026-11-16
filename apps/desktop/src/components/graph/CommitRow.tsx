@@ -137,6 +137,15 @@ interface CommitRowProps {
 	/** Git mode's table: author, date and short sha as fixed right-aligned
 	 *  columns after the subject (F35). The panel's Graph tab leaves it off. */
 	columns?: boolean;
+	/** With `columns`: the title of the session running in the checkout when
+	 *  this commit was made (F41), or null; undefined drops the column. */
+	session?: string | null;
+	/** Row height; defaults to the panel list's. */
+	rowHeight?: number;
+	/** The commit HEAD is on: its subject is bold (F35, as desktop Git clients). */
+	head?: boolean;
+	/** Not reachable from HEAD — on another branch, or not pulled yet: dimmed. */
+	away?: boolean;
 }
 
 /**
@@ -159,6 +168,10 @@ export const CommitRow = memo(function CommitRow({
 	onCardOpen,
 	onSelect,
 	columns = false,
+	session,
+	rowHeight = ROW_HEIGHT,
+	head = false,
+	away = false,
 }: CommitRowProps) {
 	const chips = foldRefs(commit.refs);
 	const { shown, hiddenCount } = fitRefs(chips, textWidth);
@@ -168,7 +181,9 @@ export const CommitRow = memo(function CommitRow({
 	return (
 		<li>
 			<HoverCard
-				open={cardOpen}
+				// Git mode's table has the detail column beside it, so no card: it
+				// covered the rows you were reading (F35).
+				open={columns ? false : cardOpen}
 				onOpenChange={(open) => onCardOpen(commit.sha, open)}
 				openDelay={HOVER_OPEN_MS}
 				closeDelay={HOVER_CLOSE_MS}
@@ -186,10 +201,15 @@ export const CommitRow = memo(function CommitRow({
 						tabIndex={tabbable ? 0 : -1}
 						data-testid="commit-row"
 						data-sha={commit.sha}
-						style={{ height: ROW_HEIGHT, paddingLeft: ROW_PAD_LEFT }}
+						style={{ height: rowHeight, paddingLeft: ROW_PAD_LEFT }}
 						className={`group flex w-full items-center gap-1.5 pr-2 text-left text-sm transition-colors ${
-							selected ? 'bg-secondary' : 'hover:bg-secondary/50'
-						}`}
+							selected
+								? columns
+									? // Git mode's table marks the selection as Git clients do.
+										'bg-primary text-primary-foreground [&_*]:text-primary-foreground'
+									: 'bg-secondary'
+								: 'hover:bg-secondary/50'
+						} ${away && !selected ? 'opacity-75' : ''}`}
 						onClick={() => onSelect(commit.sha)}
 					>
 						<GraphRail
@@ -197,6 +217,7 @@ export const CommitRow = memo(function CommitRow({
 							edges={commit.edges}
 							pitch={pitch}
 							width={railWidth}
+							height={rowHeight}
 							node={
 								dirty
 									? { kind: 'dirty' }
@@ -224,24 +245,42 @@ export const CommitRow = memo(function CommitRow({
 						    Selected keeps full foreground rather than waiting for a hover:
 						    it is a state, the same reasoning the panel toggle carries. */}
 						<span
-							className={`min-w-0 flex-1 truncate ${
-								selected
+							data-testid="commit-subject"
+							className={`min-w-0 flex-1 truncate ${head ? 'font-semibold' : ''} ${
+								selected || head
 									? 'text-foreground'
 									: 'text-secondary-foreground group-hover:text-foreground'
 							}`}
 						>
-							{commit.subject}
+							{columns ? <Subject text={commit.subject} /> : commit.subject}
 						</span>
 						{columns && (
 							<>
-								<span className="w-32 shrink-0 truncate text-right text-muted-foreground text-xs">
-									{commit.authorName}
+								{session !== undefined && (
+									<span
+										data-testid="commit-row-session"
+										className="hidden w-40 shrink-0 truncate text-left text-primary text-xs @4xl:block"
+										title={session ? `Made while “${session}” was running` : undefined}
+									>
+										{session ? `✦ ${session}` : ''}
+									</span>
+								)}
+								{/* Author, sha and the full date, as desktop Git clients list them. */}
+								<span className="hidden w-28 shrink-0 items-center gap-1.5 text-muted-foreground text-xs @2xl:flex">
+									<span
+										aria-hidden="true"
+										style={{ background: avatar.colour, color: avatar.ink }}
+										className="flex size-4 shrink-0 items-center justify-center rounded-sm font-semibold text-[8px]"
+									>
+										{avatar.initials}
+									</span>
+									<span className="truncate">{commit.authorName}</span>
 								</span>
-								<span className="w-24 shrink-0 truncate text-right text-muted-foreground text-xs">
-									{formatRelative(commit.authorTime)}
-								</span>
-								<span className="w-16 shrink-0 text-right font-mono text-muted-foreground text-xs">
+								<span className="hidden w-16 shrink-0 font-mono text-muted-foreground text-xs @lg:block">
 									{commit.shortSha}
+								</span>
+								<span className="hidden w-32 shrink-0 truncate text-muted-foreground text-xs tabular-nums @xl:block">
+									{formatAbsolute(commit.authorTime)}
 								</span>
 							</>
 						)}
@@ -346,5 +385,18 @@ function CommitCard({ commit, remoteHost }: { commit: GitGraphCommit; remoteHost
 				)}
 			</dl>
 		</div>
+	);
+}
+
+/** A conventional-commit prefix (`feat:`, `fix(ui):`) in bold, as Git clients
+ *  set it, so the kind of change reads first (F35). */
+function Subject({ text }: { text: string }) {
+	const m = /^([a-z]+(?:\([^)]*\))?!?:)(.*)$/i.exec(text);
+	if (!m) return text;
+	return (
+		<>
+			<span className="font-semibold">{m[1]}</span>
+			{m[2]}
+		</>
 	);
 }

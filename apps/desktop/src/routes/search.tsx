@@ -71,7 +71,7 @@ function SearchView() {
 	return (
 		<main className="flex h-full flex-col bg-background">
 			<header className="flex items-center gap-3 border-b border-border px-4 py-3">
-				<h2 className="shrink-0 font-semibold text-sm">Search</h2>
+				<h2 className="shrink-0 font-semibold text-base">Search</h2>
 				<div className="relative min-w-0 max-w-md flex-1">
 					<Search className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 size-3.5 text-muted-foreground" />
 					<Input

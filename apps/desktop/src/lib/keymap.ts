@@ -10,6 +10,7 @@ import type { Hotkey } from '@tanstack/react-hotkeys';
  */
 export type ShortcutAction =
 	| 'newSession'
+	| 'openPalette'
 	| 'focusSidebarSearch'
 	| 'findOrSearch'
 	| 'toggleFilePanel'
@@ -66,9 +67,17 @@ export const SHORTCUT_SPECS: readonly ShortcutSpec[] = [
 		overTerminal: true,
 	},
 	{
+		action: 'openPalette',
+		label: 'Open the command palette',
+		defaultHotkey: 'Mod+K',
+		overTerminal: true,
+	},
+	{
+		// Unbound by default since the palette took `Mod+K` (F37); `Mod+F` still
+		// reaches the same field outside a viewer.
 		action: 'focusSidebarSearch',
 		label: 'Focus the sidebar search',
-		defaultHotkey: 'Mod+K',
+		defaultHotkey: null,
 		overTerminal: true,
 	},
 	{

@@ -90,8 +90,11 @@ export function PanelResizer({ size, onSize, edge, label, clamp, onReset }: Pane
 			aria-orientation={horizontal ? 'vertical' : 'horizontal'}
 			aria-label={label}
 			tabIndex={0}
-			className={`shrink-0 bg-border transition-colors hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none ${
-				horizontal ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize'
+			// Side by side, the handle is the gap between two cards on the chrome
+			// (ADR-0090), so it paints nothing until it is hovered or focused;
+			// stacked panes still share one card and keep a hairline between them.
+			className={`shrink-0 transition-colors hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none ${
+				horizontal ? 'w-2 cursor-col-resize rounded-full' : 'h-1 cursor-row-resize bg-border'
 			}`}
 			onPointerDown={(e) => {
 				drag.current = { origin: horizontal ? e.clientX : e.clientY, size };

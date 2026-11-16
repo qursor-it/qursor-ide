@@ -7,8 +7,10 @@ use tauri::State;
 
 use crate::agents;
 use crate::commands::sessions::transcript_path;
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::models::{ProviderUsage, SessionUsage};
+use crate::models::{PlanItem, ProviderUsage, SessionUsage};
+use crate::services::session_plan;
 use crate::services::usage::session_cost;
 use crate::state::AppState;
 
@@ -29,39 +31,9 @@ pub async fn session_usage(
 	let db = state.db.clone();
 	let claude_dir = state.claude_dir.clone();
 	crate::commands::off_main(move || {
-		let row = db.with(|conn| {
-			conn.query_row(
-				"SELECT d.key, s.subagent_of, s.transcript_path, pr.agent, pr.config_dir
-				 FROM sessions s
-				 JOIN discovered_projects d ON d.id = s.discovered_id
-				 JOIN profiles pr ON pr.id = d.profile_id
-				 WHERE s.id = ?1",
-				[&session_id],
-				|r| {
-					Ok((
-						r.get::<_, String>(0)?,
-						r.get::<_, Option<String>>(1)?,
-						r.get::<_, Option<String>>(2)?,
-						r.get::<_, String>(3)?,
-						r.get::<_, String>(4)?,
-					))
-				},
-			)
-			.optional()
-			.map_err(AppError::from)
-		})?;
-		let Some((key, parent, recorded, agent, config_dir)) = row else { return Ok(None) };
-		let path = resolve_path(
-			&config_dir,
-			&claude_dir,
-			&key,
-			parent.as_deref(),
-			recorded.as_deref(),
-			&session_id,
-		);
-		if !path.is_file() {
+		let Some((path, agent)) = transcript_of(&db, &claude_dir, &session_id)? else {
 			return Ok(None);
-		}
+		};
 		let mut usage = if agent == agents::CODEX {
 			session_cost::codex(&path)
 		} else {
@@ -71,6 +43,65 @@ pub async fn session_usage(
 		Ok(Some(usage))
 	})
 	.await
+}
+
+/// The agent's latest plan for one session (F40): Claude's `TodoWrite` list.
+/// `None` for an unknown session, a missing transcript, a Codex session, or a
+/// session that never wrote a plan.
+#[tauri::command]
+pub async fn session_plan(
+	state: State<'_, AppState>,
+	session_id: String,
+) -> AppResult<Option<Vec<PlanItem>>> {
+	let db = state.db.clone();
+	let claude_dir = state.claude_dir.clone();
+	crate::commands::off_main(move || {
+		Ok(match transcript_of(&db, &claude_dir, &session_id)? {
+			Some((path, agent)) if agent != agents::CODEX => session_plan::latest_plan(&path),
+			_ => None,
+		})
+	})
+	.await
+}
+
+/// A session's transcript file and the agent that wrote it, or `None` when the
+/// session is unknown or its file is gone.
+fn transcript_of(
+	db: &Db,
+	claude_dir: &std::path::Path,
+	session_id: &str,
+) -> AppResult<Option<(PathBuf, String)>> {
+	let row = db.with(|conn| {
+		conn.query_row(
+			"SELECT d.key, s.subagent_of, s.transcript_path, pr.agent, pr.config_dir
+			 FROM sessions s
+			 JOIN discovered_projects d ON d.id = s.discovered_id
+			 JOIN profiles pr ON pr.id = d.profile_id
+			 WHERE s.id = ?1",
+			[session_id],
+			|r| {
+				Ok((
+					r.get::<_, String>(0)?,
+					r.get::<_, Option<String>>(1)?,
+					r.get::<_, Option<String>>(2)?,
+					r.get::<_, String>(3)?,
+					r.get::<_, String>(4)?,
+				))
+			},
+		)
+		.optional()
+		.map_err(AppError::from)
+	})?;
+	let Some((key, parent, recorded, agent, config_dir)) = row else { return Ok(None) };
+	let path = resolve_path(
+		&config_dir,
+		claude_dir,
+		&key,
+		parent.as_deref(),
+		recorded.as_deref(),
+		session_id,
+	);
+	Ok(path.is_file().then_some((path, agent)))
 }
 
 /// The transcript file. The recorded path first: a Codex rollout sits under a

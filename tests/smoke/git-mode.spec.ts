@@ -4,6 +4,10 @@ import {
 	fixtureOneProjectOneSession,
 	fixtureWithGraph,
 	installMockBridge,
+	SHA_BASE,
+	SHA_MAIN,
+	SHA_SIDE,
+	SHA_TIP,
 	type TestFixture,
 } from './fixtures';
 
@@ -33,8 +37,8 @@ function fixtureWithRefs(extra: Partial<TestFixture> = {}): TestFixture {
 			[root]: {
 				head: 'main',
 				headSha: 'a'.repeat(40),
-				local: [branch('main', true), branch('side', false)],
-				remotes: [],
+				local: [branch('main', true), branch('side', false), branch('design/mockup', false)],
+				remotes: [{ remote: 'origin', branches: ['origin/main'] }],
 				tags: [],
 				stashes: [],
 			},
@@ -144,6 +148,84 @@ test.describe('git-mode', () => {
 		).toBeVisible();
 	});
 
+	test('@smoke right-clicking a branch offers the Git client menu', async ({ page }) => {
+		await installMockBridge(page, fixtureWithRefs());
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.locator('[data-branch="side"]').click({ button: 'right' });
+		const menu = page.getByRole('menu');
+		for (const item of [
+			'Checkout…',
+			"Merge 'side' into 'main'…",
+			"Rebase 'main' on 'side'…",
+			'New Branch…',
+			'New Tag…',
+			'Rename…',
+			'Delete…',
+			'Copy Branch Name',
+		]) {
+			await expect(menu.getByRole('menuitem', { name: item, exact: true })).toBeVisible();
+		}
+		await menu.getByRole('menuitem', { name: 'New Tag…' }).click();
+		await page.getByRole('dialog').getByRole('textbox').fill('v1.0.0');
+		await page.getByRole('button', { name: 'Create tag' }).click();
+		await expect
+			.poll(() => gitOps(page))
+			.toEqual([{ kind: 'createTag', name: 'v1.0.0', at: 'side' }]);
+	});
+
+	test('@smoke a running operation turns its button glyph into a spinner', async ({ page }) => {
+		await installMockBridge(page, fixtureWithRefs({ gitOpDelayMs: 1500 }));
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: 'Fetch' }).click();
+		await expect(page.getByTestId('git-busy-fetch')).toBeVisible();
+		await expect(page.getByTestId('git-busy-fetch')).toHaveCount(0);
+	});
+
+	test('@smoke no hover card; HEAD is bold and what it lacks is dimmed', async ({ page }) => {
+		const fx = fixtureWithRefs();
+		const root = fx.projects?.[0]?.realPath ?? '';
+		const refs = fx.gitRefs?.[root];
+		if (refs) refs.headSha = SHA_MAIN;
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		const row = (sha: string) => page.locator(`[data-testid="commit-row"][data-sha="${sha}"]`);
+		await row(SHA_TIP).hover();
+		await page.waitForTimeout(800);
+		await expect(page.locator('[data-radix-popper-content-wrapper]')).toHaveCount(0);
+		await expect(row(SHA_MAIN).getByTestId('commit-subject')).toHaveClass(/font-semibold/);
+		await expect(row(SHA_BASE).getByTestId('commit-subject')).not.toHaveClass(/font-semibold/);
+		// The conventional-commit prefix is bold on every row.
+		await expect(row(SHA_BASE).getByTestId('commit-subject').locator('.font-semibold')).toHaveText(
+			'chore:',
+		);
+		await expect(row(SHA_TIP)).toHaveClass(/opacity-75/);
+		await expect(row(SHA_SIDE)).toHaveClass(/opacity-75/);
+		await expect(row(SHA_BASE)).not.toHaveClass(/opacity-75/);
+	});
+
+	test('@smoke branches sit in folders by prefix, and sections collapse', async ({ page }) => {
+		await installMockBridge(page, fixtureWithRefs());
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		const sidebar = page.getByTestId('git-sidebar');
+		await expect(sidebar.getByRole('button', { name: 'design' })).toBeVisible();
+		await expect(page.locator('[data-branch="design/mockup"]')).toHaveText('mockup');
+		await sidebar.getByRole('button', { name: 'design' }).click();
+		await expect(page.locator('[data-branch="design/mockup"]')).toHaveCount(0);
+
+		// A remote starts closed.
+		const mains = sidebar.getByText('main', { exact: true });
+		const before = await mains.count();
+		await sidebar.getByRole('button', { name: 'origin' }).click();
+		await expect(mains).toHaveCount(before + 1);
+
+		await sidebar.getByRole('button', { name: 'Branches' }).click();
+		await expect(page.getByTestId('git-branch')).toHaveCount(0);
+	});
+
 	test('@smoke history rows render and double-clicking a branch checks it out', async ({
 		page,
 	}) => {
@@ -247,11 +329,59 @@ test.describe('git-mode local changes', () => {
 		await page.goto(PROJECT);
 		await page.getByRole('tab', { name: /^Git/ }).click();
 		await page.getByTestId('git-local-changes').click();
+		await page.getByTestId('unstaged-list').getByRole('button', { name: 'Stage all' }).click();
+		await expect.poll(() => gitOps(page)).toEqual([{ kind: 'stage', paths: [`${root}/a.ts`] }]);
+	});
+
+	test('@smoke double-clicking a row stages it, and a staged one unstages', async ({ page }) => {
+		const { fx, root } = fixtureWithChanges([
+			{ rel: 'a.ts', group: 'unstaged' },
+			{ rel: 'b.ts', group: 'staged' },
+		]);
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('git-local-changes').click();
 		await page
 			.getByTestId('unstaged-list')
-			.getByRole('button', { name: 'Stage', exact: true })
-			.click();
-		await expect.poll(() => gitOps(page)).toEqual([{ kind: 'stage', paths: [`${root}/a.ts`] }]);
+			.getByTestId('change-row')
+			.first()
+			.getByRole('button')
+			.dblclick();
+		await page
+			.getByTestId('staged-list')
+			.getByTestId('change-row')
+			.first()
+			.getByRole('button')
+			.dblclick();
+		await expect
+			.poll(() => gitOps(page))
+			.toEqual([
+				{ kind: 'stage', paths: [`${root}/a.ts`] },
+				{ kind: 'unstage', paths: [`${root}/b.ts`] },
+			]);
+	});
+
+	test('@smoke Shift+click picks a range and the header acts on it', async ({ page }) => {
+		const { fx, root } = fixtureWithChanges([
+			{ rel: 'a.ts', group: 'unstaged' },
+			{ rel: 'b.ts', group: 'unstaged' },
+			{ rel: 'c.ts', group: 'unstaged' },
+		]);
+		await installMockBridge(page, fx);
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByTestId('git-local-changes').click();
+		const rows = page.getByTestId('unstaged-list').getByTestId('change-row');
+		await rows.nth(0).getByRole('button').click();
+		await rows
+			.nth(1)
+			.getByRole('button')
+			.click({ modifiers: ['Shift'] });
+		await page.getByTestId('unstaged-list').getByRole('button', { name: 'Stage 2' }).click();
+		await expect
+			.poll(() => gitOps(page))
+			.toEqual([{ kind: 'stage', paths: [`${root}/a.ts`, `${root}/b.ts`] }]);
 	});
 
 	test('@smoke committing records the message', async ({ page }) => {
@@ -273,7 +403,7 @@ test.describe('git-mode local changes', () => {
 		await page.goto(PROJECT);
 		await page.getByRole('tab', { name: /^Git/ }).click();
 		await page.getByTestId('git-local-changes').click();
-		await page.getByRole('button', { name: 'Discard' }).click();
+		await page.getByRole('button', { name: 'Discard all' }).click();
 		await expect(page.getByText('Are you sure?')).toBeVisible();
 		await page.getByRole('button', { name: 'Cancel' }).click();
 		await expect(page.getByText('Are you sure?')).toBeHidden();

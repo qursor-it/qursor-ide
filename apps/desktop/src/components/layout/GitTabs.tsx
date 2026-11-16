@@ -1,4 +1,6 @@
+import { TAB_LOOK } from '@components/layout/SessionTabs';
 import { TabGroup } from '@components/layout/TabGroup';
+import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import {
@@ -7,7 +9,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
-	IconButton,
+	Button,
 	Input,
 } from '@factorai/ui';
 import { queryKeys } from '@lib/queryKeys';
@@ -60,7 +62,7 @@ export function GitTabs() {
 			role="tablist"
 			aria-label="Git tabs"
 			data-testid="git-tabs"
-			className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5"
+			className="scrollbar-none flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5"
 		>
 			{/* `TabGroup` is sortable, so it needs the contexts even with nothing to
 			    move. */}
@@ -100,9 +102,18 @@ export function GitTabs() {
 				}}
 			>
 				<DropdownMenuTrigger asChild>
-					<IconButton size="md" aria-label="Open Git tab" title="Open a Git tab">
-						<Plus />
-					</IconButton>
+					{/* Labelled, not a bare +: this is how another project's history is
+					    opened, and a glyph alone did not say so (ADR-0100). */}
+					<Button
+						variant="ghost"
+						size="sm"
+						aria-label="Open Git tab"
+						title="Open another project's repository"
+						data-testid="git-open-tab"
+						className="shrink-0 gap-1.5 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+					>
+						<Plus /> Open project
+					</Button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="start">
 					<DropdownMenuItem
@@ -146,6 +157,7 @@ export function GitTabs() {
 					)}
 					{shown.map((p) => (
 						<DropdownMenuItem key={p.id} onSelect={() => openTab(p.id, p.realPath)}>
+							<ProjectIcon name={p.displayName} size={16} />
 							{p.displayName}
 						</DropdownMenuItem>
 					))}
@@ -175,11 +187,7 @@ function GitTabItem({ tab, active }: { tab: GitTab; active: boolean }) {
 			data-testid="git-tab"
 			data-dir={tab.dir}
 			title={tab.dir}
-			className={`group flex h-7.5 max-w-60 shrink-0 cursor-pointer items-center gap-1.5 rounded px-2 text-sm ${
-				active
-					? 'bg-secondary text-foreground'
-					: 'text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground'
-			}`}
+			className={`group flex h-8 max-w-60 shrink-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm ${TAB_LOOK(active)}`}
 			onClick={() => activate(tab.dir)}
 			onKeyDown={(e) => {
 				if (e.key === 'Enter' || e.key === ' ') {
@@ -199,7 +207,7 @@ function GitTabItem({ tab, active }: { tab: GitTab; active: boolean }) {
 			<button
 				type="button"
 				aria-label={`Close Git tab ${label}`}
-				className={`-mr-1 rounded p-0.5 text-muted-foreground/70 hover:text-primary focus-visible:opacity-100 ${
+				className={`-mr-1 rounded-md p-0.5 text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:opacity-100 ${
 					active ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
 				}`}
 				onClick={(e) => {

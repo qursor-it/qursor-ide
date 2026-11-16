@@ -63,10 +63,16 @@ test('sessions: tabs and the session header', async ({ page }) => {
 	await agentWrites(page, 'pty-stripe', TRANSCRIPT);
 	await rest(page);
 	// The tab strip, the header under it and the first lines of the agent's
-	// output: enough terminal to say what the tab holds.
-	await shot(page, 'sessions-tabs', { x: 0, y: 0, width: 880, height: 270 });
-	// The README's picture of the same moment, the whole window (ADR-0071).
+	// output: enough terminal to say what the tab holds (ADR-0100).
+	await shot(page, 'sessions-tabs', { x: 0, y: 0, width: 1100, height: 330 });
+	// The README's picture of the same moment, the whole window (ADR-0071),
+	// with the Review panel open beside the session as a new install has it.
+	await page.getByRole('button', { name: 'Toggle file tree' }).click();
+	await page.getByRole('tab', { name: 'Review' }).click();
+	await rest(page);
 	await windowShot(page, 'sessions');
+	await page.getByRole('button', { name: 'Toggle file tree' }).click();
+	await rest(page);
 	// Every dot the sidebar can show at once: working, waiting, stopped.
 	const sidebar = await around([page.getByTestId('sidebar')], 0);
 	await shot(page, 'sessions-status', { ...sidebar, y: 96, height: 520 });
@@ -175,7 +181,7 @@ test('sessions: search results', async ({ page }) => {
 		],
 	});
 	await page.goto('/');
-	await page.getByPlaceholder('Search sessions…').fill('retry');
+	await page.getByPlaceholder('Search projects and sessions…').fill('retry');
 	await expect(page.getByText(/wakes the NAS/)).toBeVisible();
 	await rest(page);
 	const results = await around([page.getByText(/updater retries a failed download/)], 0);

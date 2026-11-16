@@ -1,3 +1,5 @@
+import { ProjectIcon } from '@components/layout/ProjectIcon';
+import { ProjectOverview } from '@components/project/ProjectOverview';
 import { IntelligenceView } from '@components/intelligence/IntelligenceView';
 import { EmptyHero } from '@components/layout/EmptyHero';
 import { StatusDot } from '@components/layout/StatusDot';
@@ -192,6 +194,7 @@ function ProjectView() {
 		// routes/search.tsx.
 		<main className="flex h-full flex-col">
 			<header className="flex shrink-0 items-start gap-4 px-6 pt-6 pb-4">
+				<ProjectIcon name={project?.displayName ?? id} size={40} />
 				<div className="min-w-0 flex-1">
 					<h2 className="font-semibold text-lg">{project?.displayName ?? id}</h2>
 					{project?.realPath && (
@@ -253,6 +256,8 @@ function ProjectView() {
 					</span>
 				)}
 			</header>
+
+			{project && <ProjectOverview project={project} />}
 
 			{/* Three tabs at most, hardcoded for the same reason the panel's three
 			    are (Q18): this is a project's lists, not a registry. The third is

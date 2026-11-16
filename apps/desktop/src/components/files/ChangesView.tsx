@@ -53,7 +53,7 @@ export function ChangesView() {
 	);
 }
 
-function ChangeRow({ change }: { change: GitChange }) {
+export function ChangeRow({ change }: { change: GitChange }) {
 	const { open } = useFileViewer();
 
 	// Which pair the diff compares is the row's group: a staged row has no side

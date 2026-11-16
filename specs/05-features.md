@@ -508,6 +508,20 @@ title, relative timestamp, turn count, and a status badge.
 **UI.** Sidebar (or full pane when on `/projects/$id`). Click → open
 session view. Keyboard: ↑/↓ to navigate, Enter to open.
 
+**The project page's overview** (added 2026-11-13, ADR-0090), between its
+header (now led by the project's tile at 40px) and its tabs, in
+`components/project/ProjectOverview.tsx`:
+
+- Three stats: **Working now** (live sessions of the project that are working
+  and not unseen), **Needs you** (waiting or unseen, in the accent when not
+  zero), **Uncommitted** (files in the project folder's git status, with a
+  `Review` link that opens the file panel on Changes; "Not a repository"
+  outside one). Uncommitted reads the project folder, not a session's worktree.
+- **Rules the agent runs under**: whether `CLAUDE.md` exists in the project
+  folder (`path_kinds`), and when it does an `Open CLAUDE.md` button that opens
+  it in the viewer, where F26 edits it. The first door onto F9; plans and
+  creating the file are not in it yet.
+
 An expanded project lists its **10 most relevant** sessions inline: **pinned
 first**, then anything with a live PTY, then most-recently-active. Running-first
 is the point of the second key — what an agent is doing *now* matters more than
@@ -738,6 +752,19 @@ the only signal a one-item menu has room for.
 **Behavior.** Opening a session shows the embedded terminal (F5) filling
 the pane, with a thin header for the project name + session id. There is
 **no** chronological JSONL event viewer for ordinary sessions.
+
+**Two rows since 2026-11-13** (ADR-0090). The first says where the session
+is, in 12px metadata: the project's 14px tile and name, the branch, the agent
+mark, the profile and the checkout picker. The second says what it is and what
+you can do: the status dot (still the one animated dot), the session title at
+14px medium in the foreground colour, a **status pill** naming the state in
+words (`Working`, `Needs you` in the accent, `Stopped`; no `title`, the dot has
+it), and a **changes chip** — `N files +A −D` for the checkout, read every time a
+session is shown (switching back to one included) and when the window regains
+focus (no poll of its own; with
+the panel open it shares the panel's query and its 3s poll), absent outside a
+repository and on a clean tree — whose click opens the file panel on its Changes tab (F13). The pin and
+the close control sit at the right end of that row.
 
 **The header's one control is a close `×`**, an `IconButton` at the right
 end, swapping to a labelled `Restart` when no PTY is live. Closing kills the
@@ -2911,6 +2938,13 @@ off the file-tree toggle (Q15). It belongs to the keybinding pass.
 
 ## F16 — Session tabs
 
+**Back in the top bar since 2026-11-16 (ADR-0100)**, after three days as the
+Inbox (ADR-0092): the work row under the brand row holds the session tabs in
+Sessions mode and the repository tabs in Git mode, each mode its own list. Tabs
+are 32px, 8px radius, raised as a `background` card with a hairline ring when
+active and quiet on the chrome otherwise; a project's group is a 10% tint of its
+swatch around its chip and tabs. Everything below holds.
+
 **Behavior.** The top bar carries a tab per **open session**, for switching
 between agents without going through the sidebar.
 
@@ -3366,6 +3400,10 @@ are guarded: `lib/crashReport.test.ts` on the building side and
 ---
 
 ## F18 — Git graph
+
+**Since 2026-11-16 the panel's Graph tab renders F35's Git mode view (ADR-0102);**
+the rail, chips and node rules below still apply to its rows, the hover card,
+working row and tabbed detail pane do not.
 
 **Specified 2026-08-17**, from the clarify-needs interview roadmap item 1 (#13) was
 gated on. Not built yet.
@@ -3868,7 +3906,7 @@ section that edits them.
 
 | Shortcut             | Action                                    |
 | -------------------- | ----------------------------------------- |
-| `Mod + K`            | Focus sidebar search — from anywhere      |
+| `Mod + K`            | Open the command palette — from anywhere (F37) |
 | `Mod + F`            | Find, in a focused viewer or terminal; focus sidebar search anywhere else |
 | `Mod + N`            | New session in the active project         |
 | `Mod + W`            | Close the focused tab                     |
@@ -6613,8 +6651,10 @@ scrolling the terminal is untouched.
 
 Viewer focused, `Mod+F` opens find — Monaco's widget through the `findHandle` the
 viewer already provides. Anywhere else it focuses the sidebar search, which is
-what was asked for. `Mod+K` focuses the sidebar search regardless of focus, so
-there is one key whose meaning never depends on where you were looking.
+what was asked for. `Mod+K` opens the command palette regardless of focus
+(F37; it focused the sidebar search until 2026-11-13, an action that is now
+unbound by default), so there is one key whose meaning never depends on where
+you were looking.
 
 **A focused terminal keeps `Mod+F` and gets no find bar**, which is the honest
 state rather than the tidy one: `SearchAddon` is loaded and has no UI, so there
@@ -8376,6 +8416,16 @@ Three zones, the layout of desktop git clients the user already knows:
 - **Main area** — either the history or the local changes, as picked in the
   sidebar.
 
+**Since ADR-0095** the Git tabs are the sidebar's *Repositories* list (a row
+per open tab: tile, name, branch with ahead/behind, `×`, and the `+` menu beside
+the heading), the selected commit's detail is a column on the history's right,
+and the table has a Session column (F41). The top bar has one row.
+
+**On the chrome, since 2026-11-13** (ADR-0090): the sidebar sits on the
+window's chrome with 8px-radius rows (the selected section raised with the
+`background` fill), and the action bar, the banners, the main area and the op
+log share one card, exactly as the session column does in Sessions mode.
+
 **History.** The F18 graph at full width as a table: graph rail, ref badges and
 subject, author, date, short sha. Rows have no hover card (the panel's Graph
 tab keeps it): the selected commit's detail below already shows it. Selecting a branch in the sidebar filters to
@@ -8385,11 +8435,56 @@ the selected file (the existing Monaco diff, side by side or inline). Reuses
 `GraphRail`, `CommitDetail` and the diff viewer; only the hosting is new, which
 is the "phase 2" F18 already deferred.
 
-**Local changes.** Two lists, `Unstaged` and `Staged`, each with stage-all /
-unstage-all. The diff of the selected file with a per-hunk `Stage hunk` /
-`Unstage hunk`. Discard (a file or a hunk) asks for confirmation every time. A
-commit box under the lists: subject, optional body, `Amend`, `✦ Write message`,
-and a `Commit on <branch>` button.
+**Local changes.** Two lists, `Staged` then `Unstaged`, each row a file's icon,
+its folder dimmed and its name, and `+N −M`. A click picks a row and shows its
+diff; Ctrl/Cmd+click adds or removes a row, Shift+click takes the range from
+the last plain click, within one list. The list's heading acts on the rows
+picked in it, or on every row when none is: `Stage n` / `Stage all`,
+`Unstage n` / `Unstage all`, and on `Unstaged` `Discard n` / `Discard all`.
+Rows carry no buttons of their own (ADR-0098). A double-click stages an
+unstaged row and unstages a staged one. The diff of the selected file with a
+per-hunk `Stage hunk` / `Unstage hunk`, re-read every 5s like the list, and
+the patch of a new file in a new directory is the file's own. Discard (files or
+a hunk) asks for confirmation every time. A commit box under the lists: subject,
+optional body, `Amend`, `✦ Write message`, and a `Commit on <branch>` button.
+
+**The panel's Graph tab is Git mode in the panel (2026-11-16, ADR-0102).** In
+Sessions mode the right panel's *Graph* tab shows the active checkout as Git
+mode does: the branch with ahead/behind, *Commits* / *Changes n* to switch
+between the history table and Local changes, *Open in Git mode*, the action bar
+(wrapping, without the ask field), the table with the commit docked under it,
+and the last operation's output. Columns are container-sized: at the panel's
+default width the table shows graph and subject; widening the panel by its edge
+brings back SHA, Date, Author and Session, and the commit's Ask and Actions move
+beside it. Local changes stack the lists above the diff when narrow. Git's
+confirm and error dialogs are mounted once in the shell, for both. The panel's
+tab row scrolls when the tabs outgrow it.
+
+**The sidebar since ADR-0098.** The open repositories are tabs in the top
+bar's work row again (ADR-0100), not a list here. The strip ends in a labelled
+**Open project** button (its menu: *Open repository…*, a filter, every project
+with its tile), and with no tab open the card lists the projects, one click
+each. `Branches`, `Remotes`, `Tags`, `Stashes` and `Worktrees` are
+headings that collapse, and branches with a `/` sit in folders by prefix that
+collapse too (`design/…` under *design*). The current branch is bold with a
+check; the others carry a branch glyph. Each remote is a node, closed until
+opened, holding its branches the same way. What is collapsed is kept.
+
+**The table and the detail since ADR-0099**, laid out as desktop Git clients
+do. The table runs the card's full width: 24px rows under column heads (Graph,
+Subject, Session — only when some commit has one —, Author with a small avatar,
+SHA, the full date). A conventional-commit prefix (`feat:`, `fix(ui):`) is
+bold. The selected row is filled with the accent. No hover card on a row. The
+commit HEAD is on has a bold subject, and the commits HEAD does not contain
+(another branch, or not pulled yet) are at 75% opacity; when HEAD is past the
+loaded page nothing is dimmed. The selected commit is docked under the table,
+behind a handle that resizes it (the height is kept): on the left the author
+with a large avatar, email and date, then labelled Refs, SHA (copyable) and
+Parents (each selects that commit), the message, and the files; on the right,
+the session it was made in above *Ask about this commit* (the ✦ questions as
+full-width buttons) and *Actions* (Cherry-pick, Revert, New branch here, Tag,
+Checkout, the last confirmed). The action bar's buttons
+carry glyphs, each turning into a spinning loader while its own operation runs, Push outlined with its ahead count, a rule after it.
 
 ### v1 operations
 
@@ -8401,7 +8496,7 @@ unedited.
 | Area | Operations |
 |---|---|
 | Changes | stage / unstage a file or a hunk, discard a file or a hunk (confirmed), commit, amend |
-| Branches | checkout (double-click), new branch from the selected commit, rename, delete (confirmed) |
+| Branches | checkout (double-click), new branch from the selected commit, rename, delete (confirmed); a branch's right-click menu as desktop Git clients have it: Checkout…, Pull from / Push to its remote (current branch), Merge it into / Rebase the current branch on it…, New Branch… / New Tag… at it, Rename…, Delete…, AI › Summarise, Copy Branch Name |
 | Integrate | merge a branch into the current one, rebase the current branch onto another (non-interactive) |
 | Commit (history context menu) | checkout the commit (detached, confirmed), new branch here, new tag here, cherry-pick, revert (a merge commit against its first parent, `-m 1`), merge it into the current branch, rebase the current branch onto it, reset the current branch to it (soft / mixed / hard; hard confirmed), copy SHA, copy message |
 | Remote | fetch, pull, push, set upstream on the first push |
@@ -8527,3 +8622,244 @@ user's own Claude Code settings, so what they commit follows those settings.
 - How hunk staging is fed to `git apply --cached` (a patch built from the diff
   the view already shows).
 - Polling cadence while Git mode is open (F18 polls at 30 s, Changes at 3 s).
+
+## F36 — The Inbox: who needs you, across every project
+
+**Withdrawn 2026-11-16 (ADR-0100).** The session tab strip (F16) is back, the
+sidebar shows only the project tree, and the Sessions icon's badge still counts
+the sessions that need you. Kept below as it was specified.
+
+**Specified and built 2026-11-13**, the second slice of the layout redesign
+that ADR-0090 started. Code in `components/layout/Inbox.tsx` and
+`lib/inbox.ts`.
+
+**Why.** `PRODUCT.md` says success is knowing, without hunting, which agent
+needs you next. Until now that answer was spread over 8px dots in the project
+tree and the tab strip, so a session waiting in a collapsed project, or in a
+tab scrolled off the strip, was invisible.
+
+**Placement (since ADR-0093).** The Inbox is the column beside the app rail,
+its whole height, whenever the rail's Inbox (Sessions) icon is the place picked;
+the project tree is the other list that column can show. Before that it sat at
+the top of the expanded sidebar, under the search box and above `PROJECTS`. Not in the collapsed rail (The Rail Rule: nothing in it is
+read as prose). Capped at 45% of the sidebar's height, scrolling inside itself,
+so the project tree always keeps room.
+
+**What it lists.** Two sections, each with a count, each absent when empty;
+the whole Inbox renders nothing when both are:
+
+- **Needs you** — every session whose status is `waiting_input`, or that
+  carries F32's unseen mark (it stopped or started waiting while you were not
+  looking). A blue edge on the left of the row: blue is *your move*.
+- **Working** — every session whose status is `working` and that is not in
+  *Needs you*.
+
+A stopped session you have already seen is in neither. Candidates are the open
+tabs, in tab order, then live sessions with no tab (a routine's, F22, whose dot
+takes the "no tab" modifier). Tabs and live sessions of a project that no longer
+exists are dropped, as the strip drops them (F16).
+
+**A row** is the session's status dot, the project's tile at 16px and its name
+in medium weight, and under it the session's title in 12px metadata: the
+project leads, since it is how a row is found among many (ADR-0098). The row of the session you are looking at is raised
+(`aria-current="page"`). A click opens the session; one that stopped is
+restarted first, exactly as a click on a stopped tab is (F16).
+
+**Rows are buttons, not links**, so they never compete with the project tree's
+session links for the same name, and they carry `inbox-row-<sessionId>`.
+
+**Since ADR-0092 it lists everything open**: after *Working* come **Open**
+(open sessions that are stopped and seen) and **Pull requests** (open pull
+request tabs, `#N title` and their project). Every row has a close `×` (on
+hover, focus, or the current row) and closes on middle-click, through the same
+`CloseSessionConfirm` the header uses; `Mod+W` closes the current session or
+pull request and `Mod+PageUp/PageDown` step through the list in order.
+
+**Not yet.** The time a session has been waiting, and the question the agent
+asked, on its row.
+
+## F37 — The command palette
+
+**Specified and built 2026-11-13**, the third slice of the layout redesign
+(ADR-0090). Code in `components/layout/CommandPalette.tsx` and
+`store/paletteStore.ts`.
+
+**Why.** Reaching a session meant finding its project in the tree or its tab in
+the strip, and the actions lived in four different places. One field that finds
+sessions, projects and actions is the shortest path from "I want X" to X.
+
+**Doors.** `Mod+K` from anywhere, the terminal included (F28's `openPalette`;
+`focusSidebarSearch` keeps its row in settings, unbound by default), and the
+search pill centred in the top bar's tools row, which shows the chord.
+
+**Contents.** A dialog 14% from the top of the window, 36rem wide: a field, the
+results, and a footer naming the keys.
+
+- **Nothing typed:** the sessions that need you, then the ones working, in the
+  Inbox's order (F36), each with its status dot and its project; then the
+  actions.
+- **Typing:** projects whose name contains the text (at most five), the actions
+  whose label contains it, then sessions found by F4's full-text index (at most
+  eight, one row per session). Name matches lead because they are more specific
+  than a hit in a transcript.
+- **Actions:** jump to the next session that needs you (only when one does), a
+  new session in the active project (only on a route with one), open the Board
+  (F38), toggle the file panel, open settings.
+
+**Keys.** `↑` / `↓` move and wrap, `Enter` runs the highlighted row, `Esc`
+closes. A row runs on click too. The field is a `combobox` whose
+`aria-activedescendant` names the highlighted `option`. Each open starts with an
+empty field.
+
+**Running a row** closes the palette first. A session that stopped is restarted
+before it opens, as a stopped tab is (F16).
+
+**Not yet.** Files, commands typed with `>`, and Git actions.
+
+## F38 — The Board
+
+**Withdrawn 2026-11-16 (ADR-0100)**: the route, the rail button and the palette
+action are gone. Kept below as it was specified.
+
+**Specified and built 2026-11-13**, the last slice of the layout redesign
+(ADR-0090). Code in `routes/board.tsx`; the columns come from F36's
+`inboxSections`.
+
+**Why.** The Inbox answers "who needs me next" in a sidebar's width. Supervising
+several agents at once also wants the whole picture on one screen: what is
+waiting, what is running and what has finished, across projects.
+
+**Door.** `/#/board`, from the grid button in the top bar's tools row (left of
+settings) and from the palette's "Open the board of all sessions".
+
+**Columns.** **Needs you** and **Working** exactly as the Inbox defines them,
+then **Stopped**: open tabs whose session is not running and that you have
+already seen. Each column has a count; a card is the project's 14px tile and
+name with the status dot at the right, then the session title on up to two
+lines. A click opens the session, restarting one that stopped (F16), through
+the same `useOpenSession` the Inbox and the palette use.
+
+**Empty.** With nothing open or live the page says so instead of drawing three
+empty columns.
+
+**Not yet.** The last line of output, the time in a state and the diff of each
+session on its card, and a "ready for review" column (stopped with uncommitted
+changes), which needs a per-session view of the checkout's status.
+
+## F39 — Answering the agent: the waiting banner
+
+**Specified and built 2026-11-13** (ADR-0091). Code in
+`components/session/AgentReply.tsx`, `lib/permissionPrompt.ts`, and
+`readSessionTail` / `sendToSession` / `pressKey` in `components/terminal/Terminal.tsx`.
+
+**The waiting banner** sits between the session header and the terminal while
+the session's status is `waiting_input`, and goes the moment it is not. 150ms
+after the status flips it reads the last 24 lines of the terminal:
+
+- If they end in Claude Code's permission menu — a `Do you want to …?` line
+  followed by options numbered from 1, boxed or not — the banner shows the
+  question and a button per option (the first one primary, each with its number
+  as a `kbd`). A click presses that number in the terminal, unpasted, and puts
+  the caret back in the terminal. A trailing `(esc)` is dropped from the label.
+- Otherwise there is no banner (ADR-0101): the terminal and the status dot
+  already say the agent is waiting.
+- With the menu it also offers "Answer in the terminal", which focuses it.
+
+**No reply box** (ADR-0097). A reply is typed at the agent's own prompt in the
+terminal, which is the only input a session has: a second field would paste
+into it and lose what typing gives — `!` for a shell command, `/` commands and
+their completion, the prompt's history.
+
+**Never** does anything here send input without a click.
+
+## F40 — The agent's plan and the session's cost, in the session header
+
+**Specified and built 2026-11-13.** Code in `services/session_plan.rs`, the
+`session_plan` command in `commands/usage.rs`, and `PlanChip` / `CostLabel` in
+`components/session/HeaderChips.tsx`.
+
+**The plan** is the todo list Claude Code keeps with its `TodoWrite` tool.
+`session_plan(sessionId)` returns the items of the **last** `TodoWrite` call in
+the session's transcript (`content` and `status`: `pending`, `in_progress`,
+`completed`), or null for an unknown session, a missing transcript, a Codex
+session or one that never wrote a plan. It scans the file once and parses only
+the lines that name the tool. The renderer asks again whenever the session's
+status changes (the status is part of the query key), and never on a timer.
+
+In the panel's Review tab (F42, ADR-0094; until then a chip in the header's
+second row): `Plan done/total` and the list of steps — a check for done (struck through), the
+accent's dot for in progress (medium weight), an empty circle for to do.
+Absent with no plan.
+
+**The cost** is `session_usage`'s estimate (F34), shown as metadata text after
+the plan chip, from the status bar's own query so it adds no read while that
+bar is on. Absent when there is no estimate.
+
+## F41 — Which session was running when a commit was made
+
+**Specified and built 2026-11-13.** Code in `lib/sessionDuring.ts` and
+`components/gitmode/CommitSession.tsx`.
+
+Over a selected commit's detail in Git mode, a strip says "Committed while
+*<session title>* was running in this checkout" with an `Open session` link.
+It is an **inference, not a record**, and worded as one: the session is the
+project's (sub-agents skipped) whose checkout is this one — its worktree when it
+has one, otherwise a `cwd` inside the checkout — and whose span, from
+`createdAt` to `updatedAt` plus one minute, contains the commit time. With
+several, the one started last. Absent for a folder that is no project and when
+nothing matches. It reads the session list and the commit detail the view
+already caches, so it costs no extra git call.
+
+## F42 — The Review tab
+
+**Specified and built 2026-11-13** (ADR-0094). Code in
+`components/files/ReviewView.tsx`.
+
+The right-hand panel's first tab, and where a new install opens it. Three
+sections, each under a 12px uppercase label:
+
+- **This session** (on a session route only): the state as F3's pill, the
+  branch (from the checkout's status), the turn count (from the index), and the
+  cost so far (F34's estimate), each line absent when its fact is.
+- **Changed files**: the checkout's status, its total `+A −D` beside the label,
+  the first eight rows exactly as the Changes tab draws them (a click opens the
+  diff in the viewer), and *Review all changes*, which switches to Changes. Says
+  "Not a repository." or "Nothing changed in this checkout." instead.
+- **Plan** (on a session with one): F40's list and its `done/total`.
+
+Reads only queries the app already keeps — the Changes panel's status, the
+session index, `session_usage`, `session_plan` — with no poll of its own beyond
+the panel's.
+
+## F43 — Reviewing a session's changes on one screen
+
+**Specified and built 2026-11-13.** Code in `routes/review.tsx` and
+`lib/agentSummary.ts`. Route `/projects/$projectId/sessions/$sessionId/review`.
+
+**Doors.** The session header's changes chip (F3) and the Review tab's *Review
+all changes* on a session (F42; off a session that button still goes to the
+Changes tab).
+
+**Layout.** In the work card: a header with the project, the session title and
+the branch, *Back to session*, the title *Review changes* with the file count
+and `+A −D`, the session's state pill, and *Commit…*. Under it three columns:
+
+- **Files**, the project folder's changed files in the Changes tab's order,
+  each with a *reviewed* checkbox (kept while the page is open, not stored) and
+  the count `n / m reviewed`. Clicking a name shows its diff.
+- **The diff** of the file picked (the first one until you pick), with the
+  viewer's own diff editor and the same pair the Changes tab would compare.
+- **The side**: *What the agent said* — the text of the newest assistant message
+  in the last 40 transcript events — *Checks the agent ran*: the Bash commands
+  in those events that look like a test, a lint or a type check, the latest run
+  of each, marked passed, failed (its tool result was an error) or running (no
+  result yet) — the agent's *Plan* (F40) when it has one,
+  and *Ask the agent to revise*: a note sent to the session as a reply prefixed
+  `About <file>:`, or `About <file>, line n:` / `lines n–m:` once lines are
+  picked on the diff's right-hand side (F39's paste path, then Enter), after which you are back on
+  the session to watch it work. Disabled when the session is not running.
+
+**Leaving.** *Back to session* or `Esc`. *Commit…* opens Git mode on the
+project (F35), where commits are made; nothing on this page writes to git.
+
+**Not in it.** Notes kept on the diff: a note is sent, not pinned to its lines.

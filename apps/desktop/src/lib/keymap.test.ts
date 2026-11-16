@@ -134,7 +134,7 @@ describe('the chords xterm must let through', () => {
 	});
 
 	it('covers every spec that claims it', () => {
-		const claiming = SHORTCUT_SPECS.filter((s) => s.overTerminal).length;
+		const claiming = SHORTCUT_SPECS.filter((s) => s.overTerminal && s.defaultHotkey).length;
 		expect(hotkeysOverTerminal(defaultKeymap())).toHaveLength(claiming);
 	});
 });

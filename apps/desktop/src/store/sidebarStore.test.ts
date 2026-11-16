@@ -74,8 +74,8 @@ describe('effectiveSidebarWidth', () => {
 		expect(effectiveSidebarWidth(480, true)).toBe(SIDEBAR_RAIL_WIDTH);
 	});
 
-	it('reports the stored width while expanded', () => {
-		expect(effectiveSidebarWidth(320, false)).toBe(320);
+	it('reports the rail plus the stored width while expanded', () => {
+		expect(effectiveSidebarWidth(320, false)).toBe(SIDEBAR_RAIL_WIDTH + 320);
 	});
 });
 

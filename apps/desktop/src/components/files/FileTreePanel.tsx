@@ -1,3 +1,4 @@
+import { ReviewView } from '@components/files/ReviewView';
 import type { DirEntry } from '@factorai/types';
 import { useIsFetching, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
@@ -7,8 +8,8 @@ import { IconButton } from '@factorai/ui';
 import { ChangesView } from '@components/files/ChangesView';
 import { FileTreeNode } from '@components/files/FileTreeNode';
 import { FileTreeProvider } from '@components/files/fileTreeContext';
-import { GraphView } from '@components/graph/GraphView';
 import { PrsView } from '@components/prs/PrsView';
+import { GitPanel } from '@components/gitmode/GitPanel';
 import { useActiveCheckout } from '@hooks/useActiveCheckout';
 import { useGitDecorations } from '@hooks/useGitDecorations';
 import { checkoutLabel } from '@hooks/useWorktrees';
@@ -86,7 +87,7 @@ export function FileTreePanel() {
 				style={{ width: size }}
 				// `select-none`: dragging the resizer sweeps the cursor across these
 				// rows, and double-click-to-open would otherwise select the filename.
-				className="flex shrink-0 select-none flex-col overflow-hidden border-l border-border bg-card"
+				className="flex shrink-0 select-none flex-col overflow-hidden rounded-xl border border-border bg-card shadow-card"
 			>
 				<PanelBody />
 				{/* **The narrow-window host** (ADR-0037): the same `ViewerPane` the
@@ -153,7 +154,12 @@ function PanelBody() {
 				    requests took a fourth slot). Appended rather than reordered, so
 				    Files, Changes and Graph keep the positions muscle memory already
 				    has. */}
-				<div className="flex flex-1 items-center gap-0.5" role="tablist" aria-label="Panel">
+				<div
+					className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+					role="tablist"
+					aria-label="Panel"
+				>
+					<TabButton tab="review" label="Review" />
 					<TabButton tab="files" label="Files" />
 					<TabButton tab="changes" label="Changes" />
 					<TabButton tab="graph" label="Graph" />
@@ -199,8 +205,10 @@ function PanelBody() {
 			    inside it — a pane docked to the bottom of a scroll container scrolls
 			    away with the content. The PRs tab sits out here too (F31): its list
 			    and its detail each scroll on their own under a fixed header. */}
-			{tab === 'graph' ? (
-				<GraphView />
+			{tab === 'review' ? (
+				<ReviewView />
+			) : tab === 'graph' ? (
+				<GitPanel />
 			) : tab === 'prs' ? (
 				<PrsView />
 			) : (
@@ -323,7 +331,7 @@ function TabButton({ tab, label }: { tab: PanelTab; label: string }) {
 			type="button"
 			role="tab"
 			aria-selected={active}
-			className={`rounded px-1.5 py-0.5 font-medium text-sm transition-colors ${
+			className={`shrink-0 rounded px-1.5 py-0.5 font-medium text-sm transition-colors ${
 				active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
 			}`}
 			onClick={() => setTab(tab)}

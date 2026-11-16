@@ -15,7 +15,8 @@ import { SortableContext, horizontalListSortingStrategy, useSortable } from '@dn
 // below, and dnd-kit's `CSS` helper would shadow it at module scope — a
 // `CSS.escape is not a function` the moment you switch session.
 import { CSS as DndCss } from '@dnd-kit/utilities';
-import type { Project, SessionSummary, TerminalStatus } from '@factorai/types';
+import type { Project, TerminalStatus } from '@factorai/types';
+import { useSessionTitles } from '@hooks/useSessionTitles';
 import { useShortcuts } from '@hooks/useShortcuts';
 import { stepTab } from '@lib/keymap';
 import { queryKeys } from '@lib/queryKeys';
@@ -39,10 +40,20 @@ import { usePrTabStore } from '@store/prTabStore';
 import { useTabLayoutStore } from '@store/tabLayoutStore';
 import { useAttentionStore } from '@store/attentionStore';
 import { useTerminalStore } from '@store/terminalStore';
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { GitPullRequest, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+/** How a tab in the work row looks (DESIGN.md "Session Tabs", ADR-0100): a
+ *  raised card when it is the one open, quiet on the chrome otherwise. Shared
+ *  with the Git strip so the two read as one design. */
+export const TAB_LOOK = (active: boolean, dragging = false) =>
+	dragging
+		? 'z-10 bg-background text-foreground shadow-lg ring-1 ring-border'
+		: active
+			? 'bg-background text-foreground shadow-sm ring-1 ring-border transition-colors'
+			: 'text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground';
 
 /**
  * How far the pointer must travel before a press on a tab becomes a drag.
@@ -419,7 +430,7 @@ export function SessionTabs() {
 					// `overflow-x-auto` with the bar hidden: at 42px tall a scrollbar
 					// would eat a third of the strip. The wheel handler below is what
 					// makes it reachable without one.
-					className="scrollbar-none flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-0.5"
+					className="scrollbar-none flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5"
 					onWheel={(e) => {
 						// A vertical wheel over a horizontal strip does nothing by default,
 						// which reads as "these tabs are stuck".
@@ -566,13 +577,7 @@ function SessionTab({
 			// dimming landed on the snapshot. dnd-kit translates the real element, so
 			// the ghost, the clone and the dimming all go away: it lifts (shadow,
 			// above its neighbours) and the others slide under it.
-			className={`group flex h-7.5 max-w-60 shrink-0 cursor-pointer touch-none items-center gap-1.5 rounded px-2 text-sm ${
-				isDragging
-					? 'z-10 bg-secondary text-foreground shadow-lg'
-					: isActive
-						? 'bg-secondary text-foreground transition-colors'
-						: 'text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground'
-			}`}
+			className={`group flex h-8 max-w-60 shrink-0 cursor-pointer touch-none items-center gap-2 rounded-lg px-2.5 text-sm ${TAB_LOOK(isActive, isDragging)}`}
 			onClick={() => onOpen(id, projectId)}
 			// Middle-click closes, the way every tab strip does. It goes through the
 			// same path as the × — a shortcut to the action, not a way around the
@@ -609,7 +614,7 @@ function SessionTab({
 			<button
 				type="button"
 				aria-label={`Close ${title}`}
-				className={`-mr-1 rounded p-0.5 text-muted-foreground/70 transition-all hover:text-primary focus-visible:opacity-100 ${
+				className={`-mr-1 rounded-md p-0.5 text-muted-foreground/70 transition-all hover:bg-secondary hover:text-foreground focus-visible:opacity-100 ${
 					isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
 				}`}
 				// The sensor listens on the tab, so a press on the × is a press on the
@@ -666,13 +671,7 @@ function PrTabItem({
 			data-pr-tab={prTabDomId(tabKey)}
 			{...listeners}
 			style={{ transform: DndCss.Translate.toString(transform), transition }}
-			className={`group flex h-7.5 max-w-60 shrink-0 cursor-pointer touch-none items-center gap-1.5 rounded px-2 text-sm ${
-				isDragging
-					? 'z-10 bg-secondary text-foreground shadow-lg'
-					: isActive
-						? 'bg-secondary text-foreground transition-colors'
-						: 'text-muted-foreground transition-colors hover:bg-secondary/50 hover:text-foreground'
-			}`}
+			className={`group flex h-8 max-w-60 shrink-0 cursor-pointer touch-none items-center gap-2 rounded-lg px-2.5 text-sm ${TAB_LOOK(isActive, isDragging)}`}
 			onClick={() => onOpen(projectId, number)}
 			onAuxClick={(e) => {
 				if (e.button !== 1) return;
@@ -698,7 +697,7 @@ function PrTabItem({
 			<button
 				type="button"
 				aria-label={`Close ${label}`}
-				className={`-mr-1 rounded p-0.5 text-muted-foreground/70 transition-all hover:text-primary focus-visible:opacity-100 ${
+				className={`-mr-1 rounded-md p-0.5 text-muted-foreground/70 transition-all hover:bg-secondary hover:text-foreground focus-visible:opacity-100 ${
 					isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
 				}`}
 				onPointerDown={(e) => e.stopPropagation()}
@@ -715,42 +714,4 @@ function PrTabItem({
 
 function shortId(sessionId: string): string {
 	return sessionId.slice(0, 8);
-}
-
-/**
- * Titles for the open sessions, looked up per project.
- *
- * One query per distinct project rather than per session — they share the cache
- * entry the sidebar and project page already fill, so an open project costs
- * nothing extra. A session too new to be indexed has no title yet and falls
- * back to its short id, matching the session header — as does a restored tab
- * whose transcript has since been deleted, since the index row goes with it.
- */
-function useSessionTitles(tabs: Array<{ projectId: string }>): Map<string, string> {
-	const projectIds = useMemo(() => [...new Set(tabs.map((t) => t.projectId))].sort(), [tabs]);
-
-	// `combine` rather than a useMemo over the results array: useQueries hands
-	// back a fresh array on every render, so a memo would either lie about its
-	// dependencies or recompute constantly. This is the option built for it.
-	return useQueries({
-		queries: projectIds.map((projectId) => ({
-			queryKey: queryKeys.sessions(projectId),
-			queryFn: () => cmd.listSessions(projectId),
-		})),
-		combine: titlesOf,
-	});
-}
-
-/** Module-level so its identity is stable: useQueries re-runs an inline
- *  `combine` on every render, and this one walks every session of every open
- *  project. */
-function titlesOf(results: Array<{ data?: unknown }>): Map<string, string> {
-	const map = new Map<string, string>();
-	for (const result of results) {
-		for (const session of (result.data ?? []) as SessionSummary[]) {
-			const title = session.title.trim();
-			if (title) map.set(session.id, title);
-		}
-	}
-	return map;
 }

@@ -1487,6 +1487,15 @@ pub struct UsageReading {
 }
 
 /// Tokens and estimated list-price cost of one session. Mirrors
+/// One entry of the agent's plan (F40). `@factorai/types` `PlanItem`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanItem {
+	pub content: String,
+	/// `pending`, `in_progress` or `completed`, as the agent wrote it.
+	pub status: String,
+}
+
 /// `@factorai/types` `SessionUsage`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

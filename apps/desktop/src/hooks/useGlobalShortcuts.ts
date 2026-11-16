@@ -5,6 +5,7 @@ import { useSettingsModal } from '@hooks/useSettingsModal';
 import { useShortcuts } from '@hooks/useShortcuts';
 import { useStartSession } from '@hooks/useStartSession';
 import { usePanelStore } from '@store/panelStore';
+import { usePaletteStore } from '@store/paletteStore';
 import { useSidebarStore } from '@store/sidebarStore';
 
 /**
@@ -21,6 +22,7 @@ export function useGlobalShortcuts(): void {
 	const settings = useSettingsModal();
 	const togglePanel = usePanelStore((s) => s.toggle);
 	const focusSearch = useSidebarStore((s) => s.focusSearch);
+	const setPaletteOpen = usePaletteStore((s) => s.setOpen);
 
 	const handlers = useMemo(
 		() => ({
@@ -29,6 +31,7 @@ export function useGlobalShortcuts(): void {
 			newSession: () => {
 				if (projectId) void startSession(projectId);
 			},
+			openPalette: () => setPaletteOpen(true),
 			focusSidebarSearch: focusSearch,
 			// The other half of this action lives in `ViewerPane`: with the editor
 			// focused the chord is find, and it never reaches here.
@@ -45,7 +48,7 @@ export function useGlobalShortcuts(): void {
 			// drops the registration there.
 			quit: () => void getCurrentWindow().close(),
 		}),
-		[projectId, startSession, focusSearch, togglePanel, settings],
+		[projectId, startSession, focusSearch, setPaletteOpen, togglePanel, settings],
 	);
 
 	useShortcuts(handlers);

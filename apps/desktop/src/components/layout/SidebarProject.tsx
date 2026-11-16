@@ -543,7 +543,7 @@ const ROW_PAD = ['pl-8', 'pl-12'];
  * question in both places, and a second implementation is a second answer that
  * drifts. Only the frame differs.
  */
-export function SessionList({
+function SessionList({
 	project,
 	depth,
 	variant = 'subtree',

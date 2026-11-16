@@ -931,6 +931,47 @@ export function rebindTerminal(from: string, to: string): void {
 
 /** Dispose the pooled terminal for a session (used by restart). Does not kill
  *  the PTY — callers do that separately if needed. */
+/** The last `count` lines of a session's terminal as text, down to the cursor
+ *  (F39). Empty when the session has no terminal in the pool. */
+export function readSessionTail(sessionId: string, count: number): string[] {
+	const buffer = pool.get(sessionId)?.term.buffer.active;
+	if (!buffer) return [];
+	const end = buffer.baseY + buffer.cursorY;
+	const lines: string[] = [];
+	for (let y = Math.max(0, end - count + 1); y <= end; y++) {
+		lines.push(buffer.getLine(y)?.translateToString(true) ?? '');
+	}
+	return lines;
+}
+
+/**
+ * Send text to a session's agent as if it were typed (F39, ADR-0091): pasted,
+ * so bracketed paste applies where the agent asked for it, and out through
+ * `onData` like every keystroke. `submit` adds the Enter. False when there is
+ * no live PTY to send it to.
+ */
+export function sendToSession(sessionId: string, text: string, submit: boolean): boolean {
+	const entry = pool.get(sessionId);
+	if (!entry?.terminalId()) return false;
+	if (text) entry.term.paste(text);
+	if (submit) entry.term.input('\r');
+	return true;
+}
+
+/** Put the caret in a session's terminal. */
+export function focusTerminal(sessionId: string): void {
+	pool.get(sessionId)?.term.focus();
+}
+
+/** One keystroke to a session's agent, unpasted — what a menu's number key
+ *  needs, since a pasted digit is text, not a choice (F39). */
+export function pressKey(sessionId: string, key: string): boolean {
+	const entry = pool.get(sessionId);
+	if (!entry?.terminalId()) return false;
+	entry.term.input(key);
+	return true;
+}
+
 export function disposeTerminal(sessionId: string): void {
 	const entry = pool.get(sessionId);
 	if (!entry) return;

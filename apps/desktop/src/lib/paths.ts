@@ -124,3 +124,11 @@ export function isWithin(path: string, root: string): boolean {
 	const prefix = base === '/' ? '/' : `${base}/`;
 	return path.startsWith(prefix);
 }
+
+/** `name` inside the directory `root`, with the separator the root uses — a
+ *  backslash for a Windows path, so the result matches what the backend hands
+ *  back for the same file (ADR-0074). */
+export function childPath(root: string, name: string): string {
+	const sep = isWindowsPath(root) ? '\\' : '/';
+	return root.endsWith('/') || root.endsWith('\\') ? `${root}${name}` : `${root}${sep}${name}`;
+}

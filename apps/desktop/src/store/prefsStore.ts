@@ -141,7 +141,9 @@ const DEFAULT_PREFS: Prefs = {
 	// 24-hour by default: this app is a developer tool, and every timestamp it
 	// already prints beside a clock — a commit, a log line — is unambiguous.
 	clock24: true,
-	theme: 'system',
+	// Light by default since ADR-0096: the redesign's Paper theme is the face of
+	// the app; `system` stays one click away in Settings.
+	theme: 'light',
 	// Nothing overridden: the shipped map is `SHORTCUT_SPECS`, and an empty
 	// object here is what makes "reset all" a deletion rather than a copy of a
 	// table that would go stale.
@@ -157,6 +159,17 @@ const DEFAULT_PREFS: Prefs = {
 	terminalCursor: 'bar',
 	showStatusBar: true,
 };
+
+/**
+ * Bring stored preferences forward. Version 2 (ADR-0096) moves a stored
+ * `system` theme to `light` once, because `system` was the default until then
+ * and so says nothing about what the person chose; `dark` is a choice and stays.
+ */
+export function migratePrefs(state: unknown, from: number): unknown {
+	if (from >= 2 || !state || typeof state !== 'object') return state;
+	const prefs = state as Record<string, unknown>;
+	return prefs.theme === 'system' ? { ...prefs, theme: 'light' } : prefs;
+}
 
 export const usePrefsStore = create<PrefsState>()(
 	persist(
@@ -174,7 +187,8 @@ export const usePrefsStore = create<PrefsState>()(
 			// Deferred rather than written on every `set` (PERF-12) — see
 			// `lib/persistStorage`.
 			storage: deferredLocalStorage(),
-			version: 1,
+			version: 2,
+			migrate: migratePrefs,
 			// Named `Prefs` rather than spelled out, so a preference added to the
 			// interface and not to storage is a type error rather than a value that
 			// quietly stops persisting.
