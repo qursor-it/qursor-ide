@@ -130,6 +130,8 @@ export interface TestFixture {
 	gitRepoStates?: Record<string, GitRepoState>;
 	/** Makes `git_op` reject with this error, as a missing `git` does. */
 	gitOpFails?: AppError;
+	/** Holds every `git_op` this long before it answers, as a slow remote does. */
+	gitOpDelayMs?: number;
 	/** Makes `git_op` resolve with this result (a non-zero exit). */
 	gitOpResult?: GitOpResult;
 	gitGraphs?: Record<string, GitGraph>;

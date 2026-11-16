@@ -8467,7 +8467,7 @@ Parents (each selects that commit), the message, and the files; on the right,
 the session it was made in above *Ask about this commit* (the ✦ questions as
 full-width buttons) and *Actions* (Cherry-pick, Revert, New branch here, Tag,
 Checkout, the last confirmed). The action bar's buttons
-carry glyphs, Push outlined with its ahead count, a rule after it.
+carry glyphs, each turning into a spinning loader while its own operation runs, Push outlined with its ahead count, a rule after it.
 
 ### v1 operations
 

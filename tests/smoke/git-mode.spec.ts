@@ -148,6 +148,15 @@ test.describe('git-mode', () => {
 		).toBeVisible();
 	});
 
+	test('@smoke a running operation turns its button glyph into a spinner', async ({ page }) => {
+		await installMockBridge(page, fixtureWithRefs({ gitOpDelayMs: 1500 }));
+		await page.goto(PROJECT);
+		await page.getByRole('tab', { name: /^Git/ }).click();
+		await page.getByRole('button', { name: 'Fetch' }).click();
+		await expect(page.getByTestId('git-busy-fetch')).toBeVisible();
+		await expect(page.getByTestId('git-busy-fetch')).toHaveCount(0);
+	});
+
 	test('@smoke no hover card; HEAD is bold and what it lacks is dimmed', async ({ page }) => {
 		const fx = fixtureWithRefs();
 		const root = fx.projects?.[0]?.realPath ?? '';

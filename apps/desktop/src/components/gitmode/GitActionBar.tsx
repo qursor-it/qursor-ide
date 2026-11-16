@@ -1,3 +1,4 @@
+import type { GitOp } from '@factorai/types';
 import {
 	Button,
 	DropdownMenu,
@@ -16,6 +17,7 @@ import {
 	GitBranchPlus,
 	GitMerge,
 	GitPullRequestArrow,
+	LoaderCircle,
 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { AskAgentField } from './AskAgentField';
@@ -38,6 +40,20 @@ export function GitActionBar({ dir }: { dir: string }) {
 	const others = local.filter((b) => !b.current);
 	const [naming, setNaming] = useState(false);
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
+	// Which button's operation is running, so its glyph turns into a spinner
+	// while git works (F35). Not behind `motion-safe:`: it is a state, not
+	// decoration.
+	const [busy, setBusy] = useState<string | null>(null);
+	const go = (key: string, op: GitOp) => {
+		setBusy(key);
+		void run(op).finally(() => setBusy(null));
+	};
+	const icon = (key: string, glyph: ReactNode) =>
+		busy === key ? (
+			<LoaderCircle className="animate-spin" data-testid={`git-busy-${key}`} />
+		) : (
+			glyph
+		);
 
 	const branchMenu = (label: string, icon: ReactNode, pick: (name: string) => void) => (
 		<DropdownMenu>
@@ -67,18 +83,18 @@ export function GitActionBar({ dir }: { dir: string }) {
 				size="sm"
 				className={BAR}
 				disabled={running}
-				onClick={() => run({ kind: 'fetch' })}
+				onClick={() => go('fetch', { kind: 'fetch' })}
 			>
-				<CloudDownload /> Fetch
+				{icon('fetch', <CloudDownload />)} Fetch
 			</Button>
 			<Button
 				variant="ghost"
 				size="sm"
 				className={BAR}
 				disabled={running}
-				onClick={() => run({ kind: 'pull' })}
+				onClick={() => go('pull', { kind: 'pull' })}
 			>
-				<ArrowDownToLine /> Pull
+				{icon('pull', <ArrowDownToLine />)} Pull
 			</Button>
 			<Button
 				variant="outline"
@@ -86,10 +102,10 @@ export function GitActionBar({ dir }: { dir: string }) {
 				disabled={running}
 				// A branch with no upstream publishes itself on the first push.
 				onClick={() =>
-					run({ kind: 'push', setUpstream: current ? current.upstream === null : false })
+					go('push', { kind: 'push', setUpstream: current ? current.upstream === null : false })
 				}
 			>
-				<ArrowUpFromLine /> Push
+				{icon('push', <ArrowUpFromLine />)} Push
 				{current && current.ahead > 0 && (
 					<span
 						data-testid="push-ahead"
@@ -107,7 +123,7 @@ export function GitActionBar({ dir }: { dir: string }) {
 				disabled={running}
 				onClick={() => setNaming(true)}
 			>
-				<GitBranchPlus /> Branch
+				{icon('branch', <GitBranchPlus />)} Branch
 			</Button>
 			{branchMenu('Merge…', <GitMerge />, (target) => setIntegrate({ kind: 'merge', target }))}
 			{branchMenu('Rebase…', <GitPullRequestArrow />, (target) =>
@@ -118,9 +134,9 @@ export function GitActionBar({ dir }: { dir: string }) {
 				className={BAR}
 				size="sm"
 				disabled={running}
-				onClick={() => run({ kind: 'stashPush', message: null })}
+				onClick={() => go('stash', { kind: 'stashPush', message: null })}
 			>
-				<Archive /> Stash
+				{icon('stash', <Archive />)} Stash
 			</Button>
 			<AskAgentField dir={dir} />
 			<IntegrateDialog dir={dir} request={integrate} onClose={() => setIntegrate(null)} />
@@ -131,7 +147,7 @@ export function GitActionBar({ dir }: { dir: string }) {
 				onCancel={() => setNaming(false)}
 				onSubmit={(name) => {
 					setNaming(false);
-					void run({ kind: 'createBranch', name, at: 'HEAD', checkout: true });
+					go('branch', { kind: 'createBranch', name, at: 'HEAD', checkout: true });
 				}}
 			/>
 		</div>

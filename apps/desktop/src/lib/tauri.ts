@@ -923,6 +923,8 @@ interface TestFixture {
 	gitAskAgent?: string;
 	/** Makes `git_op` reject with this error, as a missing `git` does. */
 	gitOpFails?: AppError;
+	/** Holds every `git_op` this long before it answers, as a slow remote does. */
+	gitOpDelayMs?: number;
 	/** Makes `git_op` resolve with this result (a non-zero exit). */
 	gitOpResult?: GitOpResult;
 	/** Checkouts per project path (F21). Absent means "one checkout, the project
@@ -1706,6 +1708,7 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		}
 		case 'git_op': {
 			// The call is recorded above with its arguments; a spec asserts on that.
+			if (fx?.gitOpDelayMs) await new Promise((r) => setTimeout(r, fx.gitOpDelayMs));
 			if (fx?.gitOpFails) throw fx.gitOpFails;
 			if (fx?.gitOpResult) return fx.gitOpResult as unknown as T;
 			const kind = String((args?.op as GitOp | undefined)?.kind ?? '');

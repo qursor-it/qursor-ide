@@ -6,7 +6,8 @@ import { useAttentionStore } from '@store/attentionStore';
 import { useSidebarStore } from '@store/sidebarStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { FolderTree, GitBranch } from 'lucide-react';
+import { AgentMascot } from '@components/brand/AgentMascot';
+import { GitBranch } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
 
 /** Conflicts appear when a merge or rebase stops, not per keystroke. */
@@ -102,7 +103,7 @@ export function ModeSwitch() {
 			aria-orientation="vertical"
 			className="flex flex-col items-center gap-1"
 		>
-			{half('sessions', 'Sessions', needsYou, <FolderTree />)}
+			{half('sessions', 'Sessions', needsYou, <AgentMascot />)}
 			{half('git', 'Git', conflicts, <GitBranch />)}
 		</div>
 	);
