@@ -488,7 +488,6 @@ function SessionView() {
 					<WaitingBanner
 						sessionId={sessionId}
 						status={live?.status}
-						agent={agent}
 						focusTerminal={() => focusTerminal(sessionId)}
 					/>
 					<div className="min-h-0 flex-1">

@@ -59,13 +59,12 @@ test.describe('agent reply', () => {
 		await expect(banner).toHaveCount(0);
 	});
 
-	test('@smoke an ordinary wait offers the terminal, not guessed keys', async ({ page }) => {
+	test('@smoke an ordinary wait shows no banner', async ({ page }) => {
 		await open(page);
 		await write(page, 'Which port should Caddy expose?\n');
 		await status(page, 'waiting_input');
-		const banner = page.getByTestId('waiting-banner');
-		await expect(banner).toContainText('is waiting for you');
-		await expect(banner.locator('[data-testid^="waiting-option-"]')).toHaveCount(0);
+		await page.waitForTimeout(400);
+		await expect(page.getByTestId('waiting-banner')).toHaveCount(0);
 	});
 
 	test('@smoke there is no second input under the terminal', async ({ page }) => {

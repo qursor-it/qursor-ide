@@ -61,8 +61,8 @@ Shown on the session, its tab and its project's avatar.
 
 ## Answering the agent
 
-- When the agent waits for you, a banner over its terminal says what it asks. For Claude's
-  permission menu it shows a button per option, each pressing that number for you.
+- When Claude asks for permission, a banner over its terminal shows the question and a button
+  per option, each pressing that number for you.
 - Anything else you answer at the agent's prompt in the terminal, as always — `!` commands
   and `/` commands included.
 - Nothing is sent without your click.

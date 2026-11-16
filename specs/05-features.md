@@ -8743,8 +8743,9 @@ after the status flips it reads the last 24 lines of the terminal:
   question and a button per option (the first one primary, each with its number
   as a `kbd`). A click presses that number in the terminal, unpasted, and puts
   the caret back in the terminal. A trailing `(esc)` is dropped from the label.
-- Otherwise it says "<agent> is waiting for you".
-- Either way it offers "Answer in the terminal", which focuses it.
+- Otherwise there is no banner (ADR-0101): the terminal and the status dot
+  already say the agent is waiting.
+- With the menu it also offers "Answer in the terminal", which focuses it.
 
 **No reply box** (ADR-0097). A reply is typed at the agent's own prompt in the
 terminal, which is the only input a session has: a second field would paste

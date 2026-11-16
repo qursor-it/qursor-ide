@@ -1,7 +1,6 @@
-import type { AgentId, TerminalStatus } from '@factorai/types';
+import type { TerminalStatus } from '@factorai/types';
 import { Button } from '@factorai/ui';
 import { pressKey, readSessionTail } from '@components/terminal/Terminal';
-import { agentName } from '@lib/agents';
 import { type PermissionPrompt, parsePermissionPrompt } from '@lib/permissionPrompt';
 import { MessageCircleQuestion } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -12,20 +11,18 @@ const TAIL_LINES = 24;
 const READ_DELAY_MS = 150;
 
 /**
- * Over the terminal while the agent waits for you (F39): what it asks, and —
- * when it is Claude's numbered permission menu — a button per option, each
- * pressing that number exactly as the keyboard would. Anything else is answered
- * in the terminal itself; nothing is ever sent without a click.
+ * Over the terminal while Claude's numbered permission menu waits for you (F39):
+ * the question and a button per option, each pressing that number exactly as the
+ * keyboard would. Any other wait shows nothing here (ADR-0101): the terminal and
+ * the status dot already say it. Nothing is ever sent without a click.
  */
 export function WaitingBanner({
 	sessionId,
 	status,
-	agent,
 	focusTerminal,
 }: {
 	sessionId: string;
 	status: TerminalStatus | undefined;
-	agent: AgentId | null;
 	focusTerminal: () => void;
 }) {
 	const [prompt, setPrompt] = useState<PermissionPrompt | null>(null);
@@ -39,8 +36,7 @@ export function WaitingBanner({
 		return () => clearTimeout(timer);
 	}, [sessionId, status]);
 
-	if (status !== 'waiting_input') return null;
-	const name = agentName(agent);
+	if (status !== 'waiting_input' || !prompt) return null;
 	return (
 		<div
 			data-testid="waiting-banner"
@@ -49,11 +45,9 @@ export function WaitingBanner({
 		>
 			<MessageCircleQuestion className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
 			<div className="min-w-0 flex-1">
-				<div className="font-medium text-sm">
-					{prompt?.question ?? `${name} is waiting for you`}
-				</div>
+				<div className="font-medium text-sm">{prompt.question}</div>
 				<div className="mt-2 flex flex-wrap gap-1.5">
-					{prompt?.options.map((o, i) => (
+					{prompt.options.map((o, i) => (
 						<Button
 							key={o.key}
 							size="sm"
