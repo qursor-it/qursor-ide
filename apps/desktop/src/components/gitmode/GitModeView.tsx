@@ -12,7 +12,6 @@ import { GitActionBar } from './GitActionBar';
 import { GitHistory } from './GitHistory';
 import { type GitSection, GitSidebar } from './GitSidebar';
 import { LocalChanges } from './LocalChanges';
-import { OpLog } from './OpLog';
 
 /** The full-window view of the selected Git tab (specs/05-features.md F35). */
 export function GitModeView() {
@@ -54,7 +53,6 @@ function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
 						<LocalChanges dir={dir} />
 					)}
 				</main>
-				<OpLog dir={dir} />
 			</div>
 		</div>
 	);

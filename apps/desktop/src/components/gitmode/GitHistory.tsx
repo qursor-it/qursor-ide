@@ -34,6 +34,8 @@ const LAYOUT_WIDTH = 600;
 /** Dense, as desktop Git clients list commits. */
 const TABLE_ROW_HEIGHT = 24;
 
+const noCard = () => {};
+
 const RESET_MODES = [
 	{
 		mode: 'soft',
@@ -88,10 +90,6 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 	// The row the context menu was opened on, found from the event target.
 	const [menuSha, setMenuSha] = useState<string | null>(null);
-	const [carded, setCarded] = useState<string | null>(null);
-	const onCardOpen = useCallback((sha: string, open: boolean) => {
-		setCarded((current) => (open ? sha : current === sha ? null : current));
-	}, []);
 	const onSelect = useCallback((sha: string) => select(sha), []);
 
 	const short = menuSha?.slice(0, 8) ?? '';
@@ -149,8 +147,9 @@ export function GitHistory({ dir, projectId }: { dir: string; projectId: string 
 									tabbable={selected ? commit.sha === selected : index === 0}
 									remoteHost={graph.remoteHost}
 									dirty={false}
-									cardOpen={commit.sha === carded}
-									onCardOpen={onCardOpen}
+									// No hover card here: the selected commit's detail is below.
+									cardOpen={false}
+									onCardOpen={noCard}
 									onSelect={onSelect}
 									columns
 									// The column only when some commit has a session to show.

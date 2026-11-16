@@ -11,7 +11,6 @@ import { GitActionBar } from './GitActionBar';
 import { GitHistory } from './GitHistory';
 import { type GitSection } from './GitSidebar';
 import { LocalChanges } from './LocalChanges';
-import { OpLog } from './OpLog';
 
 /**
  * The right panel's Graph tab (F18, F35): Git mode for the session's checkout,
@@ -99,7 +98,6 @@ export function GitPanel() {
 					<LocalChanges dir={root} />
 				)}
 			</main>
-			<OpLog dir={root} />
 		</div>
 	);
 }
