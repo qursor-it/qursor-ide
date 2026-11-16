@@ -8444,7 +8444,10 @@ a hunk) asks for confirmation every time. A commit box under the lists: subject,
 optional body, `Amend`, `✦ Write message`, and a `Commit on <branch>` button.
 
 **The sidebar since ADR-0098.** The open repositories are tabs in the top
-bar's work row again (ADR-0100), not a list here. `Branches`, `Remotes`, `Tags`, `Stashes` and `Worktrees` are
+bar's work row again (ADR-0100), not a list here. The strip ends in a labelled
+**Open project** button (its menu: *Open repository…*, a filter, every project
+with its tile), and with no tab open the card lists the projects, one click
+each. `Branches`, `Remotes`, `Tags`, `Stashes` and `Worktrees` are
 headings that collapse, and branches with a `/` sit in folders by prefix that
 collapse too (`design/…` under *design*). The current branch is bold with a
 check; the others carry a branch glyph. Each remote is a node, closed until

@@ -1,5 +1,6 @@
 import { TAB_LOOK } from '@components/layout/SessionTabs';
 import { TabGroup } from '@components/layout/TabGroup';
+import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { DndContext } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
 import {
@@ -8,7 +9,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
-	IconButton,
+	Button,
 	Input,
 } from '@factorai/ui';
 import { queryKeys } from '@lib/queryKeys';
@@ -101,9 +102,18 @@ export function GitTabs() {
 				}}
 			>
 				<DropdownMenuTrigger asChild>
-					<IconButton size="md" aria-label="Open Git tab" title="Open a Git tab">
-						<Plus />
-					</IconButton>
+					{/* Labelled, not a bare +: this is how another project's history is
+					    opened, and a glyph alone did not say so (ADR-0100). */}
+					<Button
+						variant="ghost"
+						size="sm"
+						aria-label="Open Git tab"
+						title="Open another project's repository"
+						data-testid="git-open-tab"
+						className="shrink-0 gap-1.5 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+					>
+						<Plus /> Open project
+					</Button>
 				</DropdownMenuTrigger>
 				<DropdownMenuContent align="start">
 					<DropdownMenuItem
@@ -147,6 +157,7 @@ export function GitTabs() {
 					)}
 					{shown.map((p) => (
 						<DropdownMenuItem key={p.id} onSelect={() => openTab(p.id, p.realPath)}>
+							<ProjectIcon name={p.displayName} size={16} />
 							{p.displayName}
 						</DropdownMenuItem>
 					))}
