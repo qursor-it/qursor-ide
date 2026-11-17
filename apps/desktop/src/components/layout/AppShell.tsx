@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
 import { ImportProjects } from '@components/dialog/ImportProjects';
 import { FileTreePanel } from '@components/files/FileTreePanel';
+import { CanvasModeView } from '@components/canvas/CanvasModeView';
 import { GitModeView } from '@components/gitmode/GitModeView';
 import { GitErrorHost } from '@components/gitmode/GitErrorDialog';
 import { GitConfirmHost } from '@components/gitmode/OpLog';
@@ -60,6 +61,7 @@ export function AppShell({ children }: AppShellProps) {
 	const sidebarWidth = effectiveSidebarWidth(storedSidebarWidth, sidebarCollapsed);
 	const panelOpen = usePanelStore((s) => s.open);
 	const gitMode = useGitModeStore((s) => s.mode === 'git');
+	const canvasMode = useGitModeStore((s) => s.mode === 'canvas');
 	const panelWidth = usePanelStore((s) => s.width);
 	const viewerWidth = usePanelStore((s) => s.viewerWidth);
 	const setViewerWidth = usePanelStore((s) => s.setViewerWidth);
@@ -223,9 +225,12 @@ export function AppShell({ children }: AppShellProps) {
 			    mode too, which is where you switch back (ADR-0093). */}
 			<div className="flex min-h-0 flex-1">
 				<AppRail />
-				{/* Git mode hides this body rather than unmounting it: the terminals in
-			    it must keep running (F35). */}
-				<div ref={row} className={gitMode ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}>
+				{/* Git and Canvas modes hide this body rather than unmounting it: the
+			    terminals in it must keep running (F35, F44). */}
+				<div
+					ref={row}
+					className={gitMode || canvasMode ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}
+				>
 					{/* The project tree beside the rail (ADR-0100). Collapsed, it is gone
 				    and the rail is all that is left (ADR-0093). */}
 					{!sidebarCollapsed && (
@@ -301,6 +306,7 @@ export function AppShell({ children }: AppShellProps) {
 					<FileTreePanel />
 				</div>
 				{gitMode && <GitModeView />}
+				{canvasMode && <CanvasModeView />}
 			</div>
 			{/* Plan limits and the session's cost (usage monitor): full width, under
 			    every column, so it belongs to the window rather than to a panel.

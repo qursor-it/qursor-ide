@@ -8,6 +8,7 @@
  */
 
 import type {
+	CanvasEntry,
 	AnalysisPreview,
 	AppError,
 	RunningSubagent,
@@ -75,6 +76,9 @@ export interface TestFixture {
 	/** Routines per project id (F22). The create/update/delete mocks mutate it,
 	 *  so a spec can add one and see the list it lands in. */
 	routinesByProject?: Record<string, Routine[]>;
+	/** Canvas files per project id (F44). `create_canvas` appends to it, and
+	 *  `read_canvas` answers from `files` by path, so a spec sees what it made. */
+	canvasesByProject?: Record<string, CanvasEntry[]>;
 	/** The `profiles` table (F25). Mutated by the create/rename/default/delete
 	 *  mocks, so a spec can drive the Profiles section and read back what it did.
 	 *  Absent means the one seeded default a fresh install has. */

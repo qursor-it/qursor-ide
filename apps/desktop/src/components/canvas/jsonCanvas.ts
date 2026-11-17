@@ -23,7 +23,7 @@ export type CanvasDoc = {
 
 /** The raw JSON node is the single source of truth: components read and patch
  *  it, and position and size are written back into it on serialize. */
-type CanvasNodeData = { raw: JcNode };
+export type CanvasNodeData = { raw: JcNode };
 type CanvasEdgeData = { raw: JcEdge };
 
 type CanvasNodeType = 'sticky' | 'shape' | 'ink' | 'text' | 'file' | 'link' | 'group';

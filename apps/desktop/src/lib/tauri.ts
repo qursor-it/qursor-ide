@@ -981,6 +981,9 @@ interface TestFixture {
 	/** Routines per project id (F22). Mutated by the create/update/delete mocks,
 	 *  so a test can add one and see the list it lands in. */
 	routinesByProject?: Record<string, Routine[]>;
+	/** Canvas files per project id (F44). `create_canvas` appends to it, and
+	 *  `read_canvas` answers from `files` by path, so a spec sees what it made. */
+	canvasesByProject?: Record<string, CanvasEntry[]>;
 	/** The `profiles` table (F25). Mutated by the create/rename/default/delete
 	 *  mocks, so a test can drive the section and read back what it did. Absent
 	 *  means the one seeded default, which is what a fresh install has. */
@@ -1665,6 +1668,41 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			// and assert the path that was asked for, which is this button's whole
 			// renderer-side contract.
 			return undefined as unknown as T;
+		case 'list_canvases':
+			return (fx?.canvasesByProject?.[String(args?.projectId)] ?? []) as unknown as T;
+		case 'create_canvas': {
+			const projectId = String(args?.projectId);
+			const title = String(args?.title);
+			const root = fx?.projects?.find((p) => p.id === projectId)?.realPath ?? '';
+			if (!fx) throw { kind: 'Io', message: 'no fixture' };
+			const list = (fx.canvasesByProject ??= {})[projectId] ?? [];
+			// The real slug rules live in Rust; a smoke test only needs a stable one.
+			const slug =
+				title
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, '-')
+					.replace(/^-|-$/g, '') || 'canvas';
+			const path = `${root}/canvas/${slug}.canvas`;
+			const entry: CanvasEntry = {
+				projectId,
+				path,
+				relPath: `canvas/${slug}.canvas`,
+				slug,
+				title,
+				modifiedMs: Date.now(),
+			};
+			fx.canvasesByProject[projectId] = [entry, ...list];
+			const contents = `${JSON.stringify({ title, nodes: [], edges: [] }, null, 2)}
+`;
+			(fx.files ??= {})[path] = { path, contents, isBinary: false } as unknown as FileContents;
+			return entry as unknown as T;
+		}
+		case 'read_canvas': {
+			const path = String(args?.path);
+			const file = fx?.files?.[path];
+			if (!file) throw { kind: 'NotFound', message: `path ${path}` };
+			return { contents: file.contents, sha256: 'mock' } as unknown as T;
+		}
 		case 'watch_file':
 			return undefined as unknown as T;
 		case 'unwatch_file':

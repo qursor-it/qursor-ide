@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
-export type AppMode = 'sessions' | 'git';
+export type AppMode = 'sessions' | 'git' | 'canvas';
 
 /** One Git tab: a checkout directory of a project (F35). */
 export interface GitTab {

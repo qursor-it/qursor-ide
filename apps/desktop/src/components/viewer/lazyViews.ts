@@ -18,3 +18,8 @@ export const LazyFileView = lazy(() =>
 export const LazyDiffView = lazy(() =>
 	import('@components/viewer/DiffView').then((m) => ({ default: m.DiffView })),
 );
+
+/** React Flow stays out of the main bundle: only Canvas mode needs it (F44). */
+export const LazyCanvasBoard = lazy(() =>
+	import('@components/canvas/CanvasBoard').then((m) => ({ default: m.CanvasBoard })),
+);

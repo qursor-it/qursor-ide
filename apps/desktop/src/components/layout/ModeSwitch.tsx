@@ -7,7 +7,7 @@ import { useSidebarStore } from '@store/sidebarStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { AgentMascot } from '@components/brand/AgentMascot';
-import { GitBranch } from 'lucide-react';
+import { GitBranch, Shapes } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
 
 /** Conflicts appear when a merge or rebase stops, not per keystroke. */
@@ -105,6 +105,7 @@ export function ModeSwitch() {
 		>
 			{half('sessions', 'Sessions', needsYou, <AgentMascot />)}
 			{half('git', 'Git', conflicts, <GitBranch />)}
+			{half('canvas', 'Canvas', 0, <Shapes />)}
 		</div>
 	);
 }
