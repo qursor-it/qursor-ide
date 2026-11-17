@@ -92,6 +92,7 @@ function PaneRow({ chip, projectRoot }: { chip: ShellTab; projectRoot: string | 
 								size={fractions[i - 1] * available}
 								onSize={(px) => setWidths(chip.key, resizePair(fractions, i - 1, px, rowWidth))}
 								edge="right"
+								withinCard
 								label={`Resize pane ${i}`}
 								clamp={(px) => clampPaneWidth(fractions, i - 1, px, rowWidth)}
 								onReset={() => equalize(chip.key)}
@@ -303,8 +304,10 @@ function PaneHost({
 		>
 			{/* `px-4 py-3` and `overflow-hidden` for the reason the agent's pane has
 			    them: the side padding is the slack a row's text spills into at a
-			    fractional zoom, and the agent's terminal sets the figure. */}
-			<div className="h-full w-full overflow-hidden px-4 py-3">
+			    fractional zoom, and the agent's terminal sets the figure. `isolate`
+			    keeps xterm's own z-indexed layers (the WebGL link layer at 2, the
+			    helpers at 5) inside this box, under the corner `×`. */}
+			<div className="isolate h-full w-full overflow-hidden px-4 py-3">
 				<div ref={containerRef} className="relative h-full w-full" />
 			</div>
 			{/* **Focus is a 1px blue line on the pane's top edge**, only while a

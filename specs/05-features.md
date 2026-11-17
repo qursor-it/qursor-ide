@@ -5679,11 +5679,15 @@ pane.
   focused pane in half" would put the new pane somewhere the click did not
   point at. A width you dragged is lost on a split; that is the cost.
 - **Dividers.** A 4px `PanelResizer` between panes — the existing component on
-  its `left`/`right` edge, so ←/→ move it by keyboard for free — with a
+  its `left`/`right` edge (`withinCard`: the panes share one card, so it is the
+  visible `bg-border` hairline the dock's top edge is, not the invisible gap
+  between two cards), so ←/→ move it by keyboard for free — with a
   **double-click that equalises** the row. Widths are **fractions of the row,
   held in memory per chip and not persisted**: a row that comes back after a
   relaunch comes back with fresh processes and comes back equal. If they are
-  ever persisted they are layout, not a preference (ADR-0013).
+  ever persisted they are layout, not a preference (ADR-0013). A **mouse drag never takes the
+  caret**: the handle does not focus on press, so the shell being typed into
+  keeps it (the arrows still reach the handle through `Tab`).
 - **Minimum pane width is 160px**, about twenty columns; below that a terminal
   wraps every line it prints. The cap is therefore **five, or what fits,
   whichever is lower**: the strip disables `Split` early rather than making a
@@ -5693,7 +5697,9 @@ pane.
   cost is the shell's, and at one pane it would repeat the chip. At **two or
   more panes, hovering a pane shows a single `×` in its top-right corner** — an
   `IconButton` on a `bg-card` square so it reads over any terminal content,
-  `invisible` until hover or `focus-within`. At one pane the chip's `×` is the
+  `invisible` until hover or `focus-within`. The terminal under it is its own stacking
+  context (`isolate`): xterm's WebGL link layer sits at `z-index: 2` and would
+  otherwise take the click. At one pane the chip's `×` is the
   close and the corner control is not drawn.
 - **Focus is a 1px amber line on the focused pane's top edge**, drawn only
   while a shell has DOM focus (`:focus-within` on the pane's wrapper). When the

@@ -25,6 +25,10 @@ interface PanelResizerProps {
 	 *  has focus, so the pointer gesture has its keyboard twin. A row of shell
 	 *  panes equalises this way (F24); a handle without a default omits it. */
 	onReset?: () => void;
+	/** Side by side but inside one card — the shell panes (F24) — so the handle
+	 *  is the 4px hairline stacked panes draw, not an invisible gap between
+	 *  cards. */
+	withinCard?: boolean;
 }
 
 /** Whether an edge drags horizontally. `top`/`bottom` handles drag vertically. */
@@ -52,7 +56,15 @@ function isInverted(edge: ResizerEdge): boolean {
  * seen. The pending size is flushed on release, so the drag ends exactly where
  * the pointer did.
  */
-export function PanelResizer({ size, onSize, edge, label, clamp, onReset }: PanelResizerProps) {
+export function PanelResizer({
+	size,
+	onSize,
+	edge,
+	label,
+	clamp,
+	onReset,
+	withinCard = false,
+}: PanelResizerProps) {
 	const drag = useRef<{ origin: number; size: number } | null>(null);
 	const pending = useRef<number | null>(null);
 	const frame = useRef<number | null>(null);
@@ -94,8 +106,16 @@ export function PanelResizer({ size, onSize, edge, label, clamp, onReset }: Pane
 			// (ADR-0090), so it paints nothing until it is hovered or focused;
 			// stacked panes still share one card and keep a hairline between them.
 			className={`shrink-0 transition-colors hover:bg-primary/50 focus-visible:bg-primary/50 focus-visible:outline-none ${
-				horizontal ? 'w-2 cursor-col-resize rounded-full' : 'h-1 cursor-row-resize bg-border'
+				horizontal
+					? withinCard
+						? 'w-1 cursor-col-resize bg-border'
+						: 'w-2 cursor-col-resize rounded-full'
+					: 'h-1 cursor-row-resize bg-border'
 			}`}
+			// A drag is not a request for the keyboard: without this the handle
+			// takes focus on press, and the terminal being typed into loses the
+			// caret. `Tab` still reaches it for the arrow keys.
+			onMouseDown={(e) => e.preventDefault()}
 			onPointerDown={(e) => {
 				drag.current = { origin: horizontal ? e.clientX : e.clientY, size };
 				e.currentTarget.setPointerCapture(e.pointerId);
