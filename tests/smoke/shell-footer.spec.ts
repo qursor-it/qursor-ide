@@ -230,4 +230,60 @@ test.describe('the footer belongs to the project', () => {
 		// start in and nothing is drawn.
 		await expect(page.getByTestId('shell-footer')).toHaveCount(0);
 	});
+
+	test('@smoke the corner × stays above what xterm draws with a z-index', async ({ page }) => {
+		await page.setViewportSize({ width: 1600, height: 900 });
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await page.locator('aside').getByText('foo').click();
+		await page.getByText('Refactor the auth middleware').click();
+		const footer = page.getByTestId('shell-footer');
+		await footer.getByRole('button', { name: 'Terminal' }).click();
+		await footer.getByRole('button', { name: 'Split' }).click();
+		const hosts = page.getByTestId('shell-pane-host');
+		await expect(hosts).toHaveCount(2);
+
+		// The WebGL renderer (Windows only, so absent here) adds a full-size
+		// `xterm-link-layer` canvas at `z-index: 2`, and on Windows it swallowed
+		// every click on the `×`. Stand one in for it.
+		await hosts.nth(1).evaluate((host) => {
+			const screen = host.querySelector('.xterm-screen');
+			const layer = document.createElement('canvas');
+			layer.className = 'xterm-link-layer';
+			layer.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;z-index:2');
+			screen?.append(layer);
+		});
+		await hosts.nth(1).hover();
+		await hosts.nth(1).getByRole('button', { name: 'Close this shell' }).click({ timeout: 3000 });
+		await expect(hosts).toHaveCount(1);
+	});
+
+	test('@smoke dragging the divider leaves the caret in the pane that had it', async ({ page }) => {
+		await page.setViewportSize({ width: 1600, height: 900 });
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await page.locator('aside').getByText('foo').click();
+		await page.getByText('Refactor the auth middleware').click();
+		const footer = page.getByTestId('shell-footer');
+		await footer.getByRole('button', { name: 'Terminal' }).click();
+		await footer.getByRole('button', { name: 'Split' }).click();
+		const hosts = page.getByTestId('shell-pane-host');
+		await expect(hosts).toHaveCount(2);
+		// The split focuses the new pane (F24).
+		await expect(hosts.nth(1).locator('textarea')).toBeFocused();
+
+		// A mouse drag is not a request for the keyboard: the separator stays
+		// reachable with Tab, but a drag must not take the caret off the shell.
+		const divider = page.getByRole('separator', { name: 'Resize pane 1' });
+		const box = await divider.boundingBox();
+		if (!box) throw new Error('no divider');
+		// The visible 4px hairline the pane maths (`PANE_DIVIDER_WIDTH`) assumes,
+		// not the invisible 8px gap a resizer between two cards is.
+		expect(box.width).toBe(4);
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2, { steps: 6 });
+		await page.mouse.up();
+		await expect(hosts.nth(1).locator('textarea')).toBeFocused();
+	});
 });
