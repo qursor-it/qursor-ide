@@ -30,6 +30,37 @@ type CanvasApi = Pick<typeof cmd, 'readCanvas' | 'writeCanvas' | 'watchCanvas' |
 	Pick<typeof events, 'onCanvasChanged'>;
 
 const AUTOSAVE_MS = 600;
+/**
+ * Controllers that could not leave clean (a conflict, a failed final save) outlive
+ * their view, keyed by canvas path, so reopening shows the local version again.
+ */
+const held = new Map<string, CanvasDocController>();
+export const heldCanvases: ReadonlyMap<string, CanvasDocController> = held;
+const heldListeners = new Set<() => void>();
+let heldPaths: string[] = [];
+const publishHeld = () => {
+	heldPaths = [...held.keys()];
+	for (const fn of heldListeners) fn();
+};
+
+/** Paths of canvases with unsaved or conflicting edits kept after navigating away. */
+export function useHeldCanvasPaths(): string[] {
+	return useSyncExternalStore(
+		(fn) => {
+			heldListeners.add(fn);
+			return () => {
+				heldListeners.delete(fn);
+			};
+		},
+		() => heldPaths,
+	);
+}
+
+/** The kept controller for this path, else a new one. */
+export function acquireCanvasDoc(projectId: string, path: string, api?: CanvasApi) {
+	return held.get(path) ?? new CanvasDocController(projectId, path, api);
+}
+
 const isNotFound = (e: unknown) => (e as { kind?: string } | null)?.kind === 'NotFound';
 
 /**
@@ -82,6 +113,17 @@ export class CanvasDocController {
 	}
 
 	start() {
+		// Resuming a kept controller: its listener is still registered, but the
+		// backend watch may have moved on, so watch again and catch up with the disk.
+		if (held.get(this.path) === this) {
+			held.delete(this.path);
+			publishHeld();
+		}
+		if (!this.stopped) {
+			this.api.watchCanvas(this.path).catch(() => {});
+			void this.queue(() => this.reread());
+			return;
+		}
 		this.stopped = false;
 		this.api.watchCanvas(this.path).catch(() => {});
 		this.api
@@ -95,13 +137,28 @@ export class CanvasDocController {
 		void this.queue(() => this.load());
 	}
 
-	/** Saves what is pending, then lets go of the watch. */
+	/** Saves what is pending; lets go only if that left nothing unsaved or in conflict. */
 	dispose() {
+		held.set(this.path, this);
+		publishHeld();
+		void this.saveNow().then(() => {
+			const clean = !this.dirty && this.snap.saveState === 'saved';
+			// Reopened meanwhile (start() took it back out): not ours to release.
+			if (clean && held.get(this.path) === this) this.release();
+		});
+	}
+
+	/** Stops watching and forgets the controller. */
+	release() {
 		this.stopped = true;
-		void this.saveNow();
+		clearTimeout(this.timer);
 		this.unlisten?.();
 		this.unlisten = undefined;
 		this.api.unwatchCanvas(this.path).catch(() => {});
+		if (held.get(this.path) === this) {
+			held.delete(this.path);
+			publishHeld();
+		}
 	}
 
 	private queue(job: () => Promise<void>): Promise<void> {
@@ -300,7 +357,7 @@ function detachOrphans(prev: CN[], next: CN[]): CN[] {
 }
 
 export function useCanvasDoc(projectId: string, path: string) {
-	const ctl = useMemo(() => new CanvasDocController(projectId, path), [projectId, path]);
+	const ctl = useMemo(() => acquireCanvasDoc(projectId, path), [projectId, path]);
 	useEffect(() => {
 		ctl.start();
 		const onBlur = () => void ctl.saveNow();

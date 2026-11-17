@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CanvasDocController } from './useCanvasDoc';
+import { CanvasDocController, acquireCanvasDoc, heldCanvases } from './useCanvasDoc';
 
 const PATH = '/p/canvas/x.canvas';
 const node = (id: string, x = 0) => ({
@@ -50,7 +50,10 @@ const move = (ctl: CanvasDocController) =>
 
 describe('CanvasDocController', () => {
 	beforeEach(() => vi.useFakeTimers());
-	afterEach(() => vi.useRealTimers());
+	afterEach(() => {
+		for (const c of heldCanvases.values()) c.release();
+		vi.useRealTimers();
+	});
 
 	it('autosaves_after_600ms', async () => {
 		const t = setup();
@@ -167,5 +170,51 @@ describe('CanvasDocController', () => {
 		expect(t.ctl.getSnapshot().nodes[0]?.position).toEqual({ x: 0, y: 0 });
 		t.ctl.redo();
 		expect(t.ctl.getSnapshot().nodes[0]?.position).toEqual({ x: 9, y: 9 });
+	});
+
+	it('dispose_in_conflict_keeps_local_state', async () => {
+		const t = setup();
+		t.api.writeCanvas.mockResolvedValueOnce({ kind: 'Conflict', diskSha256: 'other' } as never);
+		t.ctl.start();
+		await tick();
+		move(t.ctl);
+		await tick(600);
+		t.ctl.dispose();
+		await tick();
+		expect(t.api.unwatchCanvas).not.toHaveBeenCalled();
+		const again = acquireCanvasDoc('p', PATH, t.api as never);
+		expect(again).toBe(t.ctl);
+		again.start();
+		await tick();
+		const s = again.getSnapshot();
+		expect(s.saveState).toBe('conflict');
+		expect(s.nodes[0]?.position).toEqual({ x: 9, y: 9 });
+	});
+
+	it('dispose_clean_releases', async () => {
+		const t = setup();
+		t.ctl.start();
+		await tick();
+		t.ctl.dispose();
+		await tick();
+		expect(heldCanvases.size).toBe(0);
+		expect(t.api.unwatchCanvas).toHaveBeenCalledWith(PATH);
+	});
+
+	it('failed_final_save_is_kept', async () => {
+		const t = setup();
+		t.ctl.start();
+		await tick();
+		move(t.ctl);
+		t.api.writeCanvas.mockRejectedValueOnce(new Error('disk full'));
+		t.ctl.dispose();
+		await tick();
+		expect(heldCanvases.get(PATH)).toBe(t.ctl);
+		const again = acquireCanvasDoc('p', PATH, t.api as never);
+		again.start();
+		await tick();
+		const s = again.getSnapshot();
+		expect(s.saveState).not.toBe('saved');
+		expect(s.nodes[0]?.position).toEqual({ x: 9, y: 9 });
 	});
 });

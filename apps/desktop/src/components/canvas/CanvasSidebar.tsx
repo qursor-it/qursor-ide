@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Shapes } from 'lucide-react';
 import { useState } from 'react';
 import { NewCanvasDialog } from './NewCanvasDialog';
+import { useHeldCanvasPaths } from './useCanvasDoc';
 
 /** Projects in the sidebar's order, groups flattened (F44). */
 const flatProjects = (rows: SidebarRow[]): Project[] =>
@@ -36,6 +37,7 @@ function ProjectCanvases({ project }: { project: Project }) {
 	const selected = useCanvasStore((s) => s.selected);
 	const select = useCanvasStore((s) => s.select);
 	const [creating, setCreating] = useState(false);
+	const unsaved = useHeldCanvasPaths();
 	// A project with no folder on disk has nowhere to keep a canvas.
 	const hasFolder = !!project.realPath && !project.missing;
 	const canvasesQ = useQuery({
@@ -76,6 +78,15 @@ function ProjectCanvases({ project }: { project: Project }) {
 					>
 						<Shapes />
 						<span className="truncate">{c.title}</span>
+						{unsaved.includes(c.path) && (
+							<span
+								data-testid="canvas-unsaved-dot"
+								role="img"
+								aria-label="Unsaved changes"
+								title="Unsaved changes"
+								className="size-1.5 shrink-0 rounded-full bg-amber-400"
+							/>
+						)}
 					</Button>
 				);
 			})}
