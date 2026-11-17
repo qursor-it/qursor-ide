@@ -25,6 +25,7 @@ export function AgentPanel({
 	absPath,
 	projectCwd,
 	sessionId,
+	onSession,
 	selectedIds,
 	nodes,
 	inputRef,
@@ -35,6 +36,8 @@ export function AgentPanel({
 	projectCwd: string | null | undefined;
 	/** The linked session, `null` before the first message. */
 	sessionId: string | null;
+	/** Called with a freshly minted session id, before it is indexed. */
+	onSession: (id: string) => void;
 	selectedIds: string[];
 	nodes: NodeRef[];
 	inputRef: React.Ref<HTMLTextAreaElement>;
@@ -52,6 +55,7 @@ export function AgentPanel({
 				// Fresh: never hand the canvas somebody's idle session.
 				id = await cmd.startSession(projectId, 'claude', true);
 				await cmd.setCanvasSession(projectId, relPath, id);
+				onSession(id);
 				// Mounts the Terminal, which is what spawns the PTY to send into.
 				await qc.invalidateQueries({ queryKey: queryKeys.canvasSession(projectId, relPath) });
 				void qc.invalidateQueries({ queryKey: queryKeys.canvasOrigins(projectId) });

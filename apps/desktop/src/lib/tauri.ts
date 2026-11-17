@@ -1719,8 +1719,12 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			file.contents = contents;
 			return { kind: 'Written', sha256: mockSha(contents) } as unknown as T;
 		}
-		case 'get_canvas_session':
-			return (fx?.canvasSessions?.[`${args?.projectId}|${args?.relPath}`] ?? null) as unknown as T;
+		case 'get_canvas_session': {
+			// Like the real join on `sessions`: a link to a session not indexed yet is null.
+			const id = fx?.canvasSessions?.[`${args?.projectId}|${args?.relPath}`];
+			const indexed = fx?.sessionsByProject?.[String(args?.projectId)]?.some((s) => s.id === id);
+			return (indexed ? id : null) as unknown as T;
+		}
 		case 'set_canvas_session':
 			if (fx)
 				(fx.canvasSessions ??= {})[`${args?.projectId}|${args?.relPath}`] = String(args?.sessionId);

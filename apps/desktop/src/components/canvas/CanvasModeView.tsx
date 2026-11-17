@@ -13,7 +13,7 @@ import { useGitModeStore } from '@store/gitModeStore';
 import { clampSidebarWidth, useSidebarStore } from '@store/sidebarStore';
 import { useQuery } from '@tanstack/react-query';
 import { PanelRight, X } from 'lucide-react';
-import { Suspense, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { CanvasSidebar } from './CanvasSidebar';
 import type { SaveState } from './useCanvasDoc';
 
@@ -86,7 +86,12 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 		queryFn: () => cmd.getCanvasSession(projectId, relPath),
 		enabled: !!entry,
 	});
-	const sessionId = sessionQ.data ?? null;
+	// A just-minted session has no `sessions` row until its transcript is indexed, so the
+	// query says null; the panel's own id keeps its Terminal (and PTY) mounted meanwhile.
+	const [pendingId, setPendingId] = useState<string | null>(null);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset when the canvas changes
+	useEffect(() => setPendingId(null), [projectId, relPath]);
+	const sessionId = sessionQ.data ?? pendingId;
 	const connected = useTerminalStore((s) => !!sessionId && !!s.bySession[sessionId]);
 	if (!selected) return null;
 	return (
@@ -163,6 +168,7 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 								absPath={entry.path}
 								projectCwd={projectsQ.isPending ? undefined : (project?.realPath ?? null)}
 								sessionId={sessionId}
+								onSession={setPendingId}
 								selectedIds={selectedIds}
 								nodes={nodeRefs}
 								inputRef={composer}
