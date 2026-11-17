@@ -39,8 +39,11 @@ interface CanvasBoardProps {
 	path: string;
 	/** The error card's way out: the file in the existing viewer. */
 	onOpenAsText: (path: string) => void;
-	/** "Ask the agent" over the selection; wired to the agent panel later (F44). */
+	/** "Ask the agent" over the selection (F44). */
 	onAsk: (selectedIds: string[]) => void;
+	/** What the agent panel's composer attaches: the selection and the nodes to cite. */
+	onSelection: (ids: string[]) => void;
+	onNodeRefs: (refs: { id: string; text: string }[]) => void;
 	onSaveState: (state: SaveState) => void;
 }
 
@@ -114,7 +117,15 @@ export function CanvasBoard(props: CanvasBoardProps) {
 	);
 }
 
-function Board({ projectId, path, onOpenAsText, onAsk, onSaveState }: CanvasBoardProps) {
+function Board({
+	projectId,
+	path,
+	onOpenAsText,
+	onAsk,
+	onSelection,
+	onNodeRefs,
+	onSaveState,
+}: CanvasBoardProps) {
 	const doc = useCanvasDoc(projectId, path);
 	const { ctl, nodes, edges } = doc;
 	const rf = useReactFlow<CN, CE>();
@@ -163,6 +174,22 @@ function Board({ projectId, path, onOpenAsText, onAsk, onSaveState }: CanvasBoar
 	);
 
 	const selectedIds = useMemo(() => nodes.filter((n) => n.selected).map((n) => n.id), [nodes]);
+	// Reported on content, not identity: a drag makes a new `nodes` every frame.
+	const selectionKey = selectedIds.join(',');
+	const refs = useMemo(
+		() =>
+			nodes.map((n) => {
+				const raw = n.data.raw;
+				const t = raw.text ?? raw.file ?? raw.url ?? raw.label;
+				return { id: n.id, text: typeof t === 'string' ? t : '' };
+			}),
+		[nodes],
+	);
+	const refsKey = JSON.stringify(refs);
+	const reported = useRef({ onSelection, onNodeRefs, selectedIds, refs });
+	reported.current = { onSelection, onNodeRefs, selectedIds, refs };
+	useEffect(() => reported.current.onSelection(reported.current.selectedIds), [selectionKey]);
+	useEffect(() => reported.current.onNodeRefs(reported.current.refs), [refsKey]);
 
 	const place = (id: string) => {
 		const n = rf.getInternalNode(id);

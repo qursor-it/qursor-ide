@@ -8869,3 +8869,70 @@ and `+A −D`, the session's state pill, and *Commit…*. Under it three columns
 project (F35), where commits are made; nothing on this page writes to git.
 
 **Not in it.** Notes kept on the diff: a note is sent, not pinned to its lines.
+
+## F44 — Canvas
+
+**Specified 2026-11-17, built in slices.** Design:
+`docs/superpowers/specs/2026-11-17-canvas-design.md`; ADR-0103. Code in
+`components/canvas/`, `services/canvas.rs`, `commands/canvas.rs`.
+
+**A third mode.** The app rail has *Sessions*, *Git* and *Canvas*. Canvas hides
+the Sessions body rather than unmounting it, as Git does, so terminals keep
+their output.
+
+**Where a canvas lives.** `<project root>/canvas/<slug>.canvas`, JSON Canvas 1.0
+with a top-level `title`. The slug is the title folded to ASCII, lowercased, with
+runs of other characters as `-`, at most 60 characters, `canvas` when nothing is
+left; a collision becomes `-2`, `-3`, and a file is never overwritten. Extras are
+`x-kind` (`sticky`, `shape`, `ink`), `x-shape`, `x-points` and `x-author:
+"agent"`; **every field the app does not know is written back unchanged.** A
+project with no folder gets no *New canvas*.
+
+**Layout.** Sidebar: the projects, each with its canvases. Centre card: the
+board, with a header of project, path, title, save state, the agent-panel toggle
+and close. Right card: the agent panel (below), resizable between 280 and 640 px
+and collapsible; the width and open state are kept.
+
+**The board** is React Flow: stickies, shapes, text, frames, file and link
+nodes, connectors, a toolbar and shortcuts (V H N R O T L F, Delete, Ctrl+Z,
+Ctrl+Shift+Z, Ctrl+C/V, Ctrl+S, arrows), undo up to 100 steps, and a toolbar over
+the selection (colour, group into a frame, connector, *Ask the agent*). Nodes the
+agent added carry an `AGENT` badge and a dashed outline until touched.
+
+**Saving.** 600 ms after the last change, on blur and on leaving the mode;
+Ctrl+S saves now. A write is conditional on the hash of the file last read or
+written, so **a write the disk has moved past is refused** (`Conflict`) and
+nothing is lost. When the file changes on disk and the board is clean it reloads
+silently; when it is dirty a banner offers *Reload* or *Keep mine*. A file that
+is not valid JSON shows an error card with *Open as text* and is **never
+written over**. A file deleted on disk shows a banner and **is not recreated**.
+
+**The agent panel.** The canvas has one Claude session, linked in `canvas_sessions`
+(F44 data model). It is an ordinary session, visible in Sessions mode with its
+tab, and above it the session route shows a strip *◇ from canvas <title>* with *Open canvas*.
+The panel shows that session's terminal above a composer; with no session it
+says *The first message starts a Claude session for this canvas.* The first
+send starts a fresh Claude session, links it, mounts the terminal, and sends as
+soon as its PTY is live (retried every 250 ms for 20 s; on failure an inline
+error shows and the text stays). Enter sends, Shift+Enter breaks the line, a
+chip shows *◇ N nodes selected*, and `@` offers the nodes to cite as
+`@<id> "<first 4 words>…"`. *Ask the agent* opens the panel and focuses the
+composer. A pill *Agent connected* shows while the linked session has a live PTY.
+
+**What is sent.** One paste, then Enter:
+
+```
+[canvas: <absolute path> · selected nodes: <ids or none> · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; keep fields you don't know]
+<the user's text>
+```
+
+The path is the project root's copy, so a session that moved into a worktree
+still edits the file the board watches. The agent edits the file with its own
+tools; the watch brings the result onto the board.
+
+**One terminal, one place.** A session's terminal is a single pooled element, so
+only the mode on screen owns it: the panel's terminal is unmounted on leaving
+Canvas, and the session route's terminal adopts it again on returning to
+Sessions.
+
+**Not in it (yet).** The pen (ink nodes) arrives in a later slice.

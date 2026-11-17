@@ -195,4 +195,75 @@ test.describe('canvas mode', () => {
 		await page.waitForTimeout(1200);
 		expect(await disk(page)).toBeNull();
 	});
+
+	test('@smoke Ask the agent focuses the composer with the selection attached', async ({
+		page,
+	}) => {
+		await openIdea(page, {
+			title: 'Idea',
+			nodes: [{ ...AGENT_NODE, 'x-author': undefined }],
+			edges: [],
+		});
+		await page.getByText('from agent').click();
+		await page.getByRole('button', { name: 'Ask the agent' }).click();
+		await expect(page.getByTestId('canvas-composer')).toBeFocused();
+		await expect(page.getByTestId('canvas-selection-chip')).toHaveText('◇ 1 node selected');
+	});
+
+	test('@smoke the first message starts a session, links it, and Sessions shows its origin', async ({
+		page,
+	}) => {
+		const fx = fixtureWithCanvas({ title: 'Idea', nodes: [], edges: [] });
+		fx.newSessionId = 'canvas-session-1';
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('canvas-row').click();
+		await page.getByTestId('canvas-composer').fill('what is missing?');
+		await page.keyboard.press('Enter');
+		await expect(page.getByTestId('canvas-agent-connected')).toBeVisible();
+		await expect
+			.poll(() =>
+				page.evaluate(() =>
+					(window.__FACTORAI_TEST_CALLS__ ?? [])
+						.filter((c) => c.name === 'terminal_write')
+						.map((c) => (c.args as { data: string }).data)
+						.join(''),
+				),
+			)
+			.toContain('selected nodes: none');
+		expect(
+			await page.evaluate(
+				(k) => window.__FACTORAI_TEST__?.canvasSessions?.[k],
+				`${FOO_ID}|canvas/idea.canvas`,
+			),
+		).toBe('canvas-session-1');
+
+		await page.getByTestId('mode-sessions').click();
+		await page.getByRole('tab', { name: /canvas-s/ }).click();
+		await expect(page.getByTestId('canvas-origin-strip')).toContainText('Idea');
+		await page.getByRole('button', { name: 'Open canvas' }).click();
+		await expect(page.getByTestId('canvas-board')).toBeVisible();
+	});
+
+	test('@smoke the session terminal is re-adopted when Sessions comes back from Canvas', async ({
+		page,
+	}) => {
+		const fx = fixtureWithCanvas({ title: 'Idea', nodes: [], edges: [] });
+		fx.canvasSessions = { [`${FOO_ID}|canvas/idea.canvas`]: 'session-uuid-001' };
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.getByRole('button', { name: 'Expand foo' }).click();
+		await page.getByRole('link', { name: /Refactor the auth middleware/ }).click();
+		await expect(page.locator('.xterm:visible')).toBeVisible();
+
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('canvas-row').click();
+		await expect(page.getByTestId('canvas-agent-panel').locator('.xterm:visible')).toBeVisible();
+
+		await page.getByTestId('mode-sessions').click();
+		await expect(page.getByTestId('canvas-agent-panel')).toHaveCount(0);
+		await expect(page.locator('.xterm:visible')).toBeVisible();
+		await expect(page.locator('.xterm:visible')).toHaveCount(1);
+	});
 });

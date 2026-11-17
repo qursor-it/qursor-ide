@@ -984,6 +984,8 @@ interface TestFixture {
 	/** Canvas files per project id (F44). `create_canvas` appends to it, and
 	 *  `read_canvas` answers from `files` by path, so a spec sees what it made. */
 	canvasesByProject?: Record<string, CanvasEntry[]>;
+	/** Canvas → linked session id, keyed `projectId|relPath` (F44). */
+	canvasSessions?: Record<string, string>;
 	/** The `profiles` table (F25). Mutated by the create/rename/default/delete
 	 *  mocks, so a test can drive the section and read back what it did. Absent
 	 *  means the one seeded default, which is what a fresh install has. */
@@ -1716,6 +1718,23 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			const contents = String(args?.contents);
 			file.contents = contents;
 			return { kind: 'Written', sha256: mockSha(contents) } as unknown as T;
+		}
+		case 'get_canvas_session':
+			return (fx?.canvasSessions?.[`${args?.projectId}|${args?.relPath}`] ?? null) as unknown as T;
+		case 'set_canvas_session':
+			if (fx)
+				(fx.canvasSessions ??= {})[`${args?.projectId}|${args?.relPath}`] = String(args?.sessionId);
+			return undefined as unknown as T;
+		case 'list_canvas_origins': {
+			const titles = new Map(
+				(fx?.canvasesByProject?.[String(args?.projectId)] ?? []).map((c) => [c.relPath, c.title]),
+			);
+			return Object.entries(fx?.canvasSessions ?? {})
+				.filter(([k]) => k.startsWith(`${args?.projectId}|`))
+				.map(([k, sessionId]) => {
+					const relPath = k.slice(String(args?.projectId).length + 1);
+					return { sessionId, relPath, title: titles.get(relPath) ?? relPath };
+				}) as unknown as T;
 		}
 		case 'watch_canvas':
 			return undefined as unknown as T;

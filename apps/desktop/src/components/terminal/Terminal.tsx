@@ -24,6 +24,7 @@ import { cmd, copyText, type DragDropEvent, events, openExternally } from '@lib/
 import { isMacOS, isWindows } from '@lib/platform';
 import { currentTheme, onThemeChange } from '@lib/theme';
 import { terminalOptions } from '@lib/monoFont';
+import { useGitModeStore } from '@store/gitModeStore';
 import { currentPrefs, usePrefsStore } from '@store/prefsStore';
 import { useTerminalStore } from '@store/terminalStore';
 
@@ -1120,9 +1121,20 @@ interface TerminalProps {
 	/** The cwd recorded in this session's transcript, when there is one. First
 	 *  base a relative path in the output resolves against (F19). */
 	sessionCwd: string | null;
+	/** Which mode's body this terminal lives in (F44). Canvas mode's agent panel
+	 *  shows a session the hidden Sessions route also holds, and a pooled host has
+	 *  one parent: only the surface whose mode is on screen owns it. */
+	surface?: 'sessions' | 'canvas';
 }
 
-export function Terminal({ sessionId, projectId, projectCwd, sessionCwd }: TerminalProps) {
+export function Terminal({
+	sessionId,
+	projectId,
+	projectCwd,
+	sessionCwd,
+	surface = 'sessions',
+}: TerminalProps) {
+	const active = useGitModeStore((s) => s.mode === surface);
 	const containerRef = useRef<HTMLDivElement>(null);
 	// File links in the agent's output (F19). **Session cwd first, then the
 	// project root**: the same string for a fresh session, and different for a
@@ -1149,6 +1161,9 @@ export function Terminal({ sessionId, projectId, projectCwd, sessionCwd }: Termi
 		// `undefined` is "`list_projects` has not said yet"; `null` is "it said,
 		// and there is no folder", which is a real answer and does run.
 		if (projectCwd === undefined) return;
+		// Not this surface's turn: leaving `active` ran the cleanup that hid the
+		// host, and coming back re-adopts it below (F44).
+		if (!active) return;
 
 		// **Looking at a session is what opens it.** A routine's session is live
 		// with no tab until now (ADR-0026), and `attach` — where a tab otherwise
@@ -1237,7 +1252,7 @@ export function Terminal({ sessionId, projectId, projectCwd, sessionCwd }: Termi
 			clearTimeout(deferred);
 			teardown?.();
 		};
-	}, [sessionId, projectId, projectCwd]);
+	}, [sessionId, projectId, projectCwd, active]);
 
 	// The padding is breathing room for the output (ADR-0082), and its 16px at
 	// the sides is also the slack the rows paint into at a fractional zoom — see
