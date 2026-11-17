@@ -125,7 +125,7 @@ New `commands/canvas.rs` and `services/canvas.rs`:
   - The link lives in the local DB, not the file, because session ids are machine-local and the file may be committed.
   - If the linked session no longer exists, treat it as unlinked.
 - **`write_canvas(path, contents, expected_sha256: Option<String>) -> Result<String /* new sha */, Conflict>`**: path scoped to the project's `canvas/`. It compares the disk content's sha256 with `expected` before writing, and keeps `write_file`'s atomic-write and permission behaviour (reuse its internals).
-- **Watch slots.** `FileWatch` is single-slot today, so a canvas watch would silently steal the viewer's. Give it **keyed slots** (`"viewer"`, `"canvas"`): `watch_file(path, slot?)` with the existing callers defaulting to `"viewer"`. Each event carries its slot. Record this in ADR-0103, since it reverses the one-path choice.
+- **A second watch.** `FileWatch` is single-slot, so a canvas watch on it would silently steal the viewer's. The canvas gets **its own `FileWatch` instance** (`AppState.canvas_watch`) with `watch_canvas` / `unwatch_canvas` emitting `canvas:changed { path }`. The viewer's watch is untouched (ADR-0103).
 - Unit tests: slugify (accents, emoji, empty, long), unique-name selection, refusing paths outside the root.
 
 ### Frontend
@@ -141,7 +141,7 @@ New `commands/canvas.rs` and `services/canvas.rs`:
 - **`CanvasView`** (center card), lazy-loaded through the `lazyViews.ts` pattern so React Flow stays out of the main bundle.
   - Loads with `read_file`.
   - **Its own save path, not `useEditBuffer`** (builder-check call, see "Calls made after review"). The buffer is the React Flow state. Autosave writes about 600 ms after the last change, on blur and on mode switch, through `write_canvas(path, contents, expected_sha256)`. That command refuses the write when the file on disk no longer matches the hash of the last version the board loaded or saved. This closes the race between autosave and an agent's write that a check-after-the-fact would leave open. The header shows "Saved / Saving… / Unsaved", and Ctrl+S saves now.
-  - **Watches** the open file through its own watch slot (see the backend).
+  - **Watches** the open file through its own watch (see the backend).
   - **When the file changes on disk:**
     - nothing unsaved: reload silently, and mark node ids that weren't there before as **new**: dashed outline, plus the badge if `x-author: "agent"`;
     - unsaved edits, or a `write_canvas` refused: keep the local state and show a banner: "The canvas changed on disk (the agent?)", with **Reload** (drops local edits) and **Keep mine** (overwrites). Never auto-merge in v1.
@@ -180,7 +180,7 @@ The composer pastes one message into the session:
 ## Testing
 
 - **Rust:** the slugify, unique-name and path-scope unit tests above, plus migration 9003 applying cleanly.
-- **Rust:** `write_canvas` refuses on a hash mismatch; the two watch slots don't evict each other.
+- **Rust:** `write_canvas` refuses on a hash mismatch; the canvas watch and the viewer's watch don't evict each other.
 - **Vitest:** `jsonCanvas` round-trip (unknown fields, colours, groups, ink), and new-node detection on reload.
 - **Smoke** (`tests/smoke/`):
   1. Switch to Canvas mode, create "Brainstorm MVP" in a fixture project, and assert `canvas/brainstorm-mvp.canvas` exists with the title.
@@ -207,5 +207,5 @@ The composer pastes one message into the session:
 A builder read this document; these are the calls that came out of it:
 
 - **Conditional save** (`write_canvas` with an expected hash) instead of reusing `useEditBuffer`. Without it, a debounced autosave could overwrite an agent's write that landed between the write and the watcher's re-read, which breaks the "never lose an edit" anti-goal. Not changing `useEditBuffer` keeps the file and diff views untouched.
-- **Keyed watch slots** in `FileWatch` instead of having the canvas take over and hand back the viewer's single watch, which is fragile and silently breaks the viewer's live refresh.
+- **A second `FileWatch` instance** for the canvas (implemented in place of the keyed slots first written here) instead of having the canvas take over and hand back the viewer's single watch, which is fragile and silently breaks the viewer's live refresh.
 - **Absolute path** in the context line, so worktree sessions edit the watched file.
