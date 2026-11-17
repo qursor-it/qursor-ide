@@ -1897,3 +1897,38 @@ export interface IntelligenceChangedEvent {
 	projectId: string;
 	candidateId: string | null;
 }
+
+// Canvas (F44, ADR-0103)
+
+/** One `<project>/canvas/*.canvas` file. `relPath` is `/`-separated. */
+export interface CanvasEntry {
+	projectId: string;
+	path: string;
+	relPath: string;
+	slug: string;
+	title: string;
+	modifiedMs: number;
+}
+
+/** `write_canvas`: `Conflict` when the disk no longer holds what the edit was
+ *  based on; `diskSha256` is `null` when the file is gone. */
+export type CanvasWriteOutcome =
+	| { kind: 'Written'; sha256: string }
+	| { kind: 'Conflict'; diskSha256: string | null };
+
+export interface CanvasRead {
+	contents: string;
+	sha256: string;
+}
+
+/** A canvas that has a live session, for the origin strip. */
+export interface CanvasOrigin {
+	sessionId: string;
+	relPath: string;
+	title: string;
+}
+
+/** `canvas:changed` */
+export interface CanvasChangedEvent {
+	path: string;
+}

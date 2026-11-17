@@ -775,6 +775,22 @@ here to exclude and no way for a later change to this table to start persisting
 it by accident. The ciphertext is the only version of that file anything writes
 down.
 
+### `canvas_sessions` - which session a canvas talks to (F44, ADR-0103) - migration `9003`
+
+```sql
+canvas_sessions (
+  project_id TEXT NOT NULL -> projects ON DELETE CASCADE,
+  rel_path   TEXT NOT NULL,           -- 'canvas/<slug>.canvas', '/'-separated
+  session_id TEXT NOT NULL,           -- NO foreign key, on purpose (0007)
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, rel_path)
+)
+```
+
+Keyed by the path relative to the project so moving the folder keeps the link.
+No foreign key to `sessions`: the indexer reaps rows, so the readers join
+`sessions` and treat a link to a missing session as none.
+
 ### Project Intelligence (F33, ADR-0084) - migration `9002`
 
 Six tables. **Every one hangs off `projects` with `ON DELETE CASCADE`**: removing

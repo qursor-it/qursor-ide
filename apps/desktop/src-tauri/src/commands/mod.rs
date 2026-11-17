@@ -10,6 +10,7 @@
 
 use crate::error::{AppError, AppResult};
 
+pub mod canvas;
 pub mod files;
 pub mod gh;
 pub mod git;

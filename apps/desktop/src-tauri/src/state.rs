@@ -32,6 +32,9 @@ pub struct AppState {
 	/// the renderer owns its lifetime — it watches on open and releases on
 	/// close, so an app with no viewer open holds no watch at all.
 	pub file_watch: Arc<FileWatch>,
+	/// The watch on the open canvas (F44, ADR-0103): a second instance, so the
+	/// viewer's watch above is left alone.
+	pub canvas_watch: Arc<FileWatch>,
 	/// The loopback server the viewer's media files are fetched from (F7,
 	/// ADR-0057). Started on the first `probe_media` and not before: an app that
 	/// never opens a video never opens a socket.

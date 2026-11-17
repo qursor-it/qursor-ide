@@ -20,6 +20,9 @@ commands/
   files.rs            # read_file, read_image, read_pdf, probe_media, list_dir,
                       #   path_kinds, watch_file, unwatch_file,
                       #   reveal_in_file_manager
+  canvas.rs           # list_canvases, create_canvas, read_canvas, write_canvas,
+                      #   watch_canvas, unwatch_canvas, get_canvas_session,
+                      #   set_canvas_session, list_canvas_origins (F44)
                       #   (+ write_file — F26, planned)
   git.rs              # git_status, git_blob, git_graph, git_commit, git_blob_at
                       #   (+ git_worktrees — F21, planned)
@@ -394,6 +397,20 @@ path_kinds(paths: Vec<String>) -> Vec<PathKind>                       // file | 
 // stopped anything.
 watch_file(path: String) -> ()
 unwatch_file(path: String) -> bool
+// Canvas mode (F44, ADR-0103). Canvases live in `<project>/canvas/*.canvas`.
+list_canvases(project_id) -> Vec<CanvasEntry>   // [] when the folder or `canvas/` is missing
+create_canvas(project_id, title) -> CanvasEntry // create_new; slug collisions get -2, -3; InvalidInput without a folder
+read_canvas(path) -> { contents, sha256 }       // NotFound when gone
+// Conditional write: sha256 of the disk vs `expected_sha256`; a mismatch or a
+// missing file is `Conflict { disk_sha256 }` and nothing is written. The write
+// itself is `files::write_file`. Scoped to the project root.
+write_canvas(project_id, path, contents, expected_sha256: Option<String>) -> WriteOutcome
+// A second FileWatch (`AppState.canvas_watch`), so the viewer's is untouched.
+watch_canvas(path) -> ()                        // emits `canvas:changed { path }`
+unwatch_canvas(path) -> bool
+get_canvas_session(project_id, rel_path) -> Option<String>  // None if the session is gone
+set_canvas_session(project_id, rel_path, session_id) -> ()
+list_canvas_origins(project_id) -> Vec<{ sessionId, relPath, title }>
 // Why this renderer is a fresh one (F17, ADR-0059). `Some(sentence)` when the
 // last web process crashed and the view was reloaded under the reader, `None`
 // otherwise — which is every boot but those. **Asked, not emitted**: at the
@@ -558,6 +575,7 @@ session_usage(session_id: String) -> Option<SessionUsage>
 | `routine:fire`         | `{ routineId, routineName, projectId, sessionId, prompt, cwd }` | RoutineRunner (F22) |
 | `routines:changed`     | `{ projectId }`                      | routines service (F22 slice 3) |
 | `file:changed`         | `{ path }`                           | FileWatch (F7)      |
+| `canvas:changed`       | `{ path }`                           | the canvas FileWatch (F44) |
 | `intelligence:progress` | `{ runId, projectId, phase, sessionsDone, sessionsTotal, signals }` | IntelligenceService (F33) |
 | `intelligence:run-finished` | `{ runId, projectId, state, outcome, errorCode, candidateCount, signalCount }` | IntelligenceService (F33) - once per run, after its row is final |
 | `intelligence:changed` | `{ projectId, candidateId }`         | IntelligenceService (F33) - refetch `list_improvements` |

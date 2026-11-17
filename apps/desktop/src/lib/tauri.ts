@@ -2,6 +2,11 @@ import type {
 	AnalysisPreview,
 	AnalysisRequest,
 	AppError,
+	CanvasChangedEvent,
+	CanvasEntry,
+	CanvasOrigin,
+	CanvasRead,
+	CanvasWriteOutcome,
 	ClaudeCliStatus,
 	DirListing,
 	FileChangedEvent,
@@ -247,6 +252,33 @@ export const cmd = {
 	 *  lands after the next file's `watchFile` cannot kill the live watch —
 	 *  answers whether it stopped anything. */
 	unwatchFile: (path: string) => invoke<boolean>('unwatch_file', { path }),
+	/** A project's canvases, newest first (F44). A project whose folder is gone
+	 *  has none rather than an error. */
+	listCanvases: (projectId: string) => invoke<CanvasEntry[]>('list_canvases', { projectId }),
+	/** Create `canvas/<slug>.canvas`; a taken slug gets `-2`, `-3`, ... */
+	createCanvas: (projectId: string, title: string) =>
+		invoke<CanvasEntry>('create_canvas', { projectId, title }),
+	readCanvas: (path: string) => invoke<CanvasRead>('read_canvas', { path }),
+	/** Writes only if the disk still hashes to `expectedSha256`; otherwise
+	 *  answers `Conflict` and leaves the disk alone. A missing file is a
+	 *  conflict too, never recreated. */
+	writeCanvas: (
+		projectId: string,
+		path: string,
+		contents: string,
+		expectedSha256: string | null,
+	) => invoke<CanvasWriteOutcome>('write_canvas', { projectId, path, contents, expectedSha256 }),
+	/** Watch the open canvas; replaces the previous one. Separate from the
+	 *  viewer's `watchFile`. */
+	watchCanvas: (path: string) => invoke<void>('watch_canvas', { path }),
+	unwatchCanvas: (path: string) => invoke<boolean>('unwatch_canvas', { path }),
+	/** The session linked to a canvas, `null` if none or it no longer exists. */
+	getCanvasSession: (projectId: string, relPath: string) =>
+		invoke<string | null>('get_canvas_session', { projectId, relPath }),
+	setCanvasSession: (projectId: string, relPath: string, sessionId: string) =>
+		invoke<void>('set_canvas_session', { projectId, relPath, sessionId }),
+	listCanvasOrigins: (projectId: string) =>
+		invoke<CanvasOrigin[]>('list_canvas_origins', { projectId }),
 	/** Tell the backend what is on screen, so the IDE bridge can answer for it
 	 *  rather than guess (F20). Fire-and-forget: a report that goes missing
 	 *  leaves a stale-but-honest picture. */
@@ -790,6 +822,9 @@ export const events = {
 	 *  renderer re-reads it through the same commands a reopen uses. */
 	onFileChanged: (cb: (p: FileChangedEvent) => void) =>
 		listen<FileChangedEvent>('file:changed', cb),
+	/** The open canvas changed on disk (F44). Path only; re-read it. */
+	onCanvasChanged: (cb: (p: CanvasChangedEvent) => void) =>
+		listen<CanvasChangedEvent>('canvas:changed', cb),
 	/** A project's routine list changed (F22 slice 3). Emitted by every write,
 	 *  which is what makes a schedule an agent wrote over the IDE bridge appear
 	 *  in a Routines tab that is already open. */

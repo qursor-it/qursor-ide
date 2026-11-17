@@ -98,6 +98,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	// reason 0007 gives. Fork-only, so numbered past upstream's sequence like 9001.
 	// Plain `CREATE TABLE`s, so not standalone.
 	("9002_project_intelligence", include_str!("migrations/9002_project_intelligence.sql")),
+	// Canvas mode (F44, ADR-0103): the session a canvas talks to. A plain
+	// `CREATE TABLE`, so not standalone.
+	("9003_canvas_sessions", include_str!("migrations/9003_canvas_sessions.sql")),
 ];
 
 /// Migrations that need the connection to themselves, with foreign keys off.
