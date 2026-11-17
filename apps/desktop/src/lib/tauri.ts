@@ -262,12 +262,8 @@ export const cmd = {
 	/** Writes only if the disk still hashes to `expectedSha256`; otherwise
 	 *  answers `Conflict` and leaves the disk alone. A missing file is a
 	 *  conflict too, never recreated. */
-	writeCanvas: (
-		projectId: string,
-		path: string,
-		contents: string,
-		expectedSha256: string | null,
-	) => invoke<CanvasWriteOutcome>('write_canvas', { projectId, path, contents, expectedSha256 }),
+	writeCanvas: (projectId: string, path: string, contents: string, expectedSha256: string | null) =>
+		invoke<CanvasWriteOutcome>('write_canvas', { projectId, path, contents, expectedSha256 }),
 	/** Watch the open canvas; replaces the previous one. Separate from the
 	 *  viewer's `watchFile`. */
 	watchCanvas: (path: string) => invoke<void>('watch_canvas', { path }),
