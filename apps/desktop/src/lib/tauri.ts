@@ -1701,8 +1701,26 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			const path = String(args?.path);
 			const file = fx?.files?.[path];
 			if (!file) throw { kind: 'NotFound', message: `path ${path}` };
-			return { contents: file.contents, sha256: 'mock' } as unknown as T;
+			return { contents: file.contents, sha256: mockSha(file.contents) } as unknown as T;
 		}
+		case 'write_canvas': {
+			// The conditional write, as the Rust side does it: the hash the caller last
+			// saw against what the "disk" holds now. A spec edits `files` to play the agent.
+			const path = String(args?.path);
+			const file = fx?.files?.[path];
+			if (!file) return { kind: 'Conflict', diskSha256: null } as unknown as T;
+			const disk = mockSha(file.contents);
+			if (args?.expectedSha256 !== disk) {
+				return { kind: 'Conflict', diskSha256: disk } as unknown as T;
+			}
+			const contents = String(args?.contents);
+			file.contents = contents;
+			return { kind: 'Written', sha256: mockSha(contents) } as unknown as T;
+		}
+		case 'watch_canvas':
+			return undefined as unknown as T;
+		case 'unwatch_canvas':
+			return true as unknown as T;
 		case 'watch_file':
 			return undefined as unknown as T;
 		case 'unwatch_file':
@@ -2319,6 +2337,13 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		default:
 			throw new Error(`mockInvoke: unknown command "${name}"`);
 	}
+}
+
+/** A stand-in content hash for the mock canvas commands: equal text, equal hash. */
+function mockSha(text: string): string {
+	let h = 5381;
+	for (let i = 0; i < text.length; i++) h = (h * 33) ^ text.charCodeAt(i);
+	return (h >>> 0).toString(16);
 }
 
 /** How many shells the mock bridge has "spawned", for their ids. */

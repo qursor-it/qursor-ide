@@ -10,8 +10,16 @@ import { useGitModeStore } from '@store/gitModeStore';
 import { clampSidebarWidth, useSidebarStore } from '@store/sidebarStore';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { Suspense } from 'react';
+import { Suspense, useState } from 'react';
 import { CanvasSidebar } from './CanvasSidebar';
+import type { SaveState } from './useCanvasDoc';
+
+const SAVE_LABEL: Record<SaveState, string> = {
+	saved: 'Saved',
+	saving: 'Saving…',
+	unsaved: 'Unsaved',
+	conflict: 'Changed on disk',
+};
 
 /** The full-window Canvas mode: sidebar, the board's card, the agent's slot (F44). */
 export function CanvasModeView() {
@@ -51,9 +59,13 @@ export function CanvasModeView() {
 	);
 }
 
+// The agent panel claims this in the next slice (F44).
+const noop = () => {};
+
 function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) {
 	const selected = useCanvasStore((s) => s.selected);
 	const select = useCanvasStore((s) => s.select);
+	const [saveState, setSaveState] = useState<SaveState>('saved');
 	const projectsQ = useQuery({ queryKey: queryKeys.projects(), queryFn: () => cmd.listProjects() });
 	const canvasesQ = useQuery({
 		queryKey: queryKeys.canvases(selected?.projectId ?? ''),
@@ -75,13 +87,21 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 						{entry?.title}
 					</h2>
 				</div>
-				<span className="text-muted-foreground text-xs">Saved</span>
+				<span data-testid="canvas-save-state" className="text-muted-foreground text-xs">
+					{SAVE_LABEL[saveState]}
+				</span>
 				<IconButton aria-label="Close canvas" onClick={() => select(null)}>
 					<X />
 				</IconButton>
 			</header>
 			<Suspense fallback={<div className="flex-1" />}>
-				<LazyCanvasBoard path={selected.path} onOpenAsText={onOpenAsText} />
+				<LazyCanvasBoard
+					projectId={selected.projectId}
+					path={selected.path}
+					onOpenAsText={onOpenAsText}
+					onAsk={noop}
+					onSaveState={setSaveState}
+				/>
 			</Suspense>
 		</>
 	);

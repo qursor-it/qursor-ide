@@ -1,0 +1,8 @@
+/* React Flow styles `group` nodes as boxes (and, unlayered, beats Tailwind utilities).
+   A frame draws itself, so strip the wrapper (F44). */
+.react-flow__node-group {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none !important;
+}
