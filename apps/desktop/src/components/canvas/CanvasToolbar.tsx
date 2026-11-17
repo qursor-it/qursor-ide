@@ -6,6 +6,7 @@ import {
 	Link2,
 	MousePointer2,
 	MoveUpRight,
+	Pen,
 	Square,
 	StickyNote,
 	Type,
@@ -22,6 +23,7 @@ export type Tool =
 	| 'text'
 	| 'connector'
 	| 'frame'
+	| 'pen'
 	| 'file'
 	| 'link';
 
@@ -34,6 +36,7 @@ const TOOLS: { tool: Tool; label: string; key?: string; icon: ReactNode; gap?: b
 	{ tool: 'text', label: 'Text', key: 'T', icon: <Type /> },
 	{ tool: 'connector', label: 'Connector', icon: <MoveUpRight /> },
 	{ tool: 'frame', label: 'Frame', key: 'F', icon: <Frame /> },
+	{ tool: 'pen', label: 'Pen', key: 'P', icon: <Pen /> },
 	{ tool: 'file', label: 'File', icon: <FileText />, gap: true },
 	{ tool: 'link', label: 'Link', key: 'L', icon: <Link2 /> },
 ];

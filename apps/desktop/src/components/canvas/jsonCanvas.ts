@@ -3,8 +3,8 @@ import type { Edge, Node } from '@xyflow/react';
 /** JSON Canvas 1.0 (F44, ADR-0103). Unknown fields, including our `x-` extras
  *  and anything an agent adds, ride along in the index signature and are never
  *  dropped. */
-// Not exported until a consumer needs it (knip fails on unused exports).
-type JcNode = {
+// Exported for ink.ts; JcEdge stays private until a consumer needs it (knip fails on unused exports).
+export type JcNode = {
 	id: string;
 	type: string;
 	x: number;

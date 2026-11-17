@@ -113,6 +113,9 @@ importers:
       pdfjs-dist:
         specifier: 6.2.108
         version: 6.2.108
+      perfect-freehand:
+        specifier: 1.2.2
+        version: 1.2.2
       react:
         specifier: 19.2.4
         version: 19.2.4
@@ -6565,6 +6568,9 @@ packages:
   pdfjs-dist@6.2.108:
     resolution: {integrity: sha512-YxFb+SQcodN2rnX9Tn3dHYlqfb7NjlzzfONPpJd+AKoKtUjEdevTfbC07d5TcczzOK6261auRkP/M8OBHs9vFQ==}
     engines: {node: '>=22.13.0 || >=24'}
+
+  perfect-freehand@1.2.2:
+    resolution: {integrity: sha512-eh31l019WICQ03pkF3FSzHxB8n07ItqIQ++G5UV8JX0zVOXzgTGCqnRR0jJ2h9U8/2uW4W4mtGJELt9kEV0CFQ==}
 
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
@@ -15906,6 +15912,8 @@ snapshots:
   pdfjs-dist@6.2.108:
     optionalDependencies:
       '@napi-rs/canvas': 1.0.7
+
+  perfect-freehand@1.2.2: {}
 
   picocolors@1.1.1: {}
 

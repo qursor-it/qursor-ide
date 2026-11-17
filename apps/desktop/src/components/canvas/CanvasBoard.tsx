@@ -17,12 +17,14 @@ import {
 	useViewport,
 } from '@xyflow/react';
 import { Maximize, Minus, Plus } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { CanvasToolbar, TOOL_KEYS, type Tool } from './CanvasToolbar';
 import { SelectionToolbar } from './SelectionToolbar';
+import { type InkPoint, strokePath, strokeToNode } from './ink';
 import type { CanvasEdgeData, CanvasNodeData } from './jsonCanvas';
 import { FileNode } from './nodes/FileNode';
 import { FrameNode } from './nodes/FrameNode';
+import { InkNode } from './nodes/InkNode';
 import { LinkNode } from './nodes/LinkNode';
 import { ShapeNode } from './nodes/ShapeNode';
 import { StickyNode } from './nodes/StickyNode';
@@ -80,8 +82,7 @@ const NODE_TYPES = {
 	group: FrameNode,
 	file: FileNode,
 	link: LinkNode,
-	// Strokes arrive with the pen; until then an ink node is an outline.
-	ink: () => <div className="size-full rounded border border-border border-dashed" />,
+	ink: InkNode,
 };
 
 const EDGE_OPTIONS = {
@@ -242,6 +243,19 @@ function Board({
 			return { ...s, nodes: spec.type === 'group' ? [node, ...rest] : [...rest, node] };
 		});
 		setEditing(id);
+	};
+
+	const addStroke = (points: InkPoint[]) => {
+		const raw = strokeToNode(points, uid());
+		const node: CN = {
+			id: raw.id,
+			type: 'ink',
+			position: { x: raw.x, y: raw.y },
+			width: raw.width,
+			height: raw.height,
+			data: { raw },
+		};
+		ctl.update((s) => ({ ...s, nodes: [...s.nodes, node] }));
 	};
 
 	const groupSelected = () => {
@@ -494,6 +508,7 @@ function Board({
 							/>
 							<ZoomPanel />
 						</Panel>
+						{tool === 'pen' && <PenLayer onStroke={addStroke} />}
 						<SelectionToolbar
 							ids={editingId ? [] : selectedIds}
 							onColor={setColor}
@@ -504,6 +519,45 @@ function Board({
 					</ReactFlow>
 				</CanvasCtx.Provider>
 			</div>
+		</div>
+	);
+}
+
+/** Covers the pane while the pen is active: collects one stroke per pointer drag.
+ *  It sits under the panels (z-5), so the palette and minimap stay clickable. */
+function PenLayer({ onStroke }: { onStroke: (points: InkPoint[]) => void }) {
+	const rf = useReactFlow();
+	const { zoom } = useViewport();
+	const [screen, setScreen] = useState<InkPoint[]>([]);
+	const sample = (e: PointerEvent): InkPoint => [e.clientX, e.clientY, e.pressure || 0.5];
+	return (
+		<div
+			data-testid="pen-layer"
+			className="absolute inset-0 z-[4] cursor-crosshair touch-none"
+			onPointerDown={(e) => {
+				e.currentTarget.setPointerCapture(e.pointerId);
+				setScreen([sample(e)]);
+			}}
+			onPointerMove={(e) => {
+				if (e.buttons) setScreen((p) => (p.length ? [...p, sample(e)] : p));
+			}}
+			onPointerUp={() => {
+				if (screen.length) {
+					onStroke(
+						screen.map(([x, y, p]): InkPoint => {
+							const f = rf.screenToFlowPosition({ x, y });
+							return [f.x, f.y, p];
+						}),
+					);
+				}
+				setScreen([]);
+			}}
+		>
+			{screen.length > 0 && (
+				<svg className="pointer-events-none fixed inset-0 size-full" aria-hidden="true">
+					<path d={strokePath(screen, 4 * zoom)} fill="var(--color-foreground)" />
+				</svg>
+			)}
 		</div>
 	);
 }
