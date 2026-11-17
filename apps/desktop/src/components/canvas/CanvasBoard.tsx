@@ -29,7 +29,7 @@ import { LinkNode } from './nodes/LinkNode';
 import { ShapeNode } from './nodes/ShapeNode';
 import { StickyNode } from './nodes/StickyNode';
 import { TextNode } from './nodes/TextNode';
-import { CanvasCtx } from './nodes/shared';
+import { CanvasCtx, colorOf } from './nodes/shared';
 import { type SaveState, useCanvasDoc } from './useCanvasDoc';
 
 type CN = Node<CanvasNodeData>;
@@ -84,6 +84,14 @@ const NODE_TYPES = {
 	link: LinkNode,
 	ink: InkNode,
 };
+
+/** The minimap paints a node in its own colour; frames stay faint and ink dark. */
+const miniColor = (n: CN) =>
+	n.type === 'group'
+		? 'transparent'
+		: n.type === 'ink'
+			? 'var(--color-foreground)'
+			: colorOf(n.data.raw, 'var(--color-secondary)');
 
 const EDGE_OPTIONS = {
 	style: { stroke: 'var(--color-primary)', strokeDasharray: '6 4', strokeWidth: 1.5 },
@@ -499,6 +507,15 @@ function Board({
 							<MiniMap
 								pannable
 								zoomable
+								nodeColor={miniColor}
+								nodeStrokeColor={(n) =>
+									n.type === 'group' ? 'var(--color-border)' : 'transparent'
+								}
+								nodeStrokeWidth={2}
+								nodeBorderRadius={3}
+								maskColor="color-mix(in oklab, var(--color-foreground) 6%, transparent)"
+								maskStrokeColor="var(--color-primary)"
+								maskStrokeWidth={1.5}
 								style={{
 									position: 'relative',
 									margin: 0,
