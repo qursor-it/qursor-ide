@@ -130,6 +130,31 @@ test.describe('canvas mode', () => {
 		await expect(page.getByTestId('canvas-conflict')).toHaveCount(0);
 	});
 
+	test('@smoke a coloured plain text node (no x-kind) is drawn as a card', async ({ page }) => {
+		await openIdea(page);
+		await agentWrites(page, {
+			title: 'Idea',
+			nodes: [
+				{
+					id: 'c1',
+					type: 'text',
+					x: 0,
+					y: 0,
+					width: 220,
+					height: 120,
+					color: '4',
+					text: 'plain card',
+				},
+			],
+			edges: [],
+		});
+		const card = page.getByTestId('canvas-text-card');
+		await expect(card).toContainText('plain card');
+		const bg = await card.evaluate((el) => getComputedStyle(el).backgroundColor);
+		expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+		expect(await card.evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe('1px');
+	});
+
 	test('@smoke the board pans to an agent node written off-screen', async ({ page }) => {
 		await openIdea(page, {
 			title: 'Idea',
