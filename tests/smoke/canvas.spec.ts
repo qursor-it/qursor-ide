@@ -155,6 +155,35 @@ test.describe('canvas mode', () => {
 		expect(await card.evaluate((el) => getComputedStyle(el).borderTopWidth)).toBe('1px');
 	});
 
+	test('@smoke card text renders as markdown, and links open outside the app', async ({ page }) => {
+		await openIdea(page);
+		await agentWrites(page, {
+			title: 'Idea',
+			nodes: [
+				{
+					id: 'm1',
+					type: 'text',
+					x: 0,
+					y: 0,
+					width: 260,
+					height: 200,
+					color: '5',
+					text: '## Rischi\n- **config** per lega\n- [docs](https://example.com)',
+				},
+			],
+			edges: [],
+		});
+		const md = page.getByTestId('canvas-md');
+		await expect(md.locator('h2')).toHaveText('Rischi');
+		await expect(md.locator('li strong')).toHaveText('config');
+		await md.getByRole('link', { name: 'docs' }).click();
+		await expect(page.getByTestId('canvas-board')).toBeVisible();
+		const opened = await page.evaluate(() =>
+			(window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === 'openExternally'),
+		);
+		expect(opened.at(-1)?.args).toMatchObject({ path: 'https://example.com' });
+	});
+
 	test('@smoke the board pans to an agent node written off-screen', async ({ page }) => {
 		await openIdea(page, {
 			title: 'Idea',

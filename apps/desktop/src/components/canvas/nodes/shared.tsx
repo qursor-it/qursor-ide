@@ -1,5 +1,8 @@
 import { Textarea, cn } from '@factorai/ui';
+import { openExternally } from '@lib/tauri';
 import { Handle, NodeResizer, Position } from '@xyflow/react';
+import Markdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { type ReactNode, createContext, useContext } from 'react';
 import type { CanvasNodeData } from '../jsonCanvas';
 
@@ -95,6 +98,26 @@ export function NodeChrome({
 }
 
 /** A node's text: plain, or a textarea while it is being edited. */
+// Module-level so react-markdown gets stable props (see MarkdownView).
+const REMARK_PLUGINS = [remarkGfm];
+const MD_COMPONENTS: Components = {
+	// The webview must never navigate away from the app: links open in the browser.
+	a: ({ href, children }) => (
+		<a
+			href={href}
+			className="nodrag underline"
+			onClick={(e) => {
+				e.preventDefault();
+				if (href) void openExternally(href);
+			}}
+		>
+			{children}
+		</a>
+	),
+};
+const MD_CLASS =
+	'prose prose-sm max-w-none text-inherit prose-headings:my-1 prose-headings:text-inherit prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-strong:text-inherit prose-code:text-inherit prose-blockquote:text-inherit prose-hr:my-2';
+
 export function EditableText({
 	id,
 	field,
@@ -137,9 +160,17 @@ export function EditableText({
 	return (
 		<div
 			onDoubleClick={() => ctx.setEditing(id)}
-			className={cn('min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words', className)}
+			className={cn('min-h-0 flex-1 overflow-hidden break-words', className)}
 		>
-			{text || <span className="opacity-40">{placeholder}</span>}
+			{text ? (
+				<div data-testid="canvas-md" className={MD_CLASS}>
+					<Markdown remarkPlugins={REMARK_PLUGINS} components={MD_COMPONENTS}>
+						{text}
+					</Markdown>
+				</div>
+			) : (
+				<span className="opacity-40">{placeholder}</span>
+			)}
 		</div>
 	);
 }
