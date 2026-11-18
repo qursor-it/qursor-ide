@@ -6,3 +6,32 @@
 	background: transparent;
 	box-shadow: none !important;
 }
+
+/* Nodes and edges the agent just added ease in once (DESIGN.md: motion is opt-in,
+   so nothing moves under reduced motion). The easing overshoots a little. */
+@media (prefers-reduced-motion: no-preference) {
+	.canvas-appear {
+		animation: canvas-appear 250ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+	}
+	.canvas-appear-edge {
+		animation: canvas-appear-edge 250ms ease-out both;
+	}
+}
+@keyframes canvas-appear {
+	from {
+		opacity: 0;
+		transform: scale(0.85);
+	}
+	to {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+@keyframes canvas-appear-edge {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}

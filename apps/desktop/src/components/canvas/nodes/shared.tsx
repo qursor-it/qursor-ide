@@ -13,6 +13,8 @@ interface CanvasCtxValue {
 	patch: (id: string, patch: Partial<Raw>) => void;
 	commit: () => void;
 	newIds: Set<string>;
+	/** Added by the last external reload: they animate in once. */
+	arrived: Set<string>;
 	touch: (id: string) => void;
 }
 
@@ -22,6 +24,7 @@ export const CanvasCtx = createContext<CanvasCtxValue>({
 	patch: () => {},
 	commit: () => {},
 	newIds: new Set(),
+	arrived: new Set(),
 	touch: () => {},
 });
 
@@ -60,13 +63,14 @@ export function NodeChrome({
 	className?: string;
 	children: ReactNode;
 }) {
-	const { newIds } = useContext(CanvasCtx);
+	const { newIds, arrived } = useContext(CanvasCtx);
 	const agent = raw['x-author'] === 'agent';
 	return (
 		<div
 			className={cn(
 				'group relative size-full',
 				newIds.has(id) && 'outline-2 outline-primary outline-dashed outline-offset-2',
+				arrived.has(id) && 'canvas-appear',
 				className,
 			)}
 		>

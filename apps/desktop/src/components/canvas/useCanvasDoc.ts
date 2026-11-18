@@ -23,6 +23,8 @@ interface CanvasSnapshot extends Graph {
 	error: string | null;
 	saveState: SaveState;
 	newIds: Set<string>;
+	/** Nodes the last external reload added (not the initial load, not the user's own); `seq` bumps per reload. */
+	arrived: { seq: number; ids: Set<string> };
 	conflict: null | { reload(): void; keepMine(): void };
 }
 
@@ -80,6 +82,7 @@ export class CanvasDocController {
 		error: null,
 		saveState: 'saved',
 		newIds: new Set(),
+		arrived: { seq: 0, ids: new Set() },
 		conflict: null,
 	};
 	private listeners = new Set<() => void>();
@@ -177,7 +180,7 @@ export class CanvasDocController {
 	}
 
 	/** Replace the board with what is on disk. */
-	private adopt(sha: string, parsed: ReturnType<typeof parseCanvas>) {
+	private adopt(sha: string, parsed: ReturnType<typeof parseCanvas>, external = false) {
 		clearTimeout(this.timer);
 		this.dirty = false;
 		this.baseSha = sha;
@@ -197,6 +200,9 @@ export class CanvasDocController {
 			saveState: 'saved',
 			conflict: null,
 			newIds: new Set([...this.snap.newIds, ...added]),
+			...(external && added.size
+				? { arrived: { seq: this.snap.arrived.seq + 1, ids: added } }
+				: {}),
 		});
 	}
 
@@ -218,7 +224,7 @@ export class CanvasDocController {
 			this.setConflict();
 			return;
 		}
-		this.adopt(read.sha256, parseCanvas(read.contents));
+		this.adopt(read.sha256, parseCanvas(read.contents), true);
 	}
 
 	private setConflict() {

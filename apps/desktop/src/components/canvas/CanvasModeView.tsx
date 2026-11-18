@@ -1,5 +1,6 @@
 import { AgentPanel } from './AgentPanel';
 import type { NodeRef } from './Composer';
+import { StatusDot } from '@components/layout/StatusDot';
 import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { PanelResizer } from '@components/layout/PanelResizer';
 import { LazyCanvasBoard } from '@components/viewer/lazyViews';
@@ -93,6 +94,9 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 	useEffect(() => setPendingId(null), [projectId, relPath]);
 	const sessionId = sessionQ.data ?? pendingId;
 	const connected = useTerminalStore((s) => !!sessionId && !!s.bySession[sessionId]);
+	const working = useTerminalStore(
+		(s) => !!sessionId && s.bySession[sessionId]?.status === 'working',
+	);
 	if (!selected) return null;
 	return (
 		<>
@@ -152,6 +156,15 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 					>
 						<header className="flex shrink-0 items-center gap-2 border-border border-b px-4 py-2">
 							<h3 className="flex-1 font-semibold text-sm">Agent</h3>
+							{working && (
+								<span
+									data-testid="canvas-agent-working"
+									className="flex items-center gap-1.5 text-muted-foreground text-xs"
+								>
+									<StatusDot status="working" pulse className="motion-reduce:animate-none" />
+									Claude is working…
+								</span>
+							)}
 							{connected && (
 								<span
 									data-testid="canvas-agent-connected"

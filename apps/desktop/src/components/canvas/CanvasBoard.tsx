@@ -19,6 +19,7 @@ import {
 import { Maximize, Minus, Plus } from 'lucide-react';
 import { type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { CanvasToolbar, TOOL_KEYS, type Tool } from './CanvasToolbar';
+import { boundsOf, followViewport, shouldFollow, viewportRect } from './follow';
 import { SelectionToolbar } from './SelectionToolbar';
 import { type InkPoint, strokePath, strokeToNode } from './ink';
 import type { CanvasEdgeData, CanvasNodeData } from './jsonCanvas';
@@ -48,6 +49,8 @@ interface CanvasBoardProps {
 	onNodeRefs: (refs: { id: string; text: string }[]) => void;
 	onSaveState: (state: SaveState) => void;
 }
+
+const MIN_ZOOM = 0.1;
 
 /** Everything a tool can drop on the board with one click. */
 const ADD: Partial<Record<Tool, { type: string; w: number; h: number; raw: Partial<Raw> }>> = {
@@ -177,10 +180,48 @@ function Board({
 				ctl.update((s) => s);
 			},
 			newIds: doc.newIds,
+			arrived: doc.arrived.ids,
 			touch: ctl.touch,
 		}),
-		[editingId, doc.newIds, ctl],
+		[editingId, doc.newIds, doc.arrived, ctl],
 	);
+
+	// Edges to a node the agent just added fade in with it.
+	const shownEdges = useMemo(
+		() =>
+			doc.arrived.ids.size
+				? edges.map((e) =>
+						doc.arrived.ids.has(e.source) || doc.arrived.ids.has(e.target)
+							? { ...e, className: 'canvas-appear-edge' }
+							: e,
+					)
+				: edges,
+		[edges, doc.arrived],
+	);
+
+	// Follow the agent: pan to nodes it added off-screen, unless the user is mid-gesture.
+	const frame = useRef<HTMLDivElement>(null);
+	const followed = useRef(0);
+	const lastInteraction = useRef(Number.NEGATIVE_INFINITY);
+	useEffect(() => {
+		const el = frame.current;
+		if (!doc.arrived.ids.size || !el || followed.current === doc.arrived.seq) return;
+		followed.current = doc.arrived.seq;
+		const rects = [...doc.arrived.ids].flatMap((id) => {
+			const n = latest.current.nodes.find((x) => x.id === id);
+			if (!n) return [];
+			const a = rf.getInternalNode(id)?.internals.positionAbsolute ?? n.position;
+			const raw = n.data.raw;
+			return [{ x: a.x, y: a.y, width: n.width ?? raw.width, height: n.height ?? raw.height }];
+		});
+		const { width, height } = el.getBoundingClientRect();
+		const vp = rf.getViewport();
+		if (!shouldFollow(rects, viewportRect(vp, width, height), lastInteraction.current, Date.now()))
+			return;
+		const box = boundsOf(rects);
+		if (!box) return;
+		void rf.setViewport(followViewport(box, width, height, vp.zoom, MIN_ZOOM), { duration: 400 });
+	}, [doc.arrived, rf]);
 
 	const selectedIds = useMemo(() => nodes.filter((n) => n.selected).map((n) => n.id), [nodes]);
 	// Reported on content, not identity: a drag makes a new `nodes` every frame.
@@ -394,7 +435,10 @@ function Board({
 	const onKeyRef = useRef(onKey);
 	onKeyRef.current = onKey;
 	useEffect(() => {
-		const handler = (e: KeyboardEvent) => onKeyRef.current(e);
+		const handler = (e: KeyboardEvent) => {
+			lastInteraction.current = Date.now();
+			onKeyRef.current(e);
+		};
 		window.addEventListener('keydown', handler);
 		return () => window.removeEventListener('keydown', handler);
 	}, []);
@@ -442,7 +486,14 @@ function Board({
 				</Banner>
 			)}
 			<div
+				ref={frame}
 				className="min-h-0 flex-1"
+				onPointerDownCapture={() => {
+					lastInteraction.current = Date.now();
+				}}
+				onWheelCapture={() => {
+					lastInteraction.current = Date.now();
+				}}
 				onDoubleClick={(e) => {
 					if ((e.target as Element).classList.contains('react-flow__pane')) {
 						addAt('sticky', rf.screenToFlowPosition({ x: e.clientX, y: e.clientY }));
@@ -452,7 +503,7 @@ function Board({
 				<CanvasCtx.Provider value={ctx}>
 					<ReactFlow
 						nodes={nodes}
-						edges={edges}
+						edges={shownEdges}
 						nodeTypes={NODE_TYPES}
 						onNodesChange={ctl.onNodesChange}
 						onEdgesChange={ctl.onEdgesChange}
@@ -485,7 +536,7 @@ function Board({
 						zoomOnDoubleClick={false}
 						snapToGrid
 						snapGrid={[8, 8]}
-						minZoom={0.1}
+						minZoom={MIN_ZOOM}
 						maxZoom={3}
 						fitView
 						fitViewOptions={{

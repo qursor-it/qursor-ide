@@ -130,6 +130,37 @@ test.describe('canvas mode', () => {
 		await expect(page.getByTestId('canvas-conflict')).toHaveCount(0);
 	});
 
+	test('@smoke the board pans to an agent node written off-screen', async ({ page }) => {
+		await openIdea(page, {
+			title: 'Idea',
+			nodes: [{ ...AGENT_NODE, x: 0, 'x-author': undefined }],
+			edges: [],
+		});
+		await agentWrites(page, {
+			title: 'Idea',
+			nodes: [
+				{ ...AGENT_NODE, x: 0, 'x-author': undefined },
+				{ ...AGENT_NODE, id: 'g2', text: 'far away', x: 6000, y: 4000 },
+			],
+			edges: [],
+		});
+		const node = page.getByText('far away');
+		const board = page.getByTestId('canvas-board');
+		await expect
+			.poll(async () => {
+				const [n, b] = await Promise.all([node.boundingBox(), board.boundingBox()]);
+				return (
+					!!n &&
+					!!b &&
+					n.x < b.x + b.width &&
+					n.x + n.width > b.x &&
+					n.y < b.y + b.height &&
+					n.y + n.height > b.y
+				);
+			})
+			.toBe(true);
+	});
+
 	test('@smoke unknown fields survive an edit', async ({ page }) => {
 		const note = {
 			id: 'a',
@@ -222,6 +253,16 @@ test.describe('canvas mode', () => {
 		await page.getByTestId('canvas-composer').fill('what is missing?');
 		await page.keyboard.press('Enter');
 		await expect(page.getByTestId('canvas-agent-connected')).toBeVisible();
+		// A freshly spawned session is working until it says otherwise.
+		await expect(page.getByTestId('canvas-agent-working')).toContainText('Claude is working');
+		await page.evaluate(() =>
+			window.__FACTORAI_EMIT__?.('terminal:status', {
+				id: 'mock-terminal-id',
+				status: 'waiting_input',
+				lastActivity: Date.now(),
+			}),
+		);
+		await expect(page.getByTestId('canvas-agent-working')).toHaveCount(0);
 		await expect
 			.poll(() =>
 				page.evaluate(() =>
