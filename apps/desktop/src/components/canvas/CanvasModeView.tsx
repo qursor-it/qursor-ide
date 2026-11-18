@@ -94,6 +94,9 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 	useEffect(() => setPendingId(null), [projectId, relPath]);
 	const sessionId = sessionQ.data ?? pendingId;
 	const connected = useTerminalStore((s) => !!sessionId && !!s.bySession[sessionId]);
+	const agentName = useTerminalStore((s) =>
+		sessionId && s.bySession[sessionId]?.agent === 'codex' ? 'Codex' : 'Claude',
+	);
 	const working = useTerminalStore(
 		(s) => !!sessionId && s.bySession[sessionId]?.status === 'working',
 	);
@@ -162,7 +165,7 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 									className="flex items-center gap-1.5 text-muted-foreground text-xs"
 								>
 									<StatusDot status="working" pulse className="motion-reduce:animate-none" />
-									Claude is working…
+									{agentName} is working…
 								</span>
 							)}
 							{connected && (

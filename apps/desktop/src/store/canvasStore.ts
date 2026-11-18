@@ -1,3 +1,4 @@
+import type { AgentId } from '@factorai/types';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
@@ -9,6 +10,9 @@ interface CanvasState {
 	setPanelWidth: (width: number) => void;
 	panelOpen: boolean;
 	togglePanel: () => void;
+	/** The agent a canvas's first message starts; the last pick is remembered. */
+	agent: AgentId;
+	setAgent: (agent: AgentId) => void;
 }
 
 export const useCanvasStore = create<CanvasState>()(
@@ -20,6 +24,8 @@ export const useCanvasStore = create<CanvasState>()(
 			setPanelWidth: (panelWidth) => set({ panelWidth }),
 			panelOpen: true,
 			togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
+			agent: 'claude',
+			setAgent: (agent) => set({ agent }),
 		}),
 		{
 			name: 'factorai.canvas',

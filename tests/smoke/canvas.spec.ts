@@ -287,6 +287,46 @@ test.describe('canvas mode', () => {
 		await expect(page.getByTestId('canvas-board')).toBeVisible();
 	});
 
+	test('@smoke the agent picker starts a Codex session for the canvas', async ({ page }) => {
+		const fx = fixtureWithCanvas({ title: 'Idea', nodes: [], edges: [] });
+		fx.newSessionId = 'canvas-session-codex';
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('canvas-row').click();
+		await page.getByTestId('canvas-agent-codex').click();
+		await expect(page.getByTestId('canvas-agent-panel')).toContainText('new Codex session');
+		await page.getByTestId('canvas-composer').fill('ideas?');
+		await page.keyboard.press('Enter');
+		await expect(page.getByTestId('canvas-agent-connected')).toBeVisible();
+		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
+		expect(calls.find((c) => c.name === 'start_session')?.args).toMatchObject({ agent: 'codex' });
+		expect(calls.find((c) => c.name === 'terminal_spawn')?.args).toMatchObject({
+			opts: { agent: 'codex' },
+		});
+	});
+
+	test('@smoke a session already running can be linked, and changed later', async ({ page }) => {
+		const fx = fixtureWithCanvas({ title: 'Idea', nodes: [], edges: [] });
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('canvas-row').click();
+		await page.getByTestId('canvas-link-session').click();
+		await page.getByRole('option', { name: /Refactor the auth middleware/ }).click();
+		await expect(page.getByTestId('canvas-agent-connected')).toBeVisible();
+		expect(
+			await page.evaluate(
+				(k) => window.__FACTORAI_TEST__?.canvasSessions?.[k],
+				`${FOO_ID}|canvas/idea.canvas`,
+			),
+		).toBe('session-uuid-001');
+		await page.getByTestId('canvas-change-session').click();
+		await expect(page.getByTestId('canvas-agent-codex')).toBeVisible();
+		await page.getByRole('button', { name: 'Keep the current session' }).click();
+		await expect(page.getByTestId('canvas-change-session')).toBeVisible();
+	});
+
 	test('@smoke the session terminal is re-adopted when Sessions comes back from Canvas', async ({
 		page,
 	}) => {
