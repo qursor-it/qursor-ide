@@ -10,7 +10,7 @@ export function FrameNode({ id, data, selected }: NodeProps<Node<CanvasNodeData>
 		<NodeChrome id={id} raw={raw} selected={selected} minWidth={120} minHeight={80}>
 			<div
 				className="absolute -top-6 left-0 flex h-5 max-w-full text-muted-foreground text-xs"
-				style={tint ? { color: tint } : undefined}
+				style={tint ? { color: `color-mix(in srgb, ${tint} 45%, #23262f)` } : undefined}
 			>
 				<EditableText id={id} field="label" value={raw.label} placeholder="Frame" />
 			</div>
