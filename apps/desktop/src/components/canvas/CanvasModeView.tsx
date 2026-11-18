@@ -63,7 +63,7 @@ export function CanvasModeView() {
 
 function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) {
 	const selected = useCanvasStore((s) => s.selected);
-	const select = useCanvasStore((s) => s.select);
+	const closeTab = useCanvasStore((s) => s.closeTab);
 	const panelOpen = useCanvasStore((s) => s.panelOpen);
 	const togglePanel = useCanvasStore((s) => s.togglePanel);
 	const panelWidth = useCanvasStore((s) => s.panelWidth);
@@ -123,7 +123,7 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 					>
 						<PanelRight />
 					</IconButton>
-					<IconButton aria-label="Close canvas" onClick={() => select(null)}>
+					<IconButton aria-label="Close canvas" onClick={() => closeTab(selected.path)}>
 						<X />
 					</IconButton>
 				</header>

@@ -8893,6 +8893,13 @@ board, with a header of project, path, title, save state, the agent-panel toggle
 and close. Right card: the agent panel (below), resizable between 280 and 640 px
 and collapsible; the width and open state are kept.
 
+**Tabs.** In Canvas mode row 2 of the top bar lists the open canvases, grouped under
+the project chips as in Git mode, in the order they were opened, in place of the
+session tabs (kept mounted, hidden); the file-tree toggle is hidden too. Opening a
+canvas from the sidebar adds a tab, the card's × and the tab's × close it and hand
+the board to the right neighbour, else the left. Unsaved edits survive a close
+(the held cache of `useCanvasDoc`). The tab list is kept.
+
 **The board** is React Flow: stickies, shapes, text, frames, file and link
 nodes, connectors, a toolbar and shortcuts (V H N R O T L F, Delete, Ctrl+Z,
 Ctrl+Shift+Z, Ctrl+C/V, Ctrl+S, arrows), undo up to 100 steps, and a toolbar over

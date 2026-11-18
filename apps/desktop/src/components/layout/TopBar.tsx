@@ -1,5 +1,6 @@
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
+import { CanvasTabs } from '@components/layout/CanvasTabs';
 import { GitTabs } from '@components/layout/GitTabs';
 import { SessionTabs } from '@components/layout/SessionTabs';
 import { Button, IconButton } from '@factorai/ui';
@@ -18,7 +19,7 @@ import { PanelRight, Search } from 'lucide-react';
 export function TopBar() {
 	const open = usePanelStore((s) => s.open);
 	const toggle = usePanelStore((s) => s.toggle);
-	const gitMode = useGitModeStore((s) => s.mode === 'git');
+	const mode = useGitModeStore((s) => s.mode);
 	// The chord rides on the tooltip these buttons already had (F28).
 	const panelTitle = useChordTitle('Toggle file tree', 'toggleFilePanel');
 	const paletteChord = useChordLabel('openPalette');
@@ -57,7 +58,7 @@ export function TopBar() {
 			    and it made two neighbouring icons in the same row disagree about what
 			    a header icon looks like. `aria-pressed` still carries the state where
 			    it is not otherwise visible. */}
-				{!gitMode && (
+				{mode === 'sessions' && (
 					<IconButton
 						size="md"
 						aria-label="Toggle file tree"
@@ -73,10 +74,11 @@ export function TopBar() {
 			    open repositories in Git mode, each its own list. Both stay mounted and
 			    the idle one is hidden, so a mode flip costs the session strip nothing. */}
 			<div className="flex h-10 items-center px-2">
-				<div className={gitMode ? 'hidden' : 'flex min-w-0 flex-1 items-center'}>
+				<div className={mode !== 'sessions' ? 'hidden' : 'flex min-w-0 flex-1 items-center'}>
 					<SessionTabs />
 				</div>
-				{gitMode && <GitTabs />}
+				{mode === 'git' && <GitTabs />}
+				{mode === 'canvas' && <CanvasTabs />}
 			</div>
 		</div>
 	);

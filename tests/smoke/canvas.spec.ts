@@ -347,4 +347,29 @@ test.describe('canvas mode', () => {
 		await expect(page.locator('.xterm:visible')).toBeVisible();
 		await expect(page.locator('.xterm:visible')).toHaveCount(1);
 	});
+
+	test('@smoke the top bar lists the open canvases in Canvas mode', async ({ page }) => {
+		await openIdea(page);
+		await page.getByTestId('new-canvas').click();
+		await page.getByLabel('Canvas title').fill('Second');
+		await page.getByRole('button', { name: 'Create' }).click();
+
+		await expect(page.getByTestId('session-tabs')).toBeHidden();
+		const tabs = page.getByTestId('canvas-tab');
+		await expect(tabs).toHaveText(['Idea', 'Second']);
+		await expect(page.getByTestId('canvas-title')).toHaveText('Second');
+
+		await tabs.nth(0).click();
+		await expect(page.getByTestId('canvas-title')).toHaveText('Idea');
+
+		await page.getByRole('button', { name: 'Close canvas tab Idea' }).click();
+		await expect(tabs).toHaveText(['Second']);
+		await expect(page.getByTestId('canvas-title')).toHaveText('Second');
+
+		await page.getByTestId('mode-sessions').click();
+		await page.locator('aside').getByText('foo').click();
+		await page.getByText('Refactor the auth middleware').click();
+		await expect(page.getByTestId('session-tabs')).toBeVisible();
+		await expect(page.getByTestId('canvas-tabs')).toHaveCount(0);
+	});
 });
