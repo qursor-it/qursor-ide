@@ -590,6 +590,18 @@ pub struct RoutineStore {
 	pub update: RoutineUpdate,
 }
 
+/// How the agent's canvas tools reach the app (F44, ADR-0104): a project's
+/// folder, and the canvas a session is linked to. Wired in `lib.rs`.
+pub type CanvasRoot = Arc<dyn Fn(&str) -> AppResult<PathBuf> + Send + Sync>;
+/// Project id, session id: the canvas that session is linked to.
+pub type CanvasLinked = Arc<dyn Fn(&str, &str) -> AppResult<Option<String>> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct CanvasStore {
+	pub root: CanvasRoot,
+	pub linked: CanvasLinked,
+}
+
 /// What `spawn_inner` needs, for either kind of PTY.
 ///
 /// **Not `SpawnOpts` with a flag on it, and not `ShellSpawnOpts` either.** Both
@@ -775,6 +787,8 @@ pub struct TerminalManager {
 	/// `None` leaves the tools advertised but answering that they are
 	/// unavailable — see [`RoutineStore`].
 	routine_store: Option<RoutineStore>,
+	/// Where the agent's canvas tools read and write; `None` in tests.
+	canvas_store: Option<CanvasStore>,
 	/// Where a Claude session's status-line helper drops its rate limits.
 	/// `None` — every test that does not wire it — adds no `--settings`.
 	usage_sink_dir: Option<PathBuf>,
@@ -829,6 +843,7 @@ impl TerminalManager {
 			profile_dir: None,
 			worktree_store: None,
 			routine_store: None,
+			canvas_store: None,
 			usage_sink_dir: None,
 			usage_statusline_enabled: None,
 			on_worktree: Arc::new(move |e| {
@@ -858,6 +873,7 @@ impl TerminalManager {
 			profile_dir: None,
 			worktree_store: None,
 			routine_store: None,
+			canvas_store: None,
 			usage_sink_dir: None,
 			usage_statusline_enabled: None,
 			on_worktree: Arc::new(|_| {}),
@@ -932,6 +948,12 @@ impl TerminalManager {
 	/// Wired to the `routines` table in `lib.rs`.
 	pub fn with_routine_store(mut self, store: RoutineStore) -> Self {
 		self.routine_store = Some(store);
+		self
+	}
+
+	/// Where the agent's canvas tools read and write (F44, ADR-0104).
+	pub fn with_canvas_store(mut self, store: CanvasStore) -> Self {
+		self.canvas_store = Some(store);
 		self
 	}
 
@@ -1338,7 +1360,23 @@ impl TerminalManager {
 				(s.update)(id, patch, &update_author)
 			}),
 		};
-		let tools = AgentTools::new(routines);
+		let canvas_unavailable =
+			|| AppError::InvalidInput("canvases are not available for this session".to_string());
+		let (root_store, link_store) = (self.canvas_store.clone(), self.canvas_store.clone());
+		let (root_project, link_project, link_session) =
+			(project_id.to_string(), project_id.to_string(), session_id.to_string());
+		let canvases = agent_tools::Canvases {
+			root: Arc::new(move || {
+				(root_store.as_ref().ok_or_else(canvas_unavailable)?.root)(&root_project)
+			}),
+			linked: Arc::new(move || {
+				(link_store.as_ref().ok_or_else(canvas_unavailable)?.linked)(
+					&link_project,
+					&link_session,
+				)
+			}),
+		};
+		let tools = AgentTools::new(routines, canvases);
 		AgentToolsServer::start(Arc::new(move |text| tools.handle(text)))
 	}
 

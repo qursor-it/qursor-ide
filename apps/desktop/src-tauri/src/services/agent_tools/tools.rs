@@ -14,6 +14,7 @@
 //! What is here is therefore a plain MCP server under a plain name, and its
 //! tools arrive as `mcp__Qursor IDE__*`.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::{json, Value};
@@ -21,6 +22,9 @@ use tracing::{debug, info, warn};
 
 use crate::error::AppResult;
 use crate::models::{Routine, RoutineInput};
+use crate::services::canvas::{self, WriteOutcome};
+use crate::services::canvas_tools::{self, Selector};
+use crate::services::ide::scope::resolve_within;
 use crate::services::mcp_wire::{
 	self, tool_error, tool_text, Failure, Incoming, INVALID_PARAMS, METHOD_NOT_FOUND,
 };
@@ -65,14 +69,24 @@ pub struct Routines {
 	pub update: UpdateRoutine,
 }
 
+/// Where this session's canvases are (F44, ADR-0104). Project and session are
+/// baked into the closures, like [`Routines`]: no argument can name another.
+pub struct Canvases {
+	/// The project's folder; canvases live in its `canvas/`.
+	pub root: Arc<dyn Fn() -> AppResult<PathBuf> + Send + Sync>,
+	/// The canvas this session is linked to, as `canvas/<slug>.canvas`.
+	pub linked: Arc<dyn Fn() -> AppResult<Option<String>> + Send + Sync>,
+}
+
 /// One session's view of Qursor IDE's tools.
 pub struct AgentTools {
 	routines: Routines,
+	canvases: Canvases,
 }
 
 impl AgentTools {
-	pub fn new(routines: Routines) -> Self {
-		Self { routines }
+	pub fn new(routines: Routines, canvases: Canvases) -> Self {
+		Self { routines, canvases }
 	}
 
 	/// What this session needs to know that is not a tool.
@@ -105,8 +119,15 @@ impl AgentTools {
 			"to be pushed to a remote and no repository access has to be granted to anyone. ",
 			"It runs only while Qursor IDE is open.",
 		);
+		const CANVAS: &str = concat!(
+			"Canvases (`canvas/*.canvas`, JSON Canvas) are edited with `canvasOutline`, ",
+			"`canvasRead`, `canvasFreeSpot` and `canvasPatch` rather than by reading or ",
+			"rewriting the whole file: outline first for the sections and the `revision`, ",
+			"read only the nodes you need, find an empty spot for new cards, and send small ",
+			"patches with that revision. The open board reloads by itself.",
+		);
 		format!(
-			"This session is running inside Qursor IDE, in the project at {}.\n\n{BODY}",
+			"This session is running inside Qursor IDE, in the project at {}.\n\n{BODY}\n\n{CANVAS}",
 			self.routines.project_path
 		)
 	}
@@ -159,6 +180,10 @@ impl AgentTools {
 			"createRoutine" => Ok(self.create_routine(&args)),
 			"updateRoutine" => Ok(self.update_routine(&args)),
 			"setRoutineEnabled" => Ok(self.set_routine_enabled(&args)),
+			"canvasOutline" => Ok(self.canvas_outline(&args)),
+			"canvasRead" => Ok(self.canvas_read(&args)),
+			"canvasFreeSpot" => Ok(self.canvas_free_spot(&args)),
+			"canvasPatch" => Ok(self.canvas_patch(&args)),
 			other => Err(Failure::rpc(METHOD_NOT_FOUND, format!("no such tool: {other}"))),
 		}
 	}
@@ -285,6 +310,115 @@ impl AgentTools {
 			}
 			Err(e) => tool_error(&format!("{e}")),
 		}
+	}
+
+	/// The canvas dir and the file an agent means by `path` (default: the one
+	/// this session is linked to). Always inside `<project>/canvas/`.
+	fn canvas_target(&self, args: &Value) -> Result<(PathBuf, PathBuf), String> {
+		let root = (self.canvases.root)().map_err(|e| format!("no project folder: {e}"))?;
+		let dir = root.join(canvas::DIR);
+		let rel = match args.get("path").and_then(Value::as_str) {
+			Some(p) => p.to_string(),
+			None => (self.canvases.linked)()
+				.map_err(|e| format!("could not look up the linked canvas: {e}"))?
+				.ok_or("this session is not linked to a canvas; pass `path` (e.g. \"my-board.canvas\")")?,
+		};
+		let rel = rel.replace('\\', "/");
+		let rel = rel.strip_prefix("canvas/").unwrap_or(&rel);
+		if !rel.ends_with(".canvas") || rel.starts_with('/') || rel.split('/').any(|c| c == "..") {
+			return Err(format!("`path` must be a .canvas file under canvas/, got {rel}"));
+		}
+		let file =
+			resolve_within(&dir, &dir.join(rel).to_string_lossy()).map_err(|e| format!("{e}"))?;
+		Ok((dir, file))
+	}
+
+	/// Read, parse and hash the target canvas.
+	fn canvas_load(&self, args: &Value) -> Result<(PathBuf, PathBuf, Value, String), String> {
+		let (dir, file) = self.canvas_target(args)?;
+		let read = canvas::read(&file).map_err(|e| format!("{e}"))?;
+		let doc: Value = serde_json::from_str(&read.contents)
+			.map_err(|e| format!("the canvas is not valid JSON: {e}"))?;
+		Ok((dir, file, doc, read.sha256))
+	}
+
+	/// Run a read-only canvas tool: load, compute, add the revision.
+	fn canvas_query(&self, args: &Value, f: impl FnOnce(&Value) -> Result<Value, String>) -> Value {
+		let out = self.canvas_load(args).and_then(|(_, _, doc, sha)| {
+			let mut out = f(&doc)?;
+			out["revision"] = json!(sha);
+			Ok(out)
+		});
+		match out {
+			Ok(v) => tool_text(&v.to_string()),
+			Err(e) => tool_error(&e),
+		}
+	}
+
+	fn canvas_outline(&self, args: &Value) -> Value {
+		self.canvas_query(args, |doc| Ok(canvas_tools::outline(doc)))
+	}
+
+	fn canvas_read(&self, args: &Value) -> Value {
+		let sel = Selector {
+			group_id: args.get("groupId").and_then(Value::as_str).map(str::to_string),
+			node_ids: args
+				.get("nodeIds")
+				.and_then(Value::as_array)
+				.map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+				.unwrap_or_default(),
+		};
+		self.canvas_query(args, |doc| canvas_tools::read_part(doc, &sel))
+	}
+
+	fn canvas_free_spot(&self, args: &Value) -> Value {
+		let (Some(w), Some(h)) =
+			(args.get("width").and_then(Value::as_f64), args.get("height").and_then(Value::as_f64))
+		else {
+			return tool_error("canvasFreeSpot needs a width and a height");
+		};
+		let near = args.get("near").and_then(Value::as_str);
+		self.canvas_query(args, |doc| {
+			let (x, y) = canvas_tools::free_spot(doc, w, h, near)?;
+			Ok(json!({ "x": x, "y": y }))
+		})
+	}
+
+	/// Targeted edits in one atomic write, never blind on top of the user's moves
+	/// (ADR-0104): a stale `revision` is refused, the write is conditional on the
+	/// hash just read, and a clash in the milliseconds between gets one retry.
+	fn canvas_patch(&self, args: &Value) -> Value {
+		const STALE: &str =
+			"the canvas changed since you read it; call canvasOutline or canvasRead again";
+		let Some(ops) = args.get("ops").filter(|o| o.is_array()) else {
+			return tool_error("canvasPatch needs ops: an array of operations");
+		};
+		let revision = args.get("revision").and_then(Value::as_str);
+		for _ in 0..2 {
+			let (dir, file, doc, sha) = match self.canvas_load(args) {
+				Ok(loaded) => loaded,
+				Err(e) => return tool_error(&e),
+			};
+			if revision.is_some_and(|r| r != sha) {
+				return tool_error(STALE);
+			}
+			let patched = match canvas_tools::apply_ops(&doc, ops) {
+				Ok(p) => p,
+				Err(e) => return tool_error(&format!("nothing was changed: {e}")),
+			};
+			match canvas::write(&dir, &file, &canvas_tools::to_text(&patched), Some(&sha)) {
+				Ok(WriteOutcome::Written { sha256 }) => {
+					info!("an agent patched a canvas");
+					let applied = ops.as_array().map_or(0, Vec::len);
+					return tool_text(
+						&json!({ "applied": applied, "revision": sha256 }).to_string(),
+					);
+				}
+				Ok(WriteOutcome::Conflict { .. }) => continue,
+				Err(e) => return tool_error(&format!("could not write the canvas: {e}")),
+			}
+		}
+		tool_error(STALE)
 	}
 }
 
@@ -505,6 +639,132 @@ fn tools_list() -> Value {
 											 Qursor IDE routine without deleting it",
 				},
 			},
+			{
+				"name": "canvasOutline",
+				"description": "Map of a canvas without reading it all: title, node and \
+								edge counts, and the sections (groups, by containment) each \
+								with its id, label, bbox, card count and cards per colour, \
+								plus the loose cards outside any group. Also returns the \
+								`revision` to pass to canvasPatch. Start here on a big canvas.",
+				"inputSchema": {
+					"type": "object",
+					"properties": { "path": {
+							"type": "string",
+							"description": "Canvas file under canvas/, e.g. \"my-board.canvas\". \
+											Omit for the canvas this session is linked to.",
+						} },
+				},
+				"annotations": { "title": "Outline a canvas", "readOnlyHint": true },
+				"_meta": {
+					"anthropic/searchHint": "outline, list sections or groups of a Qursor IDE \
+											 canvas board without reading the whole file",
+				},
+			},
+			{
+				"name": "canvasRead",
+				"description": "Read only some nodes of a canvas: everything inside a group \
+								(`groupId`, nested groups included) and/or specific `nodeIds`. \
+								Returns id, type, x-kind, text, colour, position, size and \
+								x-author, plus the edges touching them marked `out`, `in` or \
+								`within` the selection. Needs groupId or nodeIds; call \
+								canvasOutline for the group ids.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"path": {
+							"type": "string",
+							"description": "Canvas file under canvas/, e.g. \"my-board.canvas\". \
+											Omit for the canvas this session is linked to.",
+						},
+						"groupId": { "type": "string", "description": "A section id from canvasOutline." },
+						"nodeIds": { "type": "array", "items": { "type": "string" } },
+					},
+				},
+				"annotations": { "title": "Read part of a canvas", "readOnlyHint": true },
+				"_meta": {
+					"anthropic/searchHint": "read nodes of a Qursor IDE canvas board by group \
+											 or id",
+				},
+			},
+			{
+				"name": "canvasFreeSpot",
+				"description": "An {x, y} where a box of width x height overlaps no node on \
+								the canvas and keeps a margin. With `near` (a group id) it \
+								looks next to that group first. Use it for the position of \
+								every card you add.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"path": {
+							"type": "string",
+							"description": "Canvas file under canvas/, e.g. \"my-board.canvas\". \
+											Omit for the canvas this session is linked to.",
+						},
+						"width": { "type": "number" },
+						"height": { "type": "number" },
+						"near": { "type": "string", "description": "A group id to place beside." },
+					},
+					"required": ["width", "height"],
+				},
+				"annotations": { "title": "Find a free spot on a canvas", "readOnlyHint": true },
+				"_meta": {
+					"anthropic/searchHint": "find an empty position to place a new card on a \
+											 Qursor IDE canvas board",
+				},
+			},
+			{
+				"name": "canvasPatch",
+				"description": "Edit a canvas with small targeted operations in one atomic \
+								write, instead of rewriting the file. Pass the `revision` you \
+								got from canvasOutline/canvasRead: if the user changed the \
+								canvas since, nothing is written and you must read again. \
+								If any op fails none is applied. Unknown fields are kept; \
+								nodes you add are marked \"x-author\": \"agent\". Ops: \
+								{op:\"addNode\", node:{id, x, y, width?, height?, type?, text?, \
+								color?, ...}}, {op:\"updateNode\", id, fields} (null deletes a \
+								field), {op:\"removeNode\", id} (also removes its edges), \
+								{op:\"addEdge\", edge:{id, fromNode, toNode, ...}}, \
+								{op:\"updateEdge\", id, fields}, {op:\"removeEdge\", id}. \
+								Colours are presets \"1\"-\"6\", not hex.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"path": {
+							"type": "string",
+							"description": "Canvas file under canvas/, e.g. \"my-board.canvas\". \
+											Omit for the canvas this session is linked to.",
+						},
+						"revision": {
+							"type": "string",
+							"description": "The `revision` from your last read of this canvas.",
+						},
+						"ops": {
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"op": {
+										"type": "string",
+										"enum": ["addNode", "updateNode", "removeNode",
+												 "addEdge", "updateEdge", "removeEdge"],
+									},
+									"id": { "type": "string" },
+									"node": { "type": "object" },
+									"edge": { "type": "object" },
+									"fields": { "type": "object" },
+								},
+								"required": ["op"],
+							},
+						},
+					},
+					"required": ["ops"],
+				},
+				"annotations": { "title": "Patch a canvas", "readOnlyHint": false },
+				"_meta": {
+					"anthropic/searchHint": "add, move, edit or remove cards and arrows on a \
+											 Qursor IDE canvas board",
+				},
+			},
 		]
 	})
 }
@@ -525,6 +785,10 @@ mod tests {
 		tools: AgentTools,
 		routines: Arc<Mutex<Vec<Routine>>>,
 		asked_for: Arc<Mutex<Vec<String>>>,
+		/// The project folder the canvas tools work in.
+		dir: tempfile::TempDir,
+		/// The canvas this session is linked to.
+		linked: Arc<Mutex<Option<String>>>,
 	}
 
 	/// The project every fixture's session runs in.
@@ -616,8 +880,16 @@ mod tests {
 	fn fixture() -> Fixture {
 		let routines: Arc<Mutex<Vec<Routine>>> = Arc::new(Mutex::new(Vec::new()));
 		let asked_for: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-		let tools = AgentTools::new(routine_store(routines.clone(), asked_for.clone()));
-		Fixture { tools, routines, asked_for }
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::create_dir(dir.path().join("canvas")).unwrap();
+		let linked: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+		let (root, link) = (dir.path().to_path_buf(), linked.clone());
+		let canvases = Canvases {
+			root: Arc::new(move || Ok(root.clone())),
+			linked: Arc::new(move || Ok(link.lock().clone())),
+		};
+		let tools = AgentTools::new(routine_store(routines.clone(), asked_for.clone()), canvases);
+		Fixture { tools, routines, asked_for, dir, linked }
 	}
 
 	fn call(tools: &AgentTools, method: &str, params: Value) -> Value {
@@ -636,7 +908,7 @@ mod tests {
 	}
 
 	#[test]
-	fn the_server_is_not_named_ide_and_offers_exactly_the_four() {
+	fn the_server_is_not_named_ide_and_offers_exactly_these() {
 		// **The reason this module exists** (ADR-0029). The CLI registers the IDE
 		// bridge under the hardcoded key `ide` and then shows the model only
 		// `executeCode` and `getDiagnostics` from it — so a tool an agent is meant
@@ -651,7 +923,19 @@ mod tests {
 			.iter()
 			.map(|t| t["name"].as_str().unwrap())
 			.collect();
-		assert_eq!(names, ["listRoutines", "createRoutine", "updateRoutine", "setRoutineEnabled"]);
+		assert_eq!(
+			names,
+			[
+				"listRoutines",
+				"createRoutine",
+				"updateRoutine",
+				"setRoutineEnabled",
+				"canvasOutline",
+				"canvasRead",
+				"canvasFreeSpot",
+				"canvasPatch"
+			]
+		);
 		// The one that is absent on purpose (ADR-0028): the editor's delete asks
 		// first, and a tool call has nobody to ask.
 		assert!(!names.contains(&"deleteRoutine"));
@@ -672,6 +956,7 @@ mod tests {
 		assert!(instructions.contains("/p/session"), "it names the project folder");
 		assert!(instructions.contains("createRoutine"), "it names the tool to reach for");
 		assert!(instructions.contains("cloud routine"), "it names what it is preferred over");
+		assert!(instructions.contains("canvasPatch"), "it names the canvas tools");
 		// The limit is stated rather than buried, which F22 requires of every
 		// surface that mentions a routine at all.
 		assert!(instructions.contains("only while Qursor IDE is open"), "{instructions}");
@@ -700,7 +985,11 @@ mod tests {
 
 		for t in tools {
 			let hint = t["_meta"]["anthropic/searchHint"].as_str().unwrap_or_default();
-			assert!(hint.contains("routine"), "{} has no usable search hint", t["name"]);
+			assert!(
+				hint.contains("routine") || hint.contains("canvas"),
+				"{} has no usable search hint",
+				t["name"]
+			);
 			assert!(hint.contains("Qursor IDE"), "{} does not name the app", t["name"]);
 		}
 	}
@@ -715,7 +1004,8 @@ mod tests {
 		for t in reply["result"]["tools"].as_array().unwrap() {
 			let name = t["name"].as_str().unwrap();
 			let read_only = t["annotations"]["readOnlyHint"] == json!(true);
-			assert_eq!(read_only, name == "listRoutines", "{name}");
+			let reads = ["listRoutines", "canvasOutline", "canvasRead", "canvasFreeSpot"];
+			assert_eq!(read_only, reads.contains(&name), "{name}");
 			assert!(t["annotations"]["title"].is_string(), "{name} has no title");
 			// Nothing here destroys anything — which is what leaving
 			// `deleteRoutine` out bought (ADR-0028).
@@ -971,6 +1261,116 @@ mod tests {
 			let (text, failed) = tool_result(&reply);
 			assert!(failed, "{name}: {text}");
 			assert!(text.contains(wanted), "{name}: {text}");
+		}
+	}
+
+	const BOARD: &str =
+		include_str!("../../../../src/components/canvas/__fixtures__/containment.canvas");
+
+	fn board(f: &Fixture) -> std::path::PathBuf {
+		let p = f.dir.path().join("canvas/b.canvas");
+		std::fs::write(&p, BOARD).unwrap();
+		p
+	}
+
+	fn canvas_call(f: &Fixture, name: &str, args: Value) -> (Value, bool) {
+		let reply = call(&f.tools, "tools/call", json!({ "name": name, "arguments": args }));
+		let (text, failed) = tool_result(&reply);
+		let value = serde_json::from_str(&text).unwrap_or(Value::String(text));
+		(value, failed)
+	}
+
+	#[test]
+	fn canvas_tools_read_the_linked_canvas_and_say_its_revision() {
+		let f = fixture();
+		board(&f);
+		// Not linked and no path: a clear refusal.
+		let (err, failed) = canvas_call(&f, "canvasOutline", json!({}));
+		assert!(failed && err.as_str().unwrap().contains("not linked"), "{err}");
+
+		*f.linked.lock() = Some("canvas/b.canvas".into());
+		let (outline, failed) = canvas_call(&f, "canvasOutline", json!({}));
+		assert!(!failed, "{outline}");
+		assert_eq!(outline["sections"][0]["id"], "g-big");
+		assert_eq!(outline["revision"].as_str().unwrap().len(), 64);
+
+		let (part, _) =
+			canvas_call(&f, "canvasRead", json!({ "path": "b.canvas", "groupId": "g-small" }));
+		assert_eq!(part["nodes"][0]["id"], "n-in-small");
+		assert_eq!(part["edges"][0]["direction"], "out");
+		let (err, failed) = canvas_call(&f, "canvasRead", json!({}));
+		assert!(failed && err.as_str().unwrap().contains("canvasOutline"), "{err}");
+
+		let (spot, failed) =
+			canvas_call(&f, "canvasFreeSpot", json!({ "width": 100, "height": 50 }));
+		assert!(!failed && spot["x"].is_i64() && spot["y"].is_i64(), "{spot}");
+	}
+
+	#[test]
+	fn canvaspatch_edits_in_place_and_refuses_a_stale_revision() {
+		let f = fixture();
+		let file = board(&f);
+		let (outline, _) = canvas_call(&f, "canvasOutline", json!({ "path": "canvas/b.canvas" }));
+		let rev = outline["revision"].clone();
+
+		let ops = json!([
+			{ "op": "addNode", "node": { "id": "fresh", "x": 5, "y": 6, "text": "hi" } },
+			{ "op": "removeNode", "id": "n-loose" },
+		]);
+		let (done, failed) = canvas_call(
+			&f,
+			"canvasPatch",
+			json!({ "path": "b.canvas", "ops": ops, "revision": rev }),
+		);
+		assert!(!failed, "{done}");
+		assert_eq!(done["applied"], 2);
+		let on_disk: Value =
+			serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+		assert_eq!(on_disk["nodes"].as_array().unwrap().last().unwrap()["x-author"], "agent");
+		assert!(on_disk["nodes"].as_array().unwrap().iter().all(|n| n["id"] != "n-loose"));
+		assert!(on_disk["edges"].as_array().unwrap().iter().all(|e| e["id"] != "e2"));
+		assert_ne!(done["revision"], rev);
+
+		// The old revision is now stale: refused, file untouched.
+		let before = std::fs::read_to_string(&file).unwrap();
+		let again = json!([{ "op": "removeNode", "id": "fresh" }]);
+		let (err, failed) = canvas_call(
+			&f,
+			"canvasPatch",
+			json!({ "path": "b.canvas", "ops": again, "revision": rev }),
+		);
+		assert!(failed && err.as_str().unwrap().contains("call canvasOutline"), "{err}");
+		assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+	}
+
+	#[test]
+	fn a_failing_canvas_batch_leaves_the_file_untouched() {
+		let f = fixture();
+		let file = board(&f);
+		let ops = json!([
+			{ "op": "removeNode", "id": "n-loose" },
+			{ "op": "updateNode", "id": "ghost", "fields": {} },
+		]);
+		let (err, failed) =
+			canvas_call(&f, "canvasPatch", json!({ "path": "b.canvas", "ops": ops }));
+		assert!(failed && err.as_str().unwrap().contains("op 1 (updateNode)"), "{err}");
+		assert_eq!(std::fs::read_to_string(&file).unwrap(), BOARD);
+	}
+
+	#[test]
+	fn canvas_paths_cannot_leave_the_canvas_folder() {
+		let f = fixture();
+		board(&f);
+		std::fs::write(f.dir.path().join("secret.canvas"), "{}").unwrap();
+		for path in [
+			"../secret.canvas",
+			"canvas/../secret.canvas",
+			"/etc/x.canvas",
+			"b.json",
+			r"..\secret.canvas",
+		] {
+			let (err, failed) = canvas_call(&f, "canvasOutline", json!({ "path": path }));
+			assert!(failed, "{path}: {err}");
 		}
 	}
 }

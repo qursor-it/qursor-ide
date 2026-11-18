@@ -8938,13 +8938,32 @@ composer. A pill *Agent connected* shows while the linked session has a live PTY
 **What is sent.** One paste, then Enter:
 
 ```
-[canvas: <absolute path> · selected nodes: <ids or none> · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; use colour presets "1"-"6", not hex; keep fields you don't know]
+[canvas: <absolute path> · selected nodes: <ids or none> · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; use colour presets "1"-"6", not hex; prefer the canvas* tools over reading or rewriting the whole file; keep fields you don't know]
 <the user's text>
 ```
 
 The path is the project root's copy, so a session that moved into a worktree
 still edits the file the board watches. The agent edits the file with its own
 tools; the watch brings the result onto the board.
+
+**Agent tools (ADR-0104).** The session's `factorai` MCP server, which Claude
+and Codex sessions both get, also offers four canvas tools, so the agent does not
+reread or rewrite a big file. `canvasOutline({ path? })` returns the counts, the
+sections and the file's `revision` (sha256). A section is a group; a node
+belongs to the smallest group that fully contains it, the rule `jsonCanvas.ts`
+uses, and cards outside every group are the "loose" bucket.
+`canvasRead({ path?, groupId?, nodeIds? })` returns just those nodes and the
+edges touching them, marked `out`, `in` or `within`; with no selector it is an
+error that points at `canvasOutline`. `canvasFreeSpot({ path?, width, height,
+near? })` returns an `{x, y}` that overlaps nothing and keeps 40 px clear.
+`canvasPatch({ path?, ops, revision? })` applies `addNode`, `updateNode`,
+`removeNode` (its edges go too), `addEdge`, `updateEdge` and `removeEdge` in one
+all-or-nothing write; a stale `revision` is refused and a clash on write is
+retried once. Nodes it adds carry `"x-author":"agent"`, unknown fields are kept
+and the file is written the way the editor writes it. `path` is relative to
+`<project>/canvas/` and defaults to the canvas the session is linked to. The
+board is not told anything: the watch reloads it, with the usual Reload / Keep
+mine banner if the user has unsaved edits.
 
 **One terminal, one place.** A session's terminal is a single pooled element, so
 only the mode on screen owns it: the panel's terminal is unmounted on leaving

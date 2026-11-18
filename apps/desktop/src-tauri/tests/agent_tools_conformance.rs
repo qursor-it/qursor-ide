@@ -25,8 +25,9 @@ use std::process::Command;
 use std::sync::Arc;
 
 use factorai_lib::db::Db;
+use factorai_lib::error::AppError;
 use factorai_lib::models::RoutineInput;
-use factorai_lib::services::agent_tools::{AgentTools, AgentToolsServer, Routines};
+use factorai_lib::services::agent_tools::{AgentTools, AgentToolsServer, Canvases, Routines};
 use factorai_lib::services::routines::{self, RoutinePatch};
 use tempfile::TempDir;
 
@@ -62,7 +63,12 @@ fn harness(db: Db, session_id: &str, project_path: &str) -> AgentToolsServer {
 				.with(|conn| routines::update_partial(conn, id, patch, Some(&author), now_ms()))
 		}),
 	};
-	let tools = AgentTools::new(routines);
+	// This test is about routines; the canvas tools have their own tests.
+	let canvases = Canvases {
+		root: Arc::new(|| Err(AppError::InvalidInput("no canvases here".into()))),
+		linked: Arc::new(|| Ok(None)),
+	};
+	let tools = AgentTools::new(routines, canvases);
 	AgentToolsServer::start(Arc::new(move |text| tools.handle(text))).expect("bind")
 }
 

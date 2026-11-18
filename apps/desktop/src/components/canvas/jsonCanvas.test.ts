@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { type CanvasDoc, newNodeIds, parseCanvas, serializeCanvas } from './jsonCanvas';
 
@@ -89,5 +90,27 @@ describe('jsonCanvas', () => {
 		});
 		expect(newNodeIds(doc('a'), doc('a', 'b'))).toEqual(new Set(['b']));
 		expect(newNodeIds(null, doc('a')).size).toBe(0);
+	});
+});
+
+// The Rust side (`services/canvas_tools.rs`) asserts the same table on the same file.
+describe('containment parity with the agent tools', () => {
+	it('assigns the parents the Rust test expects', () => {
+		const text = readFileSync(
+			new URL('./__fixtures__/containment.canvas', import.meta.url),
+			'utf8',
+		);
+		const parsed = parseCanvas(text);
+		if (!parsed.ok) throw new Error(parsed.error);
+		const parents = Object.fromEntries(parsed.nodes.map((n) => [n.id, n.parentId ?? null]));
+		expect(parents).toEqual({
+			'g-big': null,
+			'g-small': 'g-big',
+			'n-in-small': 'g-small',
+			'n-in-big': 'g-big',
+			'n-in-big-2': 'g-big',
+			'n-straddle': null,
+			'n-loose': null,
+		});
 	});
 });

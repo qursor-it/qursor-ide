@@ -272,6 +272,25 @@ pub fn run() {
 							)
 						})
 					},
+				})
+				// The agent's canvas tools (F44, ADR-0104): a project's folder, and the
+				// canvas a session is linked to. Project and session are bound per
+				// session in `start_agent_tools`.
+				.with_canvas_store(services::terminal::CanvasStore {
+					root: {
+						let db = db.clone();
+						Arc::new(move |project_id| {
+							db.with(|conn| commands::projects::project_path(conn, project_id))
+						})
+					},
+					linked: {
+						let db = db.clone();
+						Arc::new(move |project_id, session_id| {
+							db.with(|conn| {
+								services::canvas::canvas_for_session(conn, project_id, session_id)
+							})
+						})
+					},
 				});
 			let live = terminals.clone();
 			let reap = terminals.clone();

@@ -4,7 +4,7 @@ import { buildContextLine, buildMessage, buildPrimer } from './contextLine';
 describe('contextLine', () => {
 	it('with_selection', () => {
 		expect(buildContextLine(String.raw`E:\p\canvas\a.canvas`, ['a1', 'b7'])).toBe(
-			String.raw`[canvas: E:\p\canvas\a.canvas · selected nodes: a1, b7 · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; use colour presets "1"-"6", not hex; keep fields you don't know]`,
+			String.raw`[canvas: E:\p\canvas\a.canvas · selected nodes: a1, b7 · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; use colour presets "1"-"6", not hex; prefer the canvas* tools over reading or rewriting the whole file; keep fields you don't know]`,
 		);
 	});
 	it('no_selection', () => {

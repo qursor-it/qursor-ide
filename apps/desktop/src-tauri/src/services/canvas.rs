@@ -240,6 +240,23 @@ pub fn get_session(
 		.optional()?)
 }
 
+/// The canvas a session is linked to (the reverse of [`get_session`]), if any.
+pub fn canvas_for_session(
+	conn: &Connection,
+	project_id: &str,
+	session_id: &str,
+) -> AppResult<Option<String>> {
+	Ok(conn
+		.query_row(
+			"SELECT rel_path FROM canvas_sessions
+			 WHERE project_id = ?1 AND session_id = ?2
+			 ORDER BY updated_at DESC LIMIT 1",
+			params![project_id, session_id],
+			|r| r.get(0),
+		)
+		.optional()?)
+}
+
 pub fn set_session(
 	conn: &Connection,
 	project_id: &str,
@@ -358,6 +375,23 @@ mod tests {
 		let out = write(dir.path(), &file, "v", Some(&sha("old"))).unwrap();
 		assert_eq!(out, WriteOutcome::Conflict { disk_sha256: None });
 		assert!(!file.exists());
+	}
+
+	#[test]
+	fn canvas_for_session_is_the_reverse_lookup() {
+		let conn = Connection::open_in_memory().unwrap();
+		conn.execute_batch(
+			"CREATE TABLE canvas_sessions (project_id TEXT NOT NULL, rel_path TEXT NOT NULL,
+			 session_id TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (project_id, rel_path))",
+		)
+		.unwrap();
+		set_session(&conn, "p", "canvas/a.canvas", "s1", 1).unwrap();
+		assert_eq!(
+			canvas_for_session(&conn, "p", "s1").unwrap().as_deref(),
+			Some("canvas/a.canvas")
+		);
+		assert_eq!(canvas_for_session(&conn, "p", "s2").unwrap(), None);
+		assert_eq!(canvas_for_session(&conn, "other", "s1").unwrap(), None);
 	}
 
 	#[test]

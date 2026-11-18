@@ -1,0 +1,16 @@
+{
+  "title": "Containment",
+  "nodes": [
+    { "id": "g-big", "type": "group", "label": "Big", "x": 0, "y": 0, "width": 1000, "height": 800 },
+    { "id": "g-small", "type": "group", "label": "Small", "x": 100, "y": 100, "width": 400, "height": 300 },
+    { "id": "n-in-small", "type": "text", "text": "in small", "color": "1", "x": 120, "y": 120, "width": 100, "height": 60 },
+    { "id": "n-in-big", "type": "text", "text": "in big", "color": "2", "x": 600, "y": 500, "width": 100, "height": 60 },
+    { "id": "n-in-big-2", "type": "text", "text": "in big too", "x": 700, "y": 500, "width": 100, "height": 60, "x-kind": "sticky" },
+    { "id": "n-straddle", "type": "text", "text": "crosses the edge", "x": 950, "y": 100, "width": 200, "height": 60 },
+    { "id": "n-loose", "type": "text", "text": "loose", "x": 2000, "y": 0, "width": 100, "height": 60 }
+  ],
+  "edges": [
+    { "id": "e1", "fromNode": "n-in-small", "toNode": "n-in-big" },
+    { "id": "e2", "fromNode": "n-loose", "toNode": "n-in-small" }
+  ]
+}

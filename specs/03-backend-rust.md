@@ -111,7 +111,11 @@ services/
     mod.rs            #   (F22 slice 3, ADR-0029)
     server.rs         # a streamable-HTTP endpoint per session
     tools.rs          # listRoutines, createRoutine, updateRoutine,
-                      #   setRoutineEnabled — reaching the agent as mcp__factorai__*
+                      #   setRoutineEnabled, and the canvas tools canvasOutline,
+                      #   canvasRead, canvasFreeSpot, canvasPatch (F44, ADR-0104)
+                      #   — reaching the agent as mcp__factorai__*
+  canvas_tools.rs     # pure functions behind the canvas tools: outline, read_part,
+                      #   free_spot, apply_ops over the JSON Canvas document
   usage/              # plan limits and session cost (F34, ADR-0086):
                       #   store (usage.json, on-change subscribers), poller (one
                       #   thread, every source), statusline (the --settings

@@ -2,6 +2,7 @@ pub mod agent_cli;
 pub mod agent_tools;
 pub mod attention;
 pub mod canvas;
+pub mod canvas_tools;
 pub mod child_env;
 pub mod file_watch;
 pub mod files;
