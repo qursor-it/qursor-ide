@@ -48,4 +48,9 @@ describe('canvasStore tabs', () => {
 		expect(store.getState().selected?.path).toBe('/b');
 		expect(store.getState().tabs.map((t) => t.path)).toEqual(['/b']);
 	});
+	it('restored_selection_without_tabs_gets_a_tab', async () => {
+		data.set('factorai.canvas', JSON.stringify({ state: { selected: at('/old') }, version: 1 }));
+		const store = await freshStore();
+		expect(store.getState().tabs.map((t) => t.path)).toEqual(['/old']);
+	});
 });

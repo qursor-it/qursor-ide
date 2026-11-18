@@ -51,6 +51,13 @@ export const useCanvasStore = create<CanvasState>()(
 			name: 'factorai.canvas',
 			version: 1,
 			storage: createJSONStorage(() => localStorage),
+			// The open canvas always has a tab, even one restored from before tabs existed.
+			merge: (persisted, current) => {
+				const s = { ...current, ...(persisted as Partial<CanvasState>) };
+				const sel = s.selected;
+				if (sel && !s.tabs.some((t) => t.path === sel.path)) s.tabs = [...s.tabs, sel];
+				return s;
+			},
 		},
 	),
 );
