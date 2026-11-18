@@ -1,6 +1,6 @@
 import { Button, IconButton } from '@factorai/ui';
 import { useReactFlow, useViewport } from '@xyflow/react';
-import { Group, MoveUpRight, Sparkles } from 'lucide-react';
+import { Group, MoveUpRight, Shrink, Sparkles } from 'lucide-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { STICKY_COLORS } from './nodes/shared';
 
@@ -21,12 +21,15 @@ export function SelectionToolbar({
 	ids,
 	onColor,
 	onGroup,
+	onFit,
 	onConnector,
 	onAsk,
 }: {
 	ids: string[];
 	onColor: (color: string) => void;
 	onGroup: () => void;
+	/** Set only while a single frame is selected. */
+	onFit?: () => void;
 	onConnector: () => void;
 	onAsk: (ids: string[]) => void;
 }) {
@@ -79,6 +82,11 @@ export function SelectionToolbar({
 				<Button variant="quiet" size="sm" onClick={onGroup}>
 					<Group /> Group into frame
 				</Button>
+				{onFit && (
+					<Button variant="quiet" size="sm" onClick={onFit}>
+						<Shrink /> Fit to content
+					</Button>
+				)}
 				<IconButton size="md" aria-label="Connect" title="Connector" onClick={onConnector}>
 					<MoveUpRight />
 				</IconButton>

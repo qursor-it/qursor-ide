@@ -8938,7 +8938,7 @@ composer. A pill *Agent connected* shows while the linked session has a live PTY
 **What is sent.** One paste, then Enter:
 
 ```
-[canvas: <absolute path> · selected nodes: <ids or none> · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; keep fields you don't know]
+[canvas: <absolute path> · selected nodes: <ids or none> · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; use colour presets "1"-"6", not hex; keep fields you don't know]
 <the user's text>
 ```
 

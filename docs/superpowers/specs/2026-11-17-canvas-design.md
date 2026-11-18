@@ -160,7 +160,7 @@ New `commands/canvas.rs` and `services/canvas.rs`:
 The composer pastes one message into the session:
 
 ```
-[canvas: E:\code\billing-api\canvas\brainstorm-mvp.canvas · selected nodes: a1, b7 · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; keep fields you don't know]
+[canvas: E:\code\billing-api\canvas\brainstorm-mvp.canvas · selected nodes: a1, b7 · JSON Canvas 1.0; mark nodes you add with "x-author":"agent"; use colour presets "1"-"6", not hex; keep fields you don't know]
 <user's text>
 ```
 

@@ -21,6 +21,7 @@ import { type PointerEvent, type ReactNode, useEffect, useMemo, useRef, useState
 import { CanvasToolbar, TOOL_KEYS, type Tool } from './CanvasToolbar';
 import { boundsOf, followViewport, shouldFollow, viewportRect } from './follow';
 import { SelectionToolbar } from './SelectionToolbar';
+import { fitFrame } from './frame';
 import { type InkPoint, strokePath, strokeToNode } from './ink';
 import type { CanvasEdgeData, CanvasNodeData } from './jsonCanvas';
 import { FileNode } from './nodes/FileNode';
@@ -51,6 +52,8 @@ interface CanvasBoardProps {
 }
 
 const MIN_ZOOM = 0.1;
+/** Space between a frame's edge and the nodes inside it. */
+const FRAME_PAD = 24;
 
 /** Everything a tool can drop on the board with one click. */
 const ADD: Partial<Record<Tool, { type: string; w: number; h: number; raw: Partial<Raw> }>> = {
@@ -313,7 +316,7 @@ function Board({
 		);
 		if (!picked.length) return;
 		const boxes = picked.map((n) => ({ id: n.id, ...place(n.id) }));
-		const pad = 24;
+		const pad = FRAME_PAD;
 		const x = Math.min(...boxes.map((b) => b.x)) - pad;
 		const y = Math.min(...boxes.map((b) => b.y)) - pad;
 		const w = Math.max(...boxes.map((b) => b.x + b.w)) + pad - x;
@@ -341,11 +344,37 @@ function Board({
 		setEditing(id);
 	};
 
+	const fitSelectedFrame = () => {
+		const frame = latest.current.nodes.find((n) => n.selected && n.type === 'group');
+		if (!frame) return;
+		const kids = latest.current.nodes
+			.filter((n) => n.parentId === frame.id)
+			.map((n) => ({ id: n.id, ...n.position, ...place(n.id) }))
+			.map(({ id, x, y, w, h }) => ({ id, x, y, w, h }));
+		const fit = fitFrame({ ...frame.position, ...place(frame.id) }, kids, FRAME_PAD);
+		if (!fit) return;
+		const at = new Map(fit.children.map((c) => [c.id, c]));
+		ctl.update((s) => ({
+			...s,
+			nodes: s.nodes.map((n) => {
+				if (n.id === frame.id)
+					return {
+						...n,
+						position: { x: fit.frame.x, y: fit.frame.y },
+						width: fit.frame.w,
+						height: fit.frame.h,
+					};
+				const c = at.get(n.id);
+				return c ? { ...n, position: { x: c.x, y: c.y } } : n;
+			}),
+		}));
+	};
+
 	const setColor = (color: string) =>
 		ctl.update((s) => ({
 			...s,
 			nodes: s.nodes.map((n) =>
-				n.selected && (n.type === 'sticky' || n.type === 'shape')
+				n.selected && (n.type === 'sticky' || n.type === 'shape' || n.type === 'group')
 					? { ...n, data: { raw: { ...n.data.raw, color } } }
 					: n,
 			),
@@ -581,6 +610,12 @@ function Board({
 							ids={editingId ? [] : selectedIds}
 							onColor={setColor}
 							onGroup={groupSelected}
+							onFit={
+								selectedIds.length === 1 &&
+								nodes.find((n) => n.id === selectedIds[0])?.type === 'group'
+									? fitSelectedFrame
+									: undefined
+							}
 							onConnector={() => setTool('connector')}
 							onAsk={onAsk}
 						/>

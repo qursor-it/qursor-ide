@@ -437,4 +437,28 @@ test.describe('canvas mode', () => {
 		await expect(page.getByTestId('session-tabs')).toBeVisible();
 		await expect(page.getByTestId('canvas-tabs')).toHaveCount(0);
 	});
+
+	test('@smoke a coloured frame is tinted, and Fit to content wraps its children', async ({
+		page,
+	}) => {
+		await openIdea(page, {
+			title: 'Idea',
+			nodes: [
+				{ id: 'f', type: 'group', x: 0, y: 0, width: 400, height: 300, label: 'F', color: '5' },
+				{ ...AGENT_NODE, id: 'k', x: 100, y: 100, 'x-author': undefined },
+			],
+			edges: [],
+		});
+		const frame = page.getByTestId('canvas-frame');
+		expect(await frame.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(
+			'rgba(0, 0, 0, 0)',
+		);
+		await frame.click({ position: { x: 10, y: 10 } });
+		await page.getByRole('button', { name: 'Fit to content' }).click();
+		await expect(page.getByTestId('canvas-save-state')).toHaveText('Saved');
+		const saved = JSON.parse((await disk(page)) ?? '{}');
+		const byId = (id: string) => saved.nodes.find((n: { id: string }) => n.id === id);
+		expect(byId('f')).toMatchObject({ x: 76, y: 76, width: 208, height: 208 });
+		expect(byId('k')).toMatchObject({ x: 100, y: 100 });
+	});
 });
