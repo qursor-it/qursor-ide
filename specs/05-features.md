@@ -8907,12 +8907,17 @@ silently; when it is dirty a banner offers *Reload* or *Keep mine*. A file that
 is not valid JSON shows an error card with *Open as text* and is **never
 written over**. A file deleted on disk shows a banner and **is not recreated**.
 
-**The agent panel.** The canvas has one Claude session, linked in `canvas_sessions`
-(F44 data model). It is an ordinary session, visible in Sessions mode with its
+**The agent panel.** The canvas has one agent session, Claude or Codex, linked in
+`canvas_sessions` (F44 data model). It is an ordinary session, visible in Sessions mode with its
 tab, and above it the session route shows a strip *◇ from canvas <title>* with *Open canvas*.
-The panel shows that session's terminal above a composer; with no session it
-says *The first message starts a Claude session for this canvas.* The first
-send starts a fresh Claude session, links it, mounts the terminal, and sends as
+The panel shows that session's terminal above a composer. With no session, or after
+*Change session*, it shows a Claude / Codex picker (the last pick is remembered) with
+*The next message starts a new <agent> session for this canvas.*, and *Or link a session
+already running:* listing the project's sessions (sub-agents excluded, newest first);
+picking one links it in place of the current one, and *Keep the current session* backs out.
+The header says *<agent> is working…* with the linked session's own agent. A first
+send starts a fresh session of the picked agent (passed as the launch override, F30),
+links it, mounts the terminal, and sends as
 soon as its PTY is live (retried every 250 ms for 20 s; on failure an inline
 error shows and the text stays). Enter sends, Shift+Enter breaks the line, a
 chip shows *◇ N nodes selected*, and `@` offers the nodes to cite as
