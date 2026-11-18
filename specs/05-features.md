@@ -8922,9 +8922,13 @@ The panel shows that session's terminal above a composer. With no session, or af
 *The next message starts a new <agent> session for this canvas.*, and *Or link a session
 already running:* listing the project's sessions (sub-agents excluded, newest first);
 picking one links it in place of the current one, and *Keep the current session* backs out.
-Linking sends the session one primer message (the context line plus: the canvas is the
-shared whiteboard of this conversation, keep using it even when later messages lack the
-line), because text typed straight into the terminal cannot be prefixed. Above the
+The canvas briefs each session once per app run with the canvas rules (it is the
+shared whiteboard; work on it with canvasOutline / canvasRead / canvasFreeSpot / canvasPatch,
+not by reading or rewriting the whole file; keep using it when later messages lack the
+context line): inside the first message of a session it starts, as a primer message when it
+links an existing session, and as a primer when it resumes a linked session it has not
+briefed in this run. Text typed straight into the terminal cannot be prefixed, so this is
+what keeps it in context. Above the
 terminal a hint says *Write below to attach the canvas and the selected nodes*.
 The header says *<agent> is working…* with the linked session's own agent. A first
 send starts a fresh session of the picked agent (passed as the launch override, F30),

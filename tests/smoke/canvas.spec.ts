@@ -327,6 +327,15 @@ test.describe('canvas mode', () => {
 				),
 			)
 			.toContain('selected nodes: none');
+		// The first message of a new session carries the canvas tool rules.
+		expect(
+			await page.evaluate(() =>
+				(window.__FACTORAI_TEST_CALLS__ ?? [])
+					.filter((c) => c.name === 'terminal_write')
+					.map((c) => (c.args as { data: string }).data)
+					.join(''),
+			),
+		).toContain('canvasPatch');
 		expect(
 			await page.evaluate(
 				(k) => window.__FACTORAI_TEST__?.canvasSessions?.[k],
@@ -390,6 +399,29 @@ test.describe('canvas mode', () => {
 		await expect(page.getByTestId('canvas-agent-codex')).toBeVisible();
 		await page.getByRole('button', { name: 'Keep the current session' }).click();
 		await expect(page.getByTestId('canvas-change-session')).toBeVisible();
+	});
+
+	test('@smoke a resumed linked session is briefed on the canvas tools once per run', async ({
+		page,
+	}) => {
+		const fx = fixtureWithCanvas({ title: 'Idea', nodes: [], edges: [] });
+		fx.canvasSessions = { [`${FOO_ID}|canvas/idea.canvas`]: 'session-uuid-001' };
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('canvas-row').click();
+		const written = () =>
+			page.evaluate(() =>
+				(window.__FACTORAI_TEST_CALLS__ ?? [])
+					.filter((c) => c.name === 'terminal_write')
+					.map((c) => (c.args as { data: string }).data)
+					.join(''),
+			);
+		await expect.poll(written).toContain('canvasOutline');
+		await page.getByTestId('mode-sessions').click();
+		await page.getByTestId('mode-canvas').click();
+		await expect(page.getByTestId('canvas-agent-connected')).toBeVisible();
+		expect((await written()).split('Reply with one short line').length - 1).toBe(1);
 	});
 
 	test('@smoke the session terminal is re-adopted when Sessions comes back from Canvas', async ({

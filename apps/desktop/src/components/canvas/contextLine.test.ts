@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildContextLine, buildMessage, buildPrimer } from './contextLine';
+import {
+	CANVAS_RULES,
+	buildContextLine,
+	buildFirstMessage,
+	buildMessage,
+	buildPrimer,
+} from './contextLine';
 
 describe('contextLine', () => {
 	it('with_selection', () => {
@@ -19,5 +25,20 @@ describe('contextLine', () => {
 		const p = buildPrimer('/p/a.canvas');
 		expect(p.startsWith(buildContextLine('/p/a.canvas', []))).toBe(true);
 		expect(p).toContain('shared whiteboard');
+	});
+	it('rules name every canvas tool', () => {
+		for (const t of ['canvasOutline', 'canvasRead', 'canvasFreeSpot', 'canvasPatch'])
+			expect(CANVAS_RULES).toContain(t);
+	});
+	it('first message is context, rules, blank line, text', () => {
+		expect(buildFirstMessage('/p/a.canvas', ['n1'], 'hi')).toBe(
+			`${buildContextLine('/p/a.canvas', ['n1'])}
+${CANVAS_RULES}
+
+hi`,
+		);
+	});
+	it('primer carries the rules', () => {
+		expect(buildPrimer('/p/a.canvas')).toContain(CANVAS_RULES);
 	});
 });

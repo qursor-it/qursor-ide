@@ -16,11 +16,13 @@ import { useTerminalStore } from '@store/terminalStore';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Composer, type NodeRef } from './Composer';
-import { buildMessage, buildPrimer } from './contextLine';
+import { buildFirstMessage, buildMessage, buildPrimer } from './contextLine';
 
 const RETRY_MS = 250;
+/** Sessions told about the canvas in this app run: new, linked or resumed. */
+const briefed = new Set<string>();
 const AGENT_NAME: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex' };
 const GIVE_UP_MS = 20_000;
 
@@ -75,8 +77,18 @@ export function AgentPanel({
 		.sort((a, b) => b.updatedAt - a.updatedAt)
 		.slice(0, 30);
 
+	// Resuming a linked session in this run: brief it once, like a new or linked one.
+	useEffect(() => {
+		if (!sessionId || picking || briefed.has(sessionId)) return;
+		briefed.add(sessionId);
+		void sendWhenLive(sessionId, buildPrimer(absPath)).then((ok) => {
+			if (!ok) briefed.delete(sessionId);
+		});
+	}, [sessionId, picking, absPath]);
+
 	const link = async (id: string) => {
 		setError(null);
+		briefed.add(id);
 		try {
 			await cmd.setCanvasSession(projectId, relPath, id);
 			onSession(id);
@@ -96,9 +108,12 @@ export function AgentPanel({
 		setError(null);
 		try {
 			let id = picking ? null : sessionId;
+			let first = false;
 			if (!id) {
 				// Fresh: never hand the canvas somebody's idle session.
 				id = await cmd.startSession(projectId, agent, true);
+				briefed.add(id);
+				first = true;
 				// The spawn reads the launch override, as for the `+` menu's agent pick (F30).
 				useTerminalStore.getState().setLaunchAgent(id, agent);
 				await cmd.setCanvasSession(projectId, relPath, id);
@@ -108,7 +123,10 @@ export function AgentPanel({
 				await qc.invalidateQueries({ queryKey: queryKeys.canvasSession(projectId, relPath) });
 				void qc.invalidateQueries({ queryKey: queryKeys.canvasOrigins(projectId) });
 			}
-			if (await sendWhenLive(id, buildMessage(absPath, selectedIds, text))) return true;
+			const message = first
+				? buildFirstMessage(absPath, selectedIds, text)
+				: buildMessage(absPath, selectedIds, text);
+			if (await sendWhenLive(id, message)) return true;
 			setError('The session did not start in time. Your message is still here.');
 		} catch (e) {
 			setError(e instanceof Error ? e.message : 'Could not reach the agent.');
