@@ -157,7 +157,11 @@ pub fn outline(doc: &Value) -> Value {
 		"nodeCount": ns.len(),
 		"edgeCount": edges(doc).len(),
 		"sections": sections,
-		"loose": { "count": loose.len(), "bbox": bbox_json(bbox_of(loose.iter().copied())) },
+		"loose": {
+			"count": loose.len(),
+			"bbox": bbox_json(bbox_of(loose.iter().copied())),
+			"read": "canvasRead({loose:true})",
+		},
 	})
 }
 
@@ -166,6 +170,8 @@ pub fn outline(doc: &Value) -> Value {
 pub struct Selector {
 	pub group_id: Option<String>,
 	pub node_ids: Vec<String>,
+	/// The cards that sit in no group (the outline's `loose` bucket).
+	pub loose: bool,
 }
 
 const NODE_KEYS: [&str; 13] = [
@@ -177,13 +183,18 @@ const NODE_KEYS: [&str; 13] = [
 /// included) and the edges that touch them, each marked `out`, `in` or
 /// `within` relative to the selection.
 pub fn read_part(doc: &Value, sel: &Selector) -> Result<Value, String> {
-	if sel.group_id.is_none() && sel.node_ids.is_empty() {
-		return Err("pass groupId or nodeIds; call canvasOutline to see the sections".into());
+	if sel.group_id.is_none() && sel.node_ids.is_empty() && !sel.loose {
+		return Err("pass groupId, nodeIds or loose; call canvasOutline to see the sections".into());
 	}
 	let ns = nodes(doc);
 	let ps = parents(doc);
 	let index = |id: &str| ns.iter().position(|n| id_of(n) == id);
 	let mut picked = vec![false; ns.len()];
+	if sel.loose {
+		for (i, n) in ns.iter().enumerate() {
+			picked[i] = ps[i].is_none() && !is_group(n);
+		}
+	}
 	if let Some(gid) = &sel.group_id {
 		let g = index(gid)
 			.filter(|&i| is_group(&ns[i]))
@@ -323,6 +334,7 @@ fn object_field<'a>(op: &'a Value, key: &str) -> Result<&'a Map<String, Value>, 
 /// `fields` deletes that key. Nodes added get `"x-author": "agent"`.
 pub fn apply_ops(doc: &Value, ops: &Value) -> Result<Value, String> {
 	let ops = ops.as_array().ok_or("ops must be an array")?;
+	check_arrays(doc)?;
 	let mut out = doc.clone();
 	let root = out.as_object_mut().ok_or("a canvas must be a JSON object")?;
 	let mut ns = take_array(root, "nodes");
@@ -334,6 +346,17 @@ pub fn apply_ops(doc: &Value, ops: &Value) -> Result<Value, String> {
 	root.insert("nodes".into(), Value::Array(ns));
 	root.insert("edges".into(), Value::Array(es));
 	Ok(out)
+}
+
+/// `nodes` / `edges` may be missing (an empty board) but not another type: the
+/// editor refuses such a file, and a tool must not "repair" it by emptying it.
+pub fn check_arrays(doc: &Value) -> Result<(), String> {
+	for key in ["nodes", "edges"] {
+		if doc.get(key).is_some_and(|v| !v.is_array()) {
+			return Err(format!("the canvas \"{key}\" is not an array; fix the file by hand"));
+		}
+	}
+	Ok(())
 }
 
 fn take_array(root: &mut Map<String, Value>, key: &str) -> Vec<Value> {
@@ -386,8 +409,18 @@ fn apply_one(
 		}
 		"updateNode" => {
 			let id = str_field(op, "id")?;
+			let fields = object_field(op, "fields")?;
+			// Same strictness as addNode: a node keeps a string type and numeric geometry.
+			for k in ["x", "y", "width", "height"] {
+				if fields.get(k).is_some_and(|v| v.as_f64().is_none_or(|f| !f.is_finite())) {
+					return Err(format!("\"{k}\" must be a number"));
+				}
+			}
+			if fields.get("type").is_some_and(|v| !v.is_string()) {
+				return Err("\"type\" must be a string".into());
+			}
 			let n = ns.iter_mut().find(|n| id_of(n) == id).ok_or(format!("no node {id}"))?;
-			merge(n, object_field(op, "fields")?)?;
+			merge(n, fields)?;
 		}
 		"removeNode" => {
 			let id = str_field(op, "id")?;
@@ -417,8 +450,10 @@ fn apply_one(
 		"updateEdge" => {
 			let id = str_field(op, "id")?;
 			let fields = object_field(op, "fields")?;
+			// parseCanvas rejects the whole board for an edge without string ends.
 			for end in ["fromNode", "toNode"] {
-				if let Some(n) = fields.get(end).and_then(Value::as_str) {
+				if let Some(v) = fields.get(end) {
+					let n = v.as_str().ok_or_else(|| format!("{end} must be a node id string"))?;
 					if !has_node(ns, n) {
 						return Err(format!("{end} {n} is not a node"));
 					}
@@ -493,7 +528,7 @@ mod tests {
 
 	#[test]
 	fn read_part_by_group_returns_nested_members_and_edges_both_ways() {
-		let sel = Selector { group_id: Some("g-small".into()), node_ids: vec![] };
+		let sel = Selector { group_id: Some("g-small".into()), ..Default::default() };
 		let p = read_part(&doc(), &sel).unwrap();
 		assert_eq!(p["nodes"].as_array().unwrap().len(), 1);
 		let dirs: Vec<(&str, &str)> = p["edges"]
@@ -504,7 +539,7 @@ mod tests {
 			.collect();
 		assert_eq!(dirs, [("e1", "out"), ("e2", "in")]);
 
-		let big = Selector { group_id: Some("g-big".into()), node_ids: vec![] };
+		let big = Selector { group_id: Some("g-big".into()), ..Default::default() };
 		let part = read_part(&doc(), &big).unwrap();
 		let ids: Vec<&str> =
 			part["nodes"].as_array().unwrap().iter().map(|n| n["id"].as_str().unwrap()).collect();
@@ -514,7 +549,7 @@ mod tests {
 	#[test]
 	fn read_part_needs_a_selector_and_known_ids() {
 		assert!(read_part(&doc(), &Selector::default()).unwrap_err().contains("canvasOutline"));
-		let sel = Selector { group_id: None, node_ids: vec!["nope".into()] };
+		let sel = Selector { node_ids: vec!["nope".into()], ..Default::default() };
 		assert!(read_part(&doc(), &sel).is_err());
 	}
 
@@ -582,6 +617,45 @@ mod tests {
 		] {
 			assert!(apply_ops(&d, &bad).is_err(), "{bad}");
 		}
+	}
+
+	#[test]
+	fn update_edge_null_endpoint_fails_batch() {
+		let ops = json!([{ "op": "updateEdge", "id": "e1", "fields": { "fromNode": null } }]);
+		let err = apply_ops(&doc(), &ops).unwrap_err();
+		assert!(err.starts_with("op 0 (updateEdge)") && err.contains("fromNode"), "{err}");
+	}
+
+	#[test]
+	fn update_edge_numeric_endpoint_fails_batch() {
+		let ops = json!([{ "op": "updateEdge", "id": "e1", "fields": { "toNode": 7 } }]);
+		assert!(apply_ops(&doc(), &ops).unwrap_err().contains("toNode"));
+	}
+
+	#[test]
+	fn update_node_null_x_fails_batch() {
+		for fields in [json!({ "x": null }), json!({ "height": "tall" }), json!({ "type": null })] {
+			let ops = json!([{ "op": "updateNode", "id": "n-loose", "fields": fields }]);
+			assert!(apply_ops(&doc(), &ops).is_err(), "{fields}");
+		}
+	}
+
+	#[test]
+	fn a_non_array_nodes_is_an_error_not_an_empty_board() {
+		let d = json!({ "nodes": "oops", "edges": [] });
+		assert!(check_arrays(&d).is_err());
+		assert!(apply_ops(&d, &json!([])).unwrap_err().contains("nodes"));
+		assert!(check_arrays(&json!({})).is_ok());
+	}
+
+	#[test]
+	fn read_loose_returns_ungrouped_nodes() {
+		let sel = Selector { loose: true, ..Default::default() };
+		let p = read_part(&doc(), &sel).unwrap();
+		let ids: Vec<&str> =
+			p["nodes"].as_array().unwrap().iter().map(|n| n["id"].as_str().unwrap()).collect();
+		assert_eq!(ids, ["n-straddle", "n-loose"]);
+		assert!(p["edges"].as_array().unwrap().iter().any(|e| e["id"] == "e2"));
 	}
 
 	#[test]

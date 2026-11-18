@@ -8952,7 +8952,7 @@ reread or rewrite a big file. `canvasOutline({ path? })` returns the counts, the
 sections and the file's `revision` (sha256). A section is a group; a node
 belongs to the smallest group that fully contains it, the rule `jsonCanvas.ts`
 uses, and cards outside every group are the "loose" bucket.
-`canvasRead({ path?, groupId?, nodeIds? })` returns just those nodes and the
+`canvasRead({ path?, groupId?, nodeIds?, loose? })` returns just those nodes (`loose: true` = the cards in no group) and the
 edges touching them, marked `out`, `in` or `within`; with no selector it is an
 error that points at `canvasOutline`. `canvasFreeSpot({ path?, width, height,
 near? })` returns an `{x, y}` that overlaps nothing and keeps 40 px clear.

@@ -339,6 +339,7 @@ impl AgentTools {
 		let read = canvas::read(&file).map_err(|e| format!("{e}"))?;
 		let doc: Value = serde_json::from_str(&read.contents)
 			.map_err(|e| format!("the canvas is not valid JSON: {e}"))?;
+		canvas_tools::check_arrays(&doc)?;
 		Ok((dir, file, doc, read.sha256))
 	}
 
@@ -361,6 +362,7 @@ impl AgentTools {
 
 	fn canvas_read(&self, args: &Value) -> Value {
 		let sel = Selector {
+			loose: args.get("loose").and_then(Value::as_bool).unwrap_or(false),
 			group_id: args.get("groupId").and_then(Value::as_str).map(str::to_string),
 			node_ids: args
 				.get("nodeIds")
@@ -663,10 +665,11 @@ fn tools_list() -> Value {
 			{
 				"name": "canvasRead",
 				"description": "Read only some nodes of a canvas: everything inside a group \
-								(`groupId`, nested groups included) and/or specific `nodeIds`. \
+								(`groupId`, nested groups included), the cards in no group \
+								(`loose: true`) and/or specific `nodeIds`. \
 								Returns id, type, x-kind, text, colour, position, size and \
 								x-author, plus the edges touching them marked `out`, `in` or \
-								`within` the selection. Needs groupId or nodeIds; call \
+								`within` the selection. Needs groupId, loose or nodeIds; call \
 								canvasOutline for the group ids.",
 				"inputSchema": {
 					"type": "object",
@@ -678,6 +681,7 @@ fn tools_list() -> Value {
 						},
 						"groupId": { "type": "string", "description": "A section id from canvasOutline." },
 						"nodeIds": { "type": "array", "items": { "type": "string" } },
+						"loose": { "type": "boolean", "description": "Read the cards that sit in no section (see `loose` in canvasOutline)." },
 					},
 				},
 				"annotations": { "title": "Read part of a canvas", "readOnlyHint": true },
@@ -1355,6 +1359,24 @@ mod tests {
 			canvas_call(&f, "canvasPatch", json!({ "path": "b.canvas", "ops": ops }));
 		assert!(failed && err.as_str().unwrap().contains("op 1 (updateNode)"), "{err}");
 		assert_eq!(std::fs::read_to_string(&file).unwrap(), BOARD);
+	}
+
+	#[test]
+	fn malformed_nodes_array_is_an_error_and_file_untouched() {
+		let f = fixture();
+		let file = f.dir.path().join("canvas/b.canvas");
+		let bad = "{\n  \"nodes\": \"oops\",\n  \"edges\": []\n}\n";
+		std::fs::write(&file, bad).unwrap();
+		for (tool, args) in [
+			("canvasPatch", json!({ "path": "b.canvas", "ops": [] })),
+			("canvasOutline", json!({ "path": "b.canvas" })),
+			("canvasRead", json!({ "path": "b.canvas", "loose": true })),
+			("canvasFreeSpot", json!({ "path": "b.canvas", "width": 10, "height": 10 })),
+		] {
+			let (err, failed) = canvas_call(&f, tool, args);
+			assert!(failed && err.as_str().unwrap().contains("nodes"), "{tool}: {err}");
+		}
+		assert_eq!(std::fs::read_to_string(&file).unwrap(), bad);
 	}
 
 	#[test]
