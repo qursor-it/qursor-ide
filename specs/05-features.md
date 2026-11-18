@@ -8922,6 +8922,10 @@ The panel shows that session's terminal above a composer. With no session, or af
 *The next message starts a new <agent> session for this canvas.*, and *Or link a session
 already running:* listing the project's sessions (sub-agents excluded, newest first);
 picking one links it in place of the current one, and *Keep the current session* backs out.
+Linking sends the session one primer message (the context line plus: the canvas is the
+shared whiteboard of this conversation, keep using it even when later messages lack the
+line), because text typed straight into the terminal cannot be prefixed. Above the
+terminal a hint says *Write below to attach the canvas and the selected nodes*.
 The header says *<agent> is working…* with the linked session's own agent. A first
 send starts a fresh session of the picked agent (passed as the launch override, F30),
 links it, mounts the terminal, and sends as

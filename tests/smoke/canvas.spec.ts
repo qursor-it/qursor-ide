@@ -321,6 +321,17 @@ test.describe('canvas mode', () => {
 				`${FOO_ID}|canvas/idea.canvas`,
 			),
 		).toBe('session-uuid-001');
+		// The linked session is told about the canvas once, without a composer message.
+		await expect
+			.poll(() =>
+				page.evaluate(() =>
+					(window.__FACTORAI_TEST_CALLS__ ?? [])
+						.filter((c) => c.name === 'terminal_write')
+						.map((c) => (c.args as { data: string }).data)
+						.join(''),
+				),
+			)
+			.toContain('shared whiteboard');
 		await page.getByTestId('canvas-change-session').click();
 		await expect(page.getByTestId('canvas-agent-codex')).toBeVisible();
 		await page.getByRole('button', { name: 'Keep the current session' }).click();

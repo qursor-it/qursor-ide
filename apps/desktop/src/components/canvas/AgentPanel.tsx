@@ -18,7 +18,7 @@ import { cmd } from '@lib/tauri';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Composer, type NodeRef } from './Composer';
-import { buildMessage } from './contextLine';
+import { buildMessage, buildPrimer } from './contextLine';
 
 const RETRY_MS = 250;
 const AGENT_NAME: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex' };
@@ -83,6 +83,9 @@ export function AgentPanel({
 			setChoosing(false);
 			await qc.invalidateQueries({ queryKey: queryKeys.canvasSession(projectId, relPath) });
 			void qc.invalidateQueries({ queryKey: queryKeys.canvasOrigins(projectId) });
+			// A linked session has never seen this canvas; tell it once.
+			if (!(await sendWhenLive(id, buildPrimer(absPath))))
+				setError('Linked, but the session did not take the canvas context yet.');
 		} catch (e) {
 			setError(e instanceof Error ? e.message : 'Could not link the session.');
 		}
@@ -119,7 +122,10 @@ export function AgentPanel({
 		<div data-testid="canvas-agent-panel" className="flex min-h-0 flex-1 flex-col">
 			{!picking && sessionId ? (
 				<div className="flex min-h-0 flex-1 flex-col">
-					<div className="flex shrink-0 justify-end border-border border-b px-2 py-1">
+					<div className="flex shrink-0 items-center gap-2 border-border border-b px-3 py-1">
+						<p className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+							Write below to attach the canvas and the selected nodes
+						</p>
 						<Button
 							variant="ghost"
 							size="sm"

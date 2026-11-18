@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildContextLine, buildMessage } from './contextLine';
+import { buildContextLine, buildMessage, buildPrimer } from './contextLine';
 
 describe('contextLine', () => {
 	it('with_selection', () => {
@@ -14,5 +14,10 @@ describe('contextLine', () => {
 		expect(buildMessage('/p/a.canvas', [], 'hi')).toBe(
 			`${buildContextLine('/p/a.canvas', [])}\nhi`,
 		);
+	});
+	it('primer starts with the context line and names the file', () => {
+		const p = buildPrimer('/p/a.canvas');
+		expect(p.startsWith(buildContextLine('/p/a.canvas', []))).toBe(true);
+		expect(p).toContain('shared whiteboard');
 	});
 });
