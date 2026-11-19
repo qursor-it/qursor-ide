@@ -21,6 +21,17 @@ pub trait TerminalUse: Send + Sync {
 	fn run(&self, terminal: &str, command: &str, timeout_s: u64) -> Result<Value, String>;
 	fn read(&self, terminal: &str) -> Result<Value, String>;
 	fn send_keys(&self, terminal: &str, keys: &[String]) -> Result<Value, String>;
+	/// Files on the terminal's server, over SFTP (F46).
+	fn file_read(&self, terminal: &str, path: &str) -> Result<Value, String>;
+	fn file_write(&self, terminal: &str, path: &str, content: &str) -> Result<Value, String>;
+	fn file_edit(
+		&self,
+		terminal: &str,
+		path: &str,
+		old: &str,
+		new: &str,
+		all: bool,
+	) -> Result<Value, String>;
 }
 
 pub const INSTRUCTIONS: &str = concat!(
@@ -32,7 +43,9 @@ pub const INSTRUCTIONS: &str = concat!(
 	"its state (directory, environment, `sudo`) is shared with them, and they can take the turn ",
 	"back at any time. Never ask for, type or repeat a password: when a terminal waits for one, ",
 	"stop and tell the human. Each server has a policy the human chose; a refusal is final for ",
-	"that command.",
+	"that command. To read or change a file on a server, prefer `file_read`, `file_edit` and ",
+	"`file_write` over `cat`, `sed` or heredocs: they keep the file's mode, write atomically, and ",
+	"refuse when someone changed the file since you read it.",
 );
 
 pub fn definitions() -> Vec<Value> {
@@ -107,11 +120,69 @@ pub fn definitions() -> Vec<Value> {
 			"annotations": { "title": "Press keys in a remote terminal", "destructiveHint": true },
 			"_meta": { "anthropic/searchHint": "run commands in remote server SSH terminals the human lent this session in Qursor IDE" },
 		}),
+		json!({
+			"name": "file_read",
+			"description": "Read a text file on the server of a lent terminal (up to 5 MB). A \
+							relative path is resolved against that terminal's directory. Read a \
+							file before you edit or overwrite it.",
+			"inputSchema": {
+				"type": "object",
+				"properties": { "terminal": term, "path": { "type": "string" } },
+				"required": ["terminal", "path"],
+			},
+			"annotations": { "title": "Read a remote file", "readOnlyHint": true },
+			"_meta": { "anthropic/searchHint": "read a file on a remote server terminal lent in Qursor IDE" },
+		}),
+		json!({
+			"name": "file_edit",
+			"description": "Replace `old_string` with `new_string` in a file on the server of a \
+							lent terminal. `old_string` must appear exactly once unless \
+							`replace_all`. Refused if the file changed since you read it.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"terminal": term,
+					"path": { "type": "string" },
+					"old_string": { "type": "string" },
+					"new_string": { "type": "string" },
+					"replace_all": { "type": "boolean" },
+				},
+				"required": ["terminal", "path", "old_string", "new_string"],
+			},
+			"annotations": { "title": "Edit a remote file", "destructiveHint": true },
+			"_meta": { "anthropic/searchHint": "edit a file on a remote server terminal lent in Qursor IDE" },
+		}),
+		json!({
+			"name": "file_write",
+			"description": "Write a whole file on the server of a lent terminal, atomically and \
+							keeping its mode. An existing file must have been read first and be \
+							unchanged since.",
+			"inputSchema": {
+				"type": "object",
+				"properties": {
+					"terminal": term,
+					"path": { "type": "string" },
+					"content": { "type": "string" },
+				},
+				"required": ["terminal", "path", "content"],
+			},
+			"annotations": { "title": "Write a remote file", "destructiveHint": true },
+			"_meta": { "anthropic/searchHint": "write a file on a remote server terminal lent in Qursor IDE" },
+		}),
 	]
 }
 
 pub fn is_terminal_tool(name: &str) -> bool {
-	matches!(name, "terminals_list" | "terminal_run" | "terminal_read" | "terminal_send_keys")
+	matches!(
+		name,
+		"terminals_list"
+			| "terminal_run"
+			| "terminal_read"
+			| "terminal_send_keys"
+			| "file_read"
+			| "file_edit"
+			| "file_write"
+	)
 }
 
 fn str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
@@ -153,6 +224,32 @@ pub fn call(backend: &dyn TerminalUse, name: &str, args: &Value) -> Value {
 				return tool_error("terminal_send_keys needs at least one key");
 			}
 			done(backend.send_keys(t, &keys))
+		}
+		"file_read" => match (str_arg(args, "terminal"), str_arg(args, "path")) {
+			(Some(t), Some(p)) => done(backend.file_read(t, p)),
+			_ => tool_error("file_read needs a terminal and a path"),
+		},
+		"file_write" => {
+			let content = args.get("content").and_then(Value::as_str);
+			match (str_arg(args, "terminal"), str_arg(args, "path"), content) {
+				(Some(t), Some(p), Some(c)) => done(backend.file_write(t, p, c)),
+				_ => tool_error("file_write needs a terminal, a path and content"),
+			}
+		}
+		"file_edit" => {
+			let new = args.get("new_string").and_then(Value::as_str);
+			match (
+				str_arg(args, "terminal"),
+				str_arg(args, "path"),
+				str_arg(args, "old_string"),
+				new,
+			) {
+				(Some(t), Some(p), Some(o), Some(n)) => {
+					let all = args.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
+					done(backend.file_edit(t, p, o, n, all))
+				}
+				_ => tool_error("file_edit needs a terminal, a path, old_string and new_string"),
+			}
 		}
 		_ => tool_error(&format!("no such terminal tool: {name}")),
 	}

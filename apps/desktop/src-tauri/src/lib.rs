@@ -293,6 +293,22 @@ pub fn run() {
 					},
 				});
 			let mut terminals = terminals;
+			let vault =
+				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
+			let ssh = Arc::new(services::ssh::pool::Pool::new(
+				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
+			));
+			// Files on servers for agents (F46), on the same pooled logins as the tabs.
+			{
+				let (db, vault) = (db.clone(), vault.clone());
+				terminals.set_remote_files(Arc::new(services::ssh::sftp::RemoteFiles::new(
+					ssh.clone(),
+					Arc::new(move |id| {
+						let server = db.with(|c| services::servers::get(c, id))?;
+						commands::servers::target_for(&server, &vault)
+					}),
+				)));
+			}
 			let confirmations = Arc::new(services::agent_policy::Confirmations::default());
 			// Agents using SSH terminals (F45): announce their commands, and name
 			// a server in `terminals_list` the way the address book does.
@@ -401,11 +417,6 @@ pub fn run() {
 
 			let usage_db = db.clone();
 			let usage_poll_store = usage.clone();
-			let vault =
-				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
-			let ssh = Arc::new(services::ssh::pool::Pool::new(
-				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
-			));
 			{
 				// The last tab on a server closing ends its login (ADR-0103).
 				let (ssh, terminals) = (ssh.clone(), terminals.clone());

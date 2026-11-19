@@ -843,6 +843,8 @@ pub struct TerminalManager {
 	on_agent_run: Arc<dyn Fn(AgentRunEvent) + Send + Sync>,
 	/// A server's display name for `terminals_list`, from the address book.
 	server_label: Option<ServerLabelCb>,
+	/// Files on the servers agents use, over SFTP (F46).
+	remote_files: Option<Arc<crate::services::ssh::sftp::RemoteFiles>>,
 }
 
 impl TerminalManager {
@@ -894,6 +896,7 @@ impl TerminalManager {
 			agent_policy: None,
 			on_agent_run: Arc::new(|_| {}),
 			server_label: None,
+			remote_files: None,
 		}
 	}
 
@@ -929,6 +932,7 @@ impl TerminalManager {
 			agent_policy: None,
 			on_agent_run: Arc::new(|_| {}),
 			server_label: None,
+			remote_files: None,
 		}
 	}
 
@@ -3141,6 +3145,62 @@ mod tests {
 		let r = agent.run(&id, "echo original", 15).expect("run");
 		assert_eq!(r["output"], "edited", "{r}");
 		assert_eq!(r["edited_by_human"], "echo edited", "{r}");
+	}
+
+	/// File tools on a lent terminal's server (F46): a relative path resolves
+	/// against the terminal's directory, an edit replaces exactly what it names,
+	/// and the policy sees each read and write.
+	#[cfg(unix)]
+	#[test]
+	fn an_agent_reads_and_edits_files_on_the_terminals_server() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{pool::Pool, sftp::RemoteFiles, Auth, KnownHosts, Target};
+		let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+		let log = seen.clone();
+		let (d, mut mgr, id) = lent_terminal(move |m| {
+			m.set_agent_policy(Arc::new(move |req| {
+				log.lock().push(req.command.clone());
+				Ok(None)
+			}))
+		});
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
+		mgr.set_remote_files(Arc::new(RemoteFiles::new(
+			Arc::new(Pool::new(known)),
+			Arc::new(move |_| {
+				Ok(Target {
+					host: "127.0.0.1".into(),
+					port,
+					user: user.clone(),
+					auth: Auth::KeyFile { path: key.clone(), passphrase: None },
+				})
+			}),
+		)));
+		let work = d.dir.path().join("site");
+		std::fs::create_dir_all(&work).expect("dir");
+		std::fs::write(work.join("index.html"), "<h1>old</h1>\n").expect("seed");
+		let agent = mgr.session_terminals("sess");
+		agent.run(&id, &format!("cd {}", work.display()), 15).expect("cd");
+
+		let r = agent.file_read(&id, "index.html").expect("read");
+		assert_eq!(r["content"], "<h1>old</h1>\n", "{r}");
+		agent.file_edit(&id, "index.html", "old", "new", false).expect("edit");
+		assert_eq!(
+			std::fs::read_to_string(work.join("index.html")).expect("disk"),
+			"<h1>new</h1>\n"
+		);
+		agent.file_write(&id, "robots.txt", "User-agent: *\n").expect("write");
+		assert_eq!(
+			std::fs::read_to_string(work.join("robots.txt")).expect("disk"),
+			"User-agent: *\n"
+		);
+		let asked = seen.lock().clone();
+		assert!(
+			asked.iter().any(|c| c.starts_with("cat ") && c.ends_with("/site/index.html")),
+			"{asked:?}"
+		);
+		assert!(asked.iter().any(|c| c.starts_with("edit ")), "{asked:?}");
+		assert!(asked.iter().any(|c| c.starts_with("write ")), "{asked:?}");
 	}
 
 	#[test]

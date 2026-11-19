@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use super::{now_ms, TerminalId, TerminalKind, TerminalManager};
 use crate::error::{AppError, AppResult};
 use crate::services::agent_tools::terminals::{key_bytes, TerminalUse};
+use crate::services::ssh::sftp::RemoteFiles;
 use crate::services::term_capture::{self, Capture};
 
 /// A human keystroke this recent means they are typing: the agent waits.
@@ -157,6 +158,10 @@ impl TerminalManager {
 		self.agent_policy = Some(cb);
 	}
 
+	pub fn set_remote_files(&mut self, files: Arc<RemoteFiles>) {
+		self.remote_files = Some(files);
+	}
+
 	pub fn set_agent_run_cb(&mut self, cb: Arc<dyn Fn(AgentRunEvent) + Send + Sync>) {
 		self.on_agent_run = cb;
 	}
@@ -242,6 +247,31 @@ impl SessionTerminals {
 			let slice = (deadline - now).min(Duration::from_millis(200));
 			cell.changed.wait_for(&mut cap, slice);
 		}
+	}
+
+	/// The server, the files backend and the absolute path for a file tool.
+	/// A relative path is resolved against the terminal's directory.
+	fn file_target(
+		&self,
+		terminal: &str,
+		path: &str,
+	) -> Result<(Handle, Arc<RemoteFiles>, String), String> {
+		let (h, cell, _) = self.lent(terminal)?;
+		let files = self
+			.mgr
+			.remote_files
+			.clone()
+			.ok_or_else(|| "files are not available here".to_string())?;
+		let path = if path.starts_with('/') {
+			path.to_string()
+		} else {
+			let cwd = cell.cap.lock().cwd.clone().ok_or_else(|| {
+				"the terminal's directory is not known yet: use an absolute path, or run a command there first"
+					.to_string()
+			})?;
+			format!("{}/{}", cwd.trim_end_matches('/'), path)
+		};
+		Ok((h, files, path))
 	}
 
 	/// Define the marker functions in this shell, and prove they work.
@@ -380,6 +410,45 @@ impl TerminalUse for SessionTerminals {
 			"cwd": c.cwd.clone(),
 			"screen": c.screen_text(),
 		}))
+	}
+
+	fn file_read(&self, terminal: &str, path: &str) -> Result<Value, String> {
+		let (h, files, path) = self.file_target(terminal, path)?;
+		self.check_policy(&h, terminal, &format!("cat {path}"), false)?;
+		let text =
+			files.agent_read(&self.session_id, &h.project_id, &path).map_err(|e| e.to_string())?;
+		Ok(json!({ "path": path, "content": text }))
+	}
+
+	fn file_write(&self, terminal: &str, path: &str, content: &str) -> Result<Value, String> {
+		let (h, files, path) = self.file_target(terminal, path)?;
+		self.check_policy(&h, terminal, &format!("write {path} ({} bytes)", content.len()), false)?;
+		files
+			.agent_write(&self.session_id, &h.project_id, &path, content)
+			.map_err(|e| e.to_string())?;
+		Ok(json!({ "path": path, "written": content.len() }))
+	}
+
+	fn file_edit(
+		&self,
+		terminal: &str,
+		path: &str,
+		old: &str,
+		new: &str,
+		all: bool,
+	) -> Result<Value, String> {
+		let (h, files, path) = self.file_target(terminal, path)?;
+		let shown = |s: &str| s.chars().take(160).collect::<String>();
+		self.check_policy(
+			&h,
+			terminal,
+			&format!("edit {path}: «{}» → «{}»", shown(old), shown(new)),
+			false,
+		)?;
+		let n = files
+			.agent_edit(&self.session_id, &h.project_id, &path, old, new, all)
+			.map_err(|e| e.to_string())?;
+		Ok(json!({ "path": path, "replaced": n }))
 	}
 
 	fn send_keys(&self, terminal: &str, keys: &[String]) -> Result<Value, String> {

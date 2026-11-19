@@ -92,6 +92,9 @@ ureq = "2"
 # `aws-lc-rs`, which needs cmake and NASM to build on Windows; `ring` is already
 # in the tree.
 russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+# The SFTP client on those connections (F46): the file browser and agent file
+# tools. Speaks over any byte stream, so it rides a russh channel.
+russh-sftp = "3"
 # Decrypted SSH secrets are wiped from memory when dropped. Already in the tree.
 zeroize = "1"
 # The SSH secrets vault (ADR-0104): AES-256-GCM entries, an Argon2id key when a

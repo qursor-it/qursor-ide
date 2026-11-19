@@ -108,7 +108,7 @@ fn secret(vault: &Vault, server_id: &str, kind: &str) -> AppResult<Option<Zeroiz
 		.transpose()
 }
 
-fn target_for(s: &Server, vault: &Vault) -> AppResult<Target> {
+pub(crate) fn target_for(s: &Server, vault: &Vault) -> AppResult<Target> {
 	let auth = match s.auth.as_str() {
 		"password" => Auth::Password(secret(vault, &s.id, "password")?.ok_or_else(|| {
 			AppError::Unauthenticated(format!("no password is saved for {}", s.name))

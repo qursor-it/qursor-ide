@@ -963,6 +963,10 @@ mod tests {
 				"terminal_run",
 				"terminal_read",
 				"terminal_send_keys",
+				// F46: files on those terminals' servers.
+				"file_read",
+				"file_edit",
+				"file_write",
 			]
 		);
 		// The one that is absent on purpose (ADR-0028): the editor's delete asks
@@ -1014,10 +1018,13 @@ mod tests {
 
 		for t in tools {
 			let hint = t["_meta"]["anthropic/searchHint"].as_str().unwrap_or_default();
-			let topic = if t["name"].as_str().unwrap_or_default().starts_with("terminal") {
+			let n = t["name"].as_str().unwrap_or_default();
+			let topic = if n.starts_with("terminal") {
 				"terminal"
-			} else if t["name"].as_str().unwrap_or_default().starts_with("canvas") {
+			} else if n.starts_with("canvas") {
 				"canvas"
+			} else if n.starts_with("file") {
+				"file"
 			} else {
 				"routine"
 			};
@@ -1043,6 +1050,7 @@ mod tests {
 				"canvasFreeSpot",
 				"terminals_list",
 				"terminal_read",
+				"file_read",
 			];
 			assert_eq!(read_only, reads.contains(&name), "{name}");
 			assert!(t["annotations"]["title"].is_string(), "{name} has no title");
@@ -1051,7 +1059,7 @@ mod tests {
 			let destructive = t["annotations"]["destructiveHint"] == json!(true);
 			assert_eq!(
 				destructive,
-				matches!(name, "terminal_run" | "terminal_send_keys"),
+				matches!(name, "terminal_run" | "terminal_send_keys" | "file_edit" | "file_write"),
 				"{name}"
 			);
 		}

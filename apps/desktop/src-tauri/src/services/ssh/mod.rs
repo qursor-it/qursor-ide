@@ -14,6 +14,7 @@
 
 pub mod pool;
 pub mod pty;
+pub mod sftp;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -415,7 +416,7 @@ pub(crate) mod test_sshd {
 		std::fs::write(
 			&config,
 			format!(
-				"ListenAddress 127.0.0.1\nPort {port}\nHostKey {}\nAuthorizedKeysFile {}\nPidFile none\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\nStrictModes no\nUsePAM no\n",
+				"ListenAddress 127.0.0.1\nPort {port}\nHostKey {}\nAuthorizedKeysFile {}\nPidFile none\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\nStrictModes no\nUsePAM no\nSubsystem sftp internal-sftp\n",
 				host.display(),
 				dir.path().join("authorized_keys").display()
 			),
