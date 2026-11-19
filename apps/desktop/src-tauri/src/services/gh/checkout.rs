@@ -125,9 +125,8 @@ pub fn find_existing(
 		.iter()
 		.find(|w| {
 			!w.is_main
-				&& w.exists
-				&& (w.branch.as_deref() == Some(branch.as_str())
-					|| w.head.as_deref() == Some(head_oid))
+				&& w.exists && (w.branch.as_deref() == Some(branch.as_str())
+				|| w.head.as_deref() == Some(head_oid))
 		})
 		.cloned()
 }

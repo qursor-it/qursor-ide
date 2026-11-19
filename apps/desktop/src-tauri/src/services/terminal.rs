@@ -627,19 +627,35 @@ struct PtyRequest {
 	agent: Option<&'static AgentDescriptor>,
 }
 
+/// What [`TerminalManager::attach`] registers: a live PTY and everything the
+/// handle keeps alongside it.
+struct Attach {
+	req: PtyRequest,
+	master: Box<dyn MasterPty + Send>,
+	child: Box<dyn Child + Send + Sync>,
+	#[cfg(windows)]
+	process_job: Option<WinProcessJob>,
+	store_dir: PathBuf,
+	cwd: PathBuf,
+	ide: IdeSlot,
+	agent_tools: Option<AgentToolsServer>,
+}
+
 impl TerminalHandle {
 	fn kill_process_tree(&self) {
 		#[cfg(windows)]
-		if let Err(error) = self.process_job.terminate() {
-			warn!(pid = self.process_job.root_pid, error = %error, "Job Object termination failed; falling back to taskkill");
-			if let Err(kill_error) = kill_process_tree(self.process_job.root_pid) {
-				warn!(pid = self.process_job.root_pid, error = %kill_error, "taskkill could not terminate the terminal process tree");
-				if let Err(root_error) = self.killer.lock().kill() {
-					warn!(pid = self.process_job.root_pid, error = %root_error, "child killer could not terminate the terminal root process");
+		if let Some(job) = &self.process_job {
+			if let Err(error) = job.terminate() {
+				warn!(pid = job.root_pid, error = %error, "Job Object termination failed; falling back to taskkill");
+				if let Err(kill_error) = kill_process_tree(job.root_pid) {
+					warn!(pid = job.root_pid, error = %kill_error, "taskkill could not terminate the terminal process tree");
+					if let Err(root_error) = self.killer.lock().kill() {
+						warn!(pid = job.root_pid, error = %root_error, "child killer could not terminate the terminal root process");
+					}
 				}
 			}
+			return;
 		}
-		#[cfg(not(windows))]
 		let _ = self.killer.lock().kill();
 	}
 
@@ -700,8 +716,9 @@ struct TerminalHandle {
 	killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
 	/// On Windows, a kill-on-close Job Object owns the PTY root and every
 	/// descendant, including processes that were created just before attach.
+	/// `None` for a remote shell (F44): no local process tree exists to own.
 	#[cfg(windows)]
-	process_job: WinProcessJob,
+	process_job: Option<WinProcessJob>,
 	status: Mutex<TerminalStatus>,
 	/// The topic of the agent's last title (F32), for the desktop notification.
 	/// `None` until a Claude title arrives; Codex never sets it.
@@ -1707,7 +1724,6 @@ impl TerminalManager {
 		req: PtyRequest,
 		argv_override: Option<Vec<String>>,
 	) -> AppResult<TerminalId> {
-		let kind = req.kind;
 		// A shell has no agent of its own; its footer follows the project's
 		// Claude identity (F25), which is what the config directory below is for.
 		let env_agent = req.agent.unwrap_or_else(claude_desc);
@@ -1926,8 +1942,8 @@ impl TerminalManager {
 		let mut child = spawned;
 		#[cfg(not(windows))]
 		let child = spawned;
-		// Clone a killer now, before the child is moved into the waiter thread.
-		// See `TerminalHandle::killer` for why the child isn't shared.
+		// The cleanup below needs a killer before `attach` clones the one it keeps.
+		#[cfg(windows)]
 		let killer = child.clone_killer();
 		#[cfg(windows)]
 		let process_job = {
@@ -1959,17 +1975,47 @@ impl TerminalManager {
 			}
 		};
 		drop(pair.slave); // close slave end in the parent so EOF works
-		let mut pty_writer = pair
-			.master
-			.take_writer()
-			.map_err(|e| AppError::Process(format!("take_writer: {e}")))?;
-		let reader = pair
-			.master
+		info!(argv = ?argv, cwd = ?cwd_path, "spawning terminal");
+		self.attach(Attach {
+			req,
+			master: pair.master,
+			child,
+			#[cfg(windows)]
+			process_job: Some(process_job),
+			store_dir: claude_dir,
+			cwd: cwd_path,
+			ide,
+			agent_tools,
+		})
+	}
+
+	/// Register a live PTY and start its writer, reader and waiter threads.
+	///
+	/// The half of a spawn that does not care where the PTY came from: a local
+	/// process from [`Self::spawn_inner`], or a remote shell on an SSH channel
+	/// (F44), which arrives as the same `MasterPty` / `Child` pair.
+	fn attach(&self, a: Attach) -> AppResult<TerminalId> {
+		let Attach {
+			req,
+			master,
+			child,
+			#[cfg(windows)]
+			process_job,
+			store_dir,
+			cwd: cwd_path,
+			ide,
+			agent_tools,
+		} = a;
+		let kind = req.kind;
+		let killer = child.clone_killer();
+		let mut pty_writer =
+			master.take_writer().map_err(|e| AppError::Process(format!("take_writer: {e}")))?;
+		let reader = master
 			.try_clone_reader()
 			.map_err(|e| AppError::Process(format!("clone_reader: {e}")))?;
 
 		let id = Uuid::new_v4().to_string();
-		info!(%id, argv = ?argv, cwd = ?cwd_path, "spawned terminal");
+		info!(%id, cwd = ?cwd_path, "spawned terminal");
 
 		// Ends when the handle (the only sender) is dropped, or when a write
 		// fails because the child is gone and the PTY closed.
@@ -1994,9 +2040,9 @@ impl TerminalManager {
 			agent: req.agent,
 			adopted: Mutex::new(None),
 			thread_prefix: Mutex::new(None),
-			store_dir: claude_dir.clone(),
+			store_dir,
 			last_probe: Mutex::new(None),
-			master: Mutex::new(pair.master),
+			master: Mutex::new(master),
 			writer,
 			killer: Mutex::new(killer),
 			#[cfg(windows)]
