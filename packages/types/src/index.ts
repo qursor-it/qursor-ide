@@ -309,7 +309,7 @@ export interface SessionAdoptedEvent {
  * project, and `bySession` — keyed by session id, meaning "the agent" — would
  * otherwise have filed one over the agent it happened to be drawn under.
  */
-export type TerminalKind = 'agent' | 'shell';
+export type TerminalKind = 'agent' | 'shell' | 'ssh';
 
 export interface TerminalStatusDto {
 	id: TerminalId;
@@ -1087,7 +1087,11 @@ export type AppError =
 	/** A Project Intelligence command refused (F33, ADR-0084). `message` is
 	 *  `<code>: <detail>` with `code` one of {@link IntelligenceErrorCode}; use
 	 *  `intelligenceErrorCode` to split it. */
-	| { kind: 'Intelligence'; message: string };
+	| { kind: 'Intelligence'; message: string }
+	/** An SSH server presented a key no known_hosts file has (F44). `message` is
+	 *  the SHA-256 fingerprint the human is asked to confirm before retrying
+	 *  with it. */
+	| { kind: 'HostKey'; message: string };
 
 /**
  * A project's scheduled prompt (F22, ADR-0026). Mirrors the Rust `Routine`.
@@ -1931,4 +1935,77 @@ export interface CanvasOrigin {
 /** `canvas:changed` */
 export interface CanvasChangedEvent {
 	path: string;
+}
+
+// ── Servers (F44, ADR-0103, ADR-0104) ──────────────────────────────────────
+
+export type ServerEnvironment = 'dev' | 'staging' | 'prod';
+/** What an agent may do in this server's terminals (F45). */
+export type AgentPolicy = 'free' | 'confirm' | 'readonly';
+export type ServerAuth = 'password' | 'key' | 'keyFile' | 'agent' | 'system';
+
+/** A saved server. Mirrors the Rust `Server`; carries no secret, only whether
+ *  the vault holds one. */
+export interface Server {
+	id: string;
+	name: string;
+	host: string;
+	port: number;
+	username: string;
+	startDir: string | null;
+	folderId: string | null;
+	environment: ServerEnvironment;
+	agentPolicy: AgentPolicy;
+	auth: ServerAuth;
+	keyPath: string | null;
+	hasPassword: boolean;
+	hasPrivateKey: boolean;
+	hasPassphrase: boolean;
+	connected: boolean;
+}
+
+/** The server form. Secret fields are write-only: `''` clears one, absent
+ *  leaves it as it is. */
+export interface ServerInput {
+	id?: string;
+	name: string;
+	host: string;
+	port: number;
+	username: string;
+	startDir?: string | null;
+	folderId?: string | null;
+	environment: ServerEnvironment;
+	agentPolicy: AgentPolicy;
+	auth: ServerAuth;
+	keyPath?: string | null;
+	password?: string;
+	privateKey?: string;
+	passphrase?: string;
+}
+
+export interface ServerFolder {
+	id: string;
+	name: string;
+}
+
+export interface ServerBook {
+	folders: ServerFolder[];
+	servers: Server[];
+}
+
+/** One concrete `Host` of `~/.ssh/config`, offered for import. */
+export interface SshConfigHost {
+	alias: string;
+	host: string;
+	port: number;
+	username: string | null;
+	identityFile: string | null;
+	/** Uses `ProxyJump`/`ProxyCommand`: import it with `system` auth. */
+	needsSystemSsh: boolean;
+}
+
+export interface VaultStatus {
+	mode: 'keychain' | 'masterPassword';
+	locked: boolean;
+	keychainError: string | null;
 }

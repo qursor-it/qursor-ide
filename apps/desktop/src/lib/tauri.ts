@@ -65,6 +65,12 @@ import type {
 	SessionSummary,
 	SessionUsage,
 	SessionWorktreeEvent,
+	Server,
+	ServerBook,
+	ServerFolder,
+	ServerInput,
+	SshConfigHost,
+	VaultStatus,
 	SessionsChangedEvent,
 	SettingKey,
 	ShellSpawnOpts,
@@ -499,6 +505,38 @@ export const cmd = {
 	 *  `terminalSpawn` because a shell runs no transcript probe, stands up no
 	 *  IDE bridge and no tool server, and starts no routine. */
 	shellSpawn: (opts: ShellSpawnOpts) => invoke<TerminalId>('shell_spawn', { opts }),
+	// ── Servers (F44) ──
+	listServers: () => invoke<ServerBook>('list_servers'),
+	saveServer: (input: ServerInput) => invoke<Server>('save_server', { input }),
+	deleteServer: (id: string) => invoke<void>('delete_server', { id }),
+	createServerFolder: (name: string) => invoke<ServerFolder>('create_server_folder', { name }),
+	renameServerFolder: (id: string, name: string) =>
+		invoke<void>('rename_server_folder', { id, name }),
+	deleteServerFolder: (id: string) => invoke<void>('delete_server_folder', { id }),
+	sshConfigHosts: () => invoke<SshConfigHost[]>('ssh_config_hosts'),
+	vaultStatus: () => invoke<VaultStatus>('vault_status'),
+	vaultUnlock: (password: string) => invoke<VaultStatus>('vault_unlock', { password }),
+	vaultLock: () => invoke<VaultStatus>('vault_lock'),
+	vaultSetMasterPassword: (password: string | null) =>
+		invoke<VaultStatus>('vault_set_master_password', { password }),
+	/** Open a shell tab on a server. An unknown host key rejects with
+	 *  `{ kind: 'HostKey', message: fingerprint }`; call again with it once the
+	 *  human has confirmed. */
+	serverOpenShell: (
+		serverId: string,
+		clientKey: string,
+		cols: number,
+		rows: number,
+		acceptFingerprint?: string,
+	) =>
+		invoke<TerminalId>('server_open_shell', {
+			serverId,
+			clientKey,
+			cols,
+			rows,
+			acceptFingerprint,
+		}),
+	serverDisconnect: (serverId: string) => invoke<void>('server_disconnect', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by
 	 *  `Remove project` and by nothing about a session — closing one says
 	 *  nothing about the shells under it. The agent is killed by `terminalKill`
@@ -917,6 +955,11 @@ interface TestFixture {
 	/** The id `shell_spawn` hands back in the browser lane (F23). Distinct from
 	 *  `terminalSpawnId` so a test can tell a shell's PTY from its agent's. */
 	shellSpawnId?: TerminalId;
+	/** The address book `list_servers` answers with (F44). */
+	serverBook?: ServerBook;
+	serverHostKey?: string;
+	sshConfigHosts?: SshConfigHost[];
+	vaultStatus?: VaultStatus;
 	/** Session id `start_session` hands back for a new-session click. */
 	newSessionId?: string;
 	searchHits?: SearchHit[];
@@ -2343,6 +2386,46 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			// them into one if the mock handed both the same name.
 			mockShellSpawns += 1;
 			return (fx?.shellSpawnId ?? `mock-shell-id-${mockShellSpawns}`) as unknown as T;
+		case 'list_servers':
+			return (fx?.serverBook ?? { folders: [], servers: [] }) as unknown as T;
+		case 'ssh_config_hosts':
+			return (fx?.sshConfigHosts ?? []) as unknown as T;
+		case 'vault_status':
+		case 'vault_unlock':
+		case 'vault_lock':
+		case 'vault_set_master_password':
+			return (fx?.vaultStatus ?? {
+				mode: 'keychain',
+				locked: false,
+				keychainError: null,
+			}) as unknown as T;
+		case 'save_server': {
+			const input = args?.input as ServerInput;
+			return {
+				hasPassword: !!input.password,
+				hasPrivateKey: !!input.privateKey,
+				hasPassphrase: !!input.passphrase,
+				connected: false,
+				startDir: null,
+				folderId: null,
+				keyPath: null,
+				...input,
+				id: input.id ?? 'mock-server-id',
+			} as unknown as T;
+		}
+		case 'create_server_folder':
+			return { id: 'mock-folder-id', name: args?.name } as unknown as T;
+		case 'server_open_shell':
+			if (fx?.serverHostKey && args?.acceptFingerprint !== fx.serverHostKey) {
+				throw { kind: 'HostKey', message: fx.serverHostKey };
+			}
+			mockShellSpawns += 1;
+			return `mock-ssh-id-${mockShellSpawns}` as unknown as T;
+		case 'delete_server':
+		case 'rename_server_folder':
+		case 'delete_server_folder':
+		case 'server_disconnect':
+			return undefined as unknown as T;
 		case 'shell_name':
 			return 'zsh' as unknown as T;
 		case 'terminal_write':

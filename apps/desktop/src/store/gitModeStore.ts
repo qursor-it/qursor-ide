@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
-export type AppMode = 'sessions' | 'git' | 'canvas';
+/** `servers` is the SSH session manager (ADR-0107). */
+export type AppMode = 'sessions' | 'git' | 'canvas' | 'servers';
 
 /** One Git tab: a checkout directory of a project (F35). */
 export interface GitTab {

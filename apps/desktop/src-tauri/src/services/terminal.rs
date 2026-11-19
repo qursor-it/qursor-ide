@@ -2791,6 +2791,76 @@ mod tests {
 	}
 
 	#[cfg(unix)]
+	/// An SSH tab is a terminal like any other (F44): its bytes reach the same
+	/// data events, it sits outside the work count, and killing it hangs the
+	/// remote shell up and reports the exit.
+	#[cfg(unix)]
+	#[test]
+	fn an_ssh_tab_streams_through_the_manager_and_kill_hangs_it_up() {
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 80, 24, None).await.expect("shell");
+			// The connection must outlive this block: the channel rides on it.
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 80, 24)
+		});
+		let (mgr, data, exit) = make_manager();
+		let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "~", master, child).expect("attach");
+		assert!(mgr.has_ssh_for("server-1"));
+		assert_eq!(mgr.working_count(), 0, "an SSH tab is not work in progress");
+		mgr.write(&id, b"echo SSH_$((40+2))\n").expect("write");
+		let seen = (0..100).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			let out: String = data
+				.lock()
+				.unwrap()
+				.iter()
+				.filter(|e| e.id == id)
+				.map(|e| {
+					String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default())
+						.into_owned()
+				})
+				.collect();
+			out.contains("SSH_42")
+		});
+		assert!(seen, "the remote shell's output reached the data events");
+		// A foreground command running on the server when the tab is killed.
+		mgr.write(&id, b"sleep 4242\n").expect("write");
+		std::thread::sleep(Duration::from_millis(400));
+		let running = || {
+			std::process::Command::new("pgrep")
+				.args(["-f", "sleep 4242"])
+				.output()
+				.is_ok_and(|o| o.status.success())
+		};
+		assert!(running(), "the remote command started");
+		mgr.kill(&id).expect("kill");
+		let exited = (0..100).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			exit.lock().unwrap().iter().any(|e| e.id == id && e.killed)
+		});
+		assert!(exited, "killing the tab closed the channel and reported the exit");
+		assert!(!mgr.has_ssh_for("server-1"));
+		let gone = (0..60).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			!running()
+		});
+		assert!(gone, "kill-on-quit reaches the server: no orphan left behind (ADR-0005)");
+	}
+
 	#[test]
 	fn spawn_runs_and_streams_output() {
 		let (mgr, data, exit) = make_manager();

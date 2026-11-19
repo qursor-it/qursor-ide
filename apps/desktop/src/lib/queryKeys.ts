@@ -2,6 +2,10 @@ import type { SettingKey, AgentId } from '@factorai/types';
 
 export const queryKeys = {
 	projects: () => ['projects'] as const,
+	/** The saved-server address book and its folders (F44). */
+	servers: () => ['servers'] as const,
+	/** Whether the SSH vault is locked, and how it is keyed (ADR-0104). */
+	vault: () => ['vault'] as const,
 	/** The sidebar's tree — groups and the projects in them, in order (ADR-0025).
 	 *  Its own key rather than a `projects` variant: this one is the *arrangement*
 	 *  and only the sidebar reads it, while `projects` is the flat membership list

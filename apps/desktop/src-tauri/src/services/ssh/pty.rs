@@ -18,6 +18,7 @@ use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use russh::client::Msg;
 use russh::{Channel, ChannelMsg, ChannelWriteHalf};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::Notify;
 
 enum Ctl {
 	Data(Vec<u8>),
@@ -25,6 +26,17 @@ enum Ctl {
 }
 
 type WriteHalf = Arc<ChannelWriteHalf<Msg>>;
+
+/// The write half, and the signal that ends the reader when we close.
+///
+/// russh does not hand the reader the server's reply to a close *we* started
+/// (the channel is no longer "established" when it arrives), so without this
+/// the reader would wait forever and the terminal would never report its exit.
+#[derive(Clone)]
+struct Closer {
+	write: WriteHalf,
+	stop: Arc<Notify>,
+}
 
 /// Exit code reported when the channel closed without an exit status — the
 /// connection dropped, or we closed it.
@@ -48,6 +60,8 @@ pub fn bridge(
 	let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
 	let (exit_tx, exit_rx) = mpsc::channel::<u32>();
 
+	let stop = Arc::new(Notify::new());
+	let closer = Closer { write: write_half.clone(), stop: stop.clone() };
 	let writer = write_half.clone();
 	tauri::async_runtime::spawn(async move {
 		while let Some(c) = ctl_rx.recv().await {
@@ -65,7 +79,11 @@ pub fn bridge(
 	tauri::async_runtime::spawn(async move {
 		let mut code = None;
 		loop {
-			match read_half.wait().await {
+			let msg = tokio::select! {
+				m = read_half.wait() => m,
+				() = stop.notified() => None,
+			};
+			match msg {
 				Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
 					if out_tx.send(data.to_vec()).is_err() {
 						break;
@@ -85,16 +103,17 @@ pub fn bridge(
 		size: Mutex::new(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }),
 		reader: Mutex::new(Some(ChanReader { rx: out_rx, buf: Vec::new(), pos: 0 })),
 	};
-	let child = SshChild { close: write_half, exit: Mutex::new(exit_rx), done: None };
+	let child = SshChild { close: closer, exit: Mutex::new(exit_rx), done: None };
 	(Box::new(master), Box::new(child))
 }
 
 /// Close the channel from any thread. The server hangs the shell up (SIGHUP to
 /// its session), which is the remote half of kill-on-quit (ADR-0005).
-fn close(w: &WriteHalf) {
-	let w = w.clone();
+fn close(c: &Closer) {
+	let c = c.clone();
 	tauri::async_runtime::spawn(async move {
-		let _ = w.close().await;
+		let _ = c.write.close().await;
+		c.stop.notify_one();
 	});
 }
 
@@ -178,7 +197,7 @@ impl Write for ChanWriter {
 	}
 }
 
-struct SshKiller(WriteHalf);
+struct SshKiller(Closer);
 
 impl std::fmt::Debug for SshKiller {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -198,7 +217,7 @@ impl ChildKiller for SshKiller {
 }
 
 struct SshChild {
-	close: WriteHalf,
+	close: Closer,
 	/// Behind a mutex only because `Child` must be `Sync` and a `Receiver` is
 	/// not; the waiter thread is its one caller.
 	exit: Mutex<Receiver<u32>>,
