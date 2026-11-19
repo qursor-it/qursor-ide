@@ -430,7 +430,10 @@ function VaultFooter() {
 		onSuccess: done,
 	});
 	const s = status.data;
-	const locked = s?.locked ?? false;
+	// No keychain on this machine (a headless Linux session): nothing to unlock,
+	// the way forward is a master password.
+	const needsSetup = s?.mode === 'keychain' && !!s.keychainError;
+	const locked = (s?.locked ?? false) && !needsSetup;
 	return (
 		<div className="flex h-9 shrink-0 items-center gap-1.5 px-1 text-xs text-muted-foreground">
 			{locked ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
@@ -439,13 +442,24 @@ function VaultFooter() {
 				title={s?.keychainError ?? undefined}
 				data-testid="vault-state"
 			>
-				{locked
-					? 'Vault locked'
-					: s?.mode === 'masterPassword'
-						? 'Vault unlocked'
-						: 'Vault (OS keychain)'}
+				{needsSetup
+					? 'No OS keychain'
+					: locked
+						? 'Vault locked'
+						: s?.mode === 'masterPassword'
+							? 'Vault unlocked'
+							: 'Vault (OS keychain)'}
 			</span>
-			{locked ? (
+			{needsSetup ? (
+				<Button
+					size="sm"
+					variant="ghost"
+					className="h-6 px-2 text-xs"
+					onClick={() => setDialog('set')}
+				>
+					Set up
+				</Button>
+			) : locked ? (
 				<Button
 					size="sm"
 					variant="ghost"
