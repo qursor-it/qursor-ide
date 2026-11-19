@@ -135,7 +135,7 @@ fn system_argv(s: &Server) -> Vec<String> {
 	let mut v = vec!["ssh".to_string(), "-t".into(), "-p".into(), s.port.to_string()];
 	v.push(format!("{}@{}", s.username, s.host));
 	if let Some(dir) = s.start_dir.as_deref().filter(|d| !d.is_empty()) {
-		v.push(ssh::start_in(dir));
+		v.extend(ssh::start_in(Some(dir), None));
 	}
 	v
 }
@@ -174,9 +174,15 @@ pub async fn server_open_shell(
 			accept_fingerprint,
 		)
 		.await?;
-	let channel = ssh::open_shell(&conn, cols, rows, server.start_dir.as_deref()).await?;
+	let tmux = server.persistent.then(|| ssh::tmux_name(&client_key));
+	let channel =
+		ssh::open_shell(&conn, cols, rows, server.start_dir.as_deref(), tmux.as_deref()).await?;
 	let (master, child) = pty::bridge(channel, cols, rows);
-	state.terminals.attach_ssh(&server.id, client_key, &label, master, child)
+	let id = state.terminals.attach_ssh(&server.id, client_key, &label, master, child)?;
+	if let Some(name) = tmux {
+		state.terminals.set_tmux(&id, name);
+	}
+	Ok(id)
 }
 
 /// Close the server's connection and every tab on it.
@@ -210,6 +216,7 @@ mod tests {
 			agent_policy: "free".into(),
 			auth: "system".into(),
 			key_path: None,
+			persistent: false,
 			has_password: false,
 			has_private_key: false,
 			has_passphrase: false,
@@ -483,4 +490,31 @@ pub async fn tunnel_start(state: State<'_, AppState>, id: String) -> AppResult<(
 #[tauri::command]
 pub fn tunnel_stop(state: State<'_, AppState>, id: String) {
 	state.tunnels.stop(&id);
+}
+
+/// End a persistent tab's tmux session (F48): the human closed the tab, which
+/// is the one gesture that means "this work is over". Quitting the app or a
+/// dropped connection leaves it for the next start to reattach.
+#[tauri::command]
+pub async fn server_end_tab(
+	state: State<'_, AppState>,
+	server_id: String,
+	client_key: String,
+) -> AppResult<()> {
+	let server = state.db.with(|c| servers::get(c, &server_id))?;
+	if !server.persistent || server.auth == "system" {
+		return Ok(());
+	}
+	let name = ssh::tmux_name(&client_key);
+	files(&state)
+		.with(&server_id, |conn, _| async move {
+			let ch =
+				conn.channel_open_session().await.map_err(|e| AppError::Remote(e.to_string()))?;
+			// Best effort: a session that is already gone is the outcome wanted.
+			let _ = ch
+				.exec(true, format!("tmux kill-session -t {} 2>/dev/null", ssh::quote(&name)))
+				.await;
+			Ok(())
+		})
+		.await
 }

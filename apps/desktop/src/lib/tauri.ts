@@ -542,6 +542,9 @@ export const cmd = {
 			acceptFingerprint,
 		}),
 	serverDisconnect: (serverId: string) => invoke<void>('server_disconnect', { serverId }),
+	/** End a persistent tab's tmux session: the human closed the tab (F48). */
+	serverEndTab: (serverId: string, clientKey: string) =>
+		invoke<void>('server_end_tab', { serverId, clientKey }),
 	/** Lend an SSH terminal to an agent session (F45). */
 	agentLinkTerminal: (terminalId: TerminalId, sessionId: string, mode: LinkMode) =>
 		invoke<void>('agent_link_terminal', { terminalId, sessionId, mode }),
@@ -2502,6 +2505,7 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			return (fx?.tunnels ?? []) as unknown as T;
 		case 'save_tunnel':
 			return { ...(args?.tunnel as Tunnel), id: 'mock-tunnel-id' } as unknown as T;
+		case 'server_end_tab':
 		case 'delete_tunnel':
 		case 'tunnel_start':
 		case 'tunnel_stop':

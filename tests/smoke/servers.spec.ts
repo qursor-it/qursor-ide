@@ -23,6 +23,7 @@ function server(over: Partial<Server>): Server {
 		agentPolicy: 'free',
 		auth: 'agent',
 		keyPath: null,
+		persistent: false,
 		hasPassword: false,
 		hasPrivateKey: false,
 		hasPassphrase: false,
@@ -281,5 +282,29 @@ test.describe('servers', () => {
 		expect((await calls('save_tunnel'))[0].args).toMatchObject({
 			tunnel: { serverId: 's1', localPort: 8081, destHost: 'localhost', destPort: 80 },
 		});
+	});
+
+	test('@smoke closing a persistent tab ends its tmux session; an ordinary tab does not ask', async ({
+		page,
+	}) => {
+		const persistentBook: ServerBook = {
+			folders: book.folders,
+			servers: [server({ persistent: true }), book.servers[1]],
+		};
+		await installMockBridge(page, { serverBook: persistentBook });
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await page.getByTestId('server-row-web01').dblclick();
+		await page.getByTestId('server-row-db01').dblclick();
+		const tabs = page.getByTestId('server-tab');
+		await expect(tabs).toHaveCount(2);
+		await tabs.nth(1).getByRole('button', { name: 'Close db01' }).click();
+		await tabs.nth(0).getByRole('button', { name: 'Close web01' }).click();
+		await expect(tabs).toHaveCount(0);
+		const ends = await page.evaluate(() =>
+			(window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === 'server_end_tab'),
+		);
+		expect(ends).toHaveLength(1);
+		expect(ends[0].args).toMatchObject({ serverId: 's1' });
 	});
 });

@@ -1958,6 +1958,8 @@ export interface Server {
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;
 	keyPath: string | null;
+	/** Tabs live in tmux sessions on the server, when it has tmux (F48). */
+	persistent: boolean;
 	hasPassword: boolean;
 	hasPrivateKey: boolean;
 	hasPassphrase: boolean;
@@ -1978,6 +1980,7 @@ export interface ServerInput {
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;
 	keyPath?: string | null;
+	persistent?: boolean;
 	password?: string;
 	privateKey?: string;
 	passphrase?: string;

@@ -192,12 +192,12 @@ impl SessionTerminals {
 		Ok((h, cap, link))
 	}
 
-	fn state(h: &Handle, c: &Capture) -> &'static str {
+	fn state(h: &Handle, c: &Capture, in_tmux: bool) -> &'static str {
 		if h.agent_running.load(Ordering::Relaxed) {
 			"running your command"
 		} else if c.asks_for_secret() {
 			"waiting for a password — the human must type it"
-		} else if c.in_full_screen_program() {
+		} else if !in_tmux && c.in_full_screen_program() {
 			"in a full-screen program"
 		} else if c.has_pending() {
 			"still running an earlier command (send <ctrl-c> to interrupt it)"
@@ -309,7 +309,7 @@ impl TerminalUse for SessionTerminals {
 					"server": self.mgr.server_label(&h.project_id),
 					"cwd": c.cwd.clone(),
 					"mode": link.mode,
-					"state": Self::state(h, &c),
+					"state": Self::state(h, &c, self.mgr.tmux.contains_key(e.key())),
 				}))
 			})
 			.collect();
@@ -327,12 +327,22 @@ impl TerminalUse for SessionTerminals {
 		let (h, cell, _) = self.lent(terminal)?;
 		{
 			let c = cell.cap.lock();
-			let state = Self::state(&h, &c);
+			let state = Self::state(&h, &c, self.mgr.tmux.contains_key(terminal));
 			if state != "ready" {
 				return Err(format!(
 					"the terminal is {state}; nothing was typed. Current screen:\n{}",
 					c.screen_text()
 				));
+			}
+		}
+		// A persistent tab's screen is tmux's own: ask tmux about the pane.
+		if let (Some(session), Some(files)) =
+			(self.mgr.tmux.get(terminal).map(|s| s.clone()), self.mgr.remote_files.clone())
+		{
+			if let Err(why) =
+				files.tmux_at_rest(&h.project_id, &session).map_err(|e| e.to_string())?
+			{
+				return Err(format!("the terminal is {why}; nothing was typed"));
 			}
 		}
 		if now_ms() - h.last_human_input.load(Ordering::Relaxed) < HUMAN_GRACE_MS {
@@ -405,7 +415,7 @@ impl TerminalUse for SessionTerminals {
 		let (h, cell, link) = self.lent(terminal)?;
 		let c = cell.cap.lock();
 		Ok(json!({
-			"state": Self::state(&h, &c),
+			"state": Self::state(&h, &c, self.mgr.tmux.contains_key(terminal)),
 			"mode": link.mode,
 			"cwd": c.cwd.clone(),
 			"screen": c.screen_text(),
@@ -465,7 +475,9 @@ impl TerminalUse for SessionTerminals {
 		Self::write(&h, &bytes)?;
 		std::thread::sleep(Duration::from_millis(300));
 		let c = cell.cap.lock();
-		Ok(json!({ "state": Self::state(&h, &c), "screen": c.screen_text() }))
+		Ok(
+			json!({ "state": Self::state(&h, &c, self.mgr.tmux.contains_key(terminal)), "screen": c.screen_text() }),
+		)
 	}
 }
 

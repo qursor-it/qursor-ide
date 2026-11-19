@@ -845,6 +845,8 @@ pub struct TerminalManager {
 	server_label: Option<ServerLabelCb>,
 	/// Files on the servers agents use, over SFTP (F46).
 	remote_files: Option<Arc<crate::services::ssh::sftp::RemoteFiles>>,
+	/// The tmux session of each persistent SSH tab (F48), by terminal id.
+	tmux: Arc<DashMap<TerminalId, String>>,
 }
 
 impl TerminalManager {
@@ -897,6 +899,7 @@ impl TerminalManager {
 			on_agent_run: Arc::new(|_| {}),
 			server_label: None,
 			remote_files: None,
+			tmux: Arc::new(DashMap::new()),
 		}
 	}
 
@@ -933,6 +936,7 @@ impl TerminalManager {
 			on_agent_run: Arc::new(|_| {}),
 			server_label: None,
 			remote_files: None,
+			tmux: Arc::new(DashMap::new()),
 		}
 	}
 
@@ -2215,6 +2219,12 @@ impl TerminalManager {
 		})
 	}
 
+	/// Record that an SSH tab lives in a tmux session (F48), so an agent asks
+	/// tmux whether its pane is at rest instead of reading tmux's own screen.
+	pub fn set_tmux(&self, terminal_id: &str, session: String) {
+		self.tmux.insert(terminal_id.to_string(), session);
+	}
+
 	/// Whether any SSH tab of `server_id` is still open.
 	pub fn has_ssh_for(&self, server_id: &str) -> bool {
 		self.terminals
@@ -2864,7 +2874,7 @@ mod tests {
 				_ => panic!("expected an unknown host first"),
 			};
 			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
-			let ch = ssh::open_shell(&conn, 80, 24, None).await.expect("shell");
+			let ch = ssh::open_shell(&conn, 80, 24, None, None).await.expect("shell");
 			// The connection must outlive this block: the channel rides on it.
 			std::mem::forget(conn);
 			ssh::pty::bridge(ch, 80, 24)
@@ -3004,7 +3014,7 @@ mod tests {
 				_ => panic!("expected an unknown host first"),
 			};
 			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
-			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp")).await.expect("shell");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
 			std::mem::forget(conn);
 			ssh::pty::bridge(ch, 100, 30)
 		});
@@ -3044,7 +3054,7 @@ mod tests {
 				_ => panic!("expected an unknown host first"),
 			};
 			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
-			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp")).await.expect("shell");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
 			std::mem::forget(conn);
 			ssh::pty::bridge(ch, 100, 30)
 		});
@@ -3106,7 +3116,7 @@ mod tests {
 				_ => panic!("expected an unknown host first"),
 			};
 			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
-			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp")).await.expect("shell");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
 			std::mem::forget(conn);
 			ssh::pty::bridge(ch, 100, 30)
 		});
@@ -3201,6 +3211,83 @@ mod tests {
 		);
 		assert!(asked.iter().any(|c| c.starts_with("edit ")), "{asked:?}");
 		assert!(asked.iter().any(|c| c.starts_with("write ")), "{asked:?}");
+	}
+
+	/// A persistent tab (F48): the shell lives in tmux, survives its channel
+	/// closing, and the agent's markers still reach it through tmux.
+	#[cfg(unix)]
+	#[test]
+	fn a_persistent_tab_survives_its_channel_and_keeps_agent_markers() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let name = format!("qursor-test{}", std::process::id());
+		let conn = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			Arc::new(ssh::connect(&t, &known, Some(fp)).await.expect("connect"))
+		});
+		let open = |mgr: &TerminalManager| {
+			let ch = tauri::async_runtime::block_on(ssh::open_shell(
+				&conn,
+				100,
+				30,
+				Some("/tmp"),
+				Some(&name),
+			))
+			.expect("shell");
+			let (m, c) = ssh::pty::bridge(ch, 100, 30);
+			let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", m, c).expect("attach");
+			mgr.set_tmux(&id, name.clone());
+			std::thread::sleep(Duration::from_millis(1200));
+			mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+			id
+		};
+		let (mut mgr, _data, exit) = make_manager();
+		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
+		mgr.set_remote_files(Arc::new(crate::services::ssh::sftp::RemoteFiles::new(
+			Arc::new(crate::services::ssh::pool::Pool::new(known.clone())),
+			Arc::new(move |_| {
+				Ok(Target {
+					host: "127.0.0.1".into(),
+					port,
+					user: user.clone(),
+					auth: Auth::KeyFile { path: key.clone(), passphrase: None },
+				})
+			}),
+		)));
+		let id = open(&mgr);
+		let agent = mgr.session_terminals("sess");
+		let r = agent.run(&id, "export QURSOR_KEPT=42; echo set", 20).expect("run in tmux");
+		assert_eq!(r["output"], "set", "{r}");
+		// tmux knows a program is running in the pane; the agent waits.
+		mgr.write(&id, b"sleep 30\n").expect("human starts something");
+		std::thread::sleep(Duration::from_millis(1700));
+		let busy = agent.run(&id, "echo no", 5).expect_err("busy");
+		assert!(busy.contains("sleep"), "{busy}");
+		mgr.write(&id, b"\x03").expect("human interrupts");
+		std::thread::sleep(Duration::from_millis(1700));
+		mgr.kill(&id).expect("close the channel");
+		let gone = (0..60).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			exit.lock().unwrap().iter().any(|e| e.id == id)
+		});
+		assert!(gone);
+
+		let id2 = open(&mgr);
+		let r = agent.run(&id2, "echo kept=$QURSOR_KEPT", 20).expect("run after reattach");
+		assert_eq!(r["output"], "kept=42", "the shell's state outlived its channel: {r}");
+		mgr.kill(&id2).expect("close");
+		let _ = std::process::Command::new("tmux").args(["kill-session", "-t", &name]).status();
 	}
 
 	#[test]

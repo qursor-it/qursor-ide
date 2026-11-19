@@ -37,6 +37,7 @@ fn row_to_server(r: &rusqlite::Row<'_>) -> rusqlite::Result<Server> {
 		agent_policy: r.get(8)?,
 		auth: r.get(9)?,
 		key_path: r.get(10)?,
+		persistent: r.get(11)?,
 		has_password: false,
 		has_private_key: false,
 		has_passphrase: false,
@@ -44,7 +45,7 @@ fn row_to_server(r: &rusqlite::Row<'_>) -> rusqlite::Result<Server> {
 	})
 }
 
-const COLUMNS: &str = "id, name, host, port, username, start_dir, folder_id, environment, agent_policy, auth, key_path";
+const COLUMNS: &str = "id, name, host, port, username, start_dir, folder_id, environment, agent_policy, auth, key_path, persistent";
 
 pub fn list(conn: &Connection) -> AppResult<Vec<Server>> {
 	let mut st = conn.prepare(&format!(
@@ -144,28 +145,7 @@ pub fn save(
 	if input.id.is_some() {
 		let n = conn.execute(
 			"UPDATE servers SET name=?2, host=?3, port=?4, username=?5, start_dir=?6, folder_id=?7,
-			 environment=?8, agent_policy=?9, auth=?10, key_path=?11 WHERE id=?1",
-			params![
-				id,
-				input.name.trim(),
-				input.host.trim(),
-				input.port,
-				input.username.trim(),
-				start_dir,
-				folder,
-				input.environment,
-				input.agent_policy,
-				input.auth,
-				key_path
-			],
-		)?;
-		if n == 0 {
-			return Err(AppError::NotFound(format!("server {id}")));
-		}
-	} else {
-		conn.execute(
-			"INSERT INTO servers (id, name, host, port, username, start_dir, folder_id, environment,
-			 agent_policy, auth, key_path, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+			 environment=?8, agent_policy=?9, auth=?10, key_path=?11, persistent=?12 WHERE id=?1",
 			params![
 				id,
 				input.name.trim(),
@@ -178,7 +158,30 @@ pub fn save(
 				input.agent_policy,
 				input.auth,
 				key_path,
-				now_ms
+				input.persistent
+			],
+		)?;
+		if n == 0 {
+			return Err(AppError::NotFound(format!("server {id}")));
+		}
+	} else {
+		conn.execute(
+			"INSERT INTO servers (id, name, host, port, username, start_dir, folder_id, environment,
+			 agent_policy, auth, key_path, created_at, persistent) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+			params![
+				id,
+				input.name.trim(),
+				input.host.trim(),
+				input.port,
+				input.username.trim(),
+				start_dir,
+				folder,
+				input.environment,
+				input.agent_policy,
+				input.auth,
+				key_path,
+				now_ms,
+				input.persistent
 			],
 		)?;
 	}
@@ -392,6 +395,7 @@ mod tests {
 			agent_policy: "free".into(),
 			auth: "agent".into(),
 			key_path: None,
+			persistent: false,
 			password: None,
 			private_key: None,
 			passphrase: None,

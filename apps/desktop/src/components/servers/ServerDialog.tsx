@@ -9,6 +9,7 @@ import type {
 } from '@factorai/types';
 import {
 	Button,
+	Checkbox,
 	Dialog,
 	DialogContent,
 	DialogDescription,
@@ -57,6 +58,7 @@ interface Draft {
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;
 	keyPath: string;
+	persistent: boolean;
 	password: string;
 	privateKey: string;
 	passphrase: string;
@@ -74,6 +76,7 @@ function draftFrom(s: Server | null, folderId: string | null): Draft {
 		agentPolicy: s?.agentPolicy ?? 'free',
 		auth: s?.auth ?? 'agent',
 		keyPath: s?.keyPath ?? '',
+		persistent: s?.persistent ?? false,
 		password: '',
 		privateKey: '',
 		passphrase: '',
@@ -95,6 +98,7 @@ function toInput(d: Draft, id?: string): ServerInput {
 		agentPolicy: d.agentPolicy,
 		auth: d.auth,
 		keyPath: d.auth === 'keyFile' ? d.keyPath : null,
+		persistent: d.auth !== 'system' && d.persistent,
 	};
 	if (d.auth === 'password' && d.password) input.password = d.password;
 	if (d.auth === 'key' && d.privateKey) input.privateKey = d.privateKey;
@@ -325,6 +329,22 @@ export function ServerDialog({
 							login.
 						</p>
 					)}
+					{d.auth !== 'system' &&
+						field(
+							'Sessions',
+							<div className="flex items-center gap-2 text-sm">
+								<Checkbox
+									id="srv-persistent"
+									data-testid="server-persistent"
+									checked={d.persistent}
+									onCheckedChange={(v) => set('persistent', v === true)}
+								/>
+								<Label htmlFor="srv-persistent" className="font-normal">
+									Keep running in tmux when the connection drops or the app quits
+								</Label>
+							</div>,
+							'srv-persistent',
+						)}
 					<div className="my-1 border-border border-t" />
 					{field(
 						'Environment',

@@ -573,6 +573,7 @@ pub fn run() {
 			commands::servers::delete_tunnel,
 			commands::servers::tunnel_start,
 			commands::servers::tunnel_stop,
+			commands::servers::server_end_tab,
 			commands::profiles::list_profiles,
 			commands::profiles::create_profile,
 			commands::profiles::rename_profile,

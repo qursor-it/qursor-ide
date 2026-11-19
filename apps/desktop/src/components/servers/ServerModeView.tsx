@@ -67,9 +67,11 @@ function ProdBadge() {
 }
 
 /** Close a tab: its shell is hung up and its terminal thrown away. */
-function closeServerTab(key: string) {
+function closeServerTab(key: string, persistent = false) {
 	const tab = useServerStore.getState().tabs.find((t) => t.key === key);
 	if (tab?.terminalId) cmd.terminalKill(tab.terminalId).catch(() => {});
+	// Closing a persistent tab is the gesture that ends its tmux session (F48).
+	if (tab && persistent) cmd.serverEndTab(tab.serverId, key).catch(() => {});
 	disposeTerminal(key);
 	useServerStore.getState().close(key);
 }
@@ -368,7 +370,14 @@ function ServerSidebar({ servers, folders }: { servers: Server[]; folders: Serve
 function DeleteServerDialog({ server, onClose }: { server: Server | null; onClose: () => void }) {
 	const qc = useQueryClient();
 	const del = useMutation({
-		mutationFn: (id: string) => cmd.deleteServer(id),
+		mutationFn: async (id: string) => {
+			// A deleted server's persistent tabs end with it, while it can still be reached.
+			if (server?.persistent) {
+				const tabs = useServerStore.getState().tabs.filter((t) => t.serverId === id);
+				await Promise.allSettled(tabs.map((t) => cmd.serverEndTab(id, t.key)));
+			}
+			await cmd.deleteServer(id);
+		},
 		onSuccess: (_v, id) => {
 			for (const t of useServerStore.getState().tabs.filter((t) => t.serverId === id)) {
 				closeServerTab(t.key);
@@ -589,7 +598,7 @@ export function ServerTabs() {
 						data-testid="server-tab"
 						onClick={() => activate(t.key)}
 						onKeyDown={(e) => e.key === 'Enter' && activate(t.key)}
-						onAuxClick={(e) => e.button === 1 && closeServerTab(t.key)}
+						onAuxClick={(e) => e.button === 1 && closeServerTab(t.key, s?.persistent)}
 						className={`relative flex h-7.5 shrink-0 items-center gap-2 rounded-lg pr-1 pl-2.5 text-sm ${
 							t.key === active
 								? 'bg-background text-foreground shadow-sm'
@@ -627,7 +636,7 @@ export function ServerTabs() {
 							aria-label={`Close ${name}`}
 							onClick={(e) => {
 								e.stopPropagation();
-								closeServerTab(t.key);
+								closeServerTab(t.key, s?.persistent);
 							}}
 						>
 							<X />

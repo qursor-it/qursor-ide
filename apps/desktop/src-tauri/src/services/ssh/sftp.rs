@@ -126,6 +126,24 @@ pub async fn write_atomic(
 	moved
 }
 
+/// Run one short command, require exit 0, and return its standard output.
+async fn exec_output(conn: &Connection, command: &str) -> AppResult<String> {
+	let mut ch = conn.channel_open_session().await.map_err(sftp_err)?;
+	ch.exec(true, command).await.map_err(sftp_err)?;
+	let (mut code, mut out) = (None, Vec::new());
+	while let Some(msg) = ch.wait().await {
+		match msg {
+			russh::ChannelMsg::ExitStatus { exit_status } => code = Some(exit_status),
+			russh::ChannelMsg::Data { data } => out.extend_from_slice(&data),
+			_ => {}
+		}
+	}
+	match code {
+		Some(0) => Ok(String::from_utf8_lossy(&out).into_owned()),
+		_ => Err(AppError::Remote(format!("`{command}` failed"))),
+	}
+}
+
 /// Run one short command and require exit 0.
 async fn exec(conn: &Connection, command: &str) -> AppResult<()> {
 	let mut ch = conn.channel_open_session().await.map_err(sftp_err)?;
@@ -238,6 +256,20 @@ impl RemoteFiles {
 }
 
 impl RemoteFiles {
+	/// Whether a persistent tab's tmux pane is at rest (F48): not in a
+	/// full-screen program and running nothing but its shell. Asked of tmux
+	/// itself, because tmux draws its own alternate screen whatever the pane does.
+	pub fn tmux_at_rest(&self, server_id: &str, session: &str) -> AppResult<Result<(), String>> {
+		let cmd = format!(
+			"tmux display-message -p -t {} '#{{alternate_on}} #{{pane_current_command}}'",
+			quote(session)
+		);
+		let out = tauri::async_runtime::block_on(
+			self.with(server_id, |conn, _| async move { exec_output(&conn, &cmd).await }),
+		)?;
+		Ok(tmux_verdict(&out))
+	}
+
 	/// Replace `old` with `new` in a file this session read and that has not
 	/// changed since; `old` must occur exactly once unless `all`.
 	pub fn agent_edit(
@@ -290,9 +322,33 @@ impl RemoteFiles {
 	}
 }
 
+/// `alternate_on current_command`, as tmux prints it, judged.
+fn tmux_verdict(line: &str) -> Result<(), String> {
+	let mut parts = line.split_whitespace();
+	let alternate = parts.next() == Some("1");
+	let command = parts.next().unwrap_or_default();
+	if alternate {
+		return Err(format!("in a full-screen program ({command})"));
+	}
+	if !matches!(
+		command,
+		"bash" | "zsh" | "sh" | "dash" | "ksh" | "ash" | "fish" | "-bash" | "-zsh"
+	) {
+		return Err(format!("still running `{command}`"));
+	}
+	Ok(())
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn the_tmux_pane_is_at_rest_only_at_a_shell_prompt() {
+		assert!(tmux_verdict("0 bash\n").is_ok());
+		assert!(tmux_verdict("1 vim\n").unwrap_err().contains("full-screen"));
+		assert!(tmux_verdict("0 sleep\n").unwrap_err().contains("sleep"));
+	}
 	use crate::services::ssh::{connect, test_sshd, Auth, KnownHosts, SshError};
 
 	#[test]

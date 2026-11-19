@@ -9110,3 +9110,20 @@ use is refused when the switch is turned on. `system` logins have no tunnels.
 
 **Not yet.** Remote forwards (`-R`), dynamic SOCKS (`-D`), starting tunnels
 with the app.
+
+## F48 — Persistent tabs (tmux)
+
+**Decision.** ADR-0109.
+
+A server's form has **Sessions: Keep running in tmux when the connection drops
+or the app quits** (library logins only). Its tabs open in
+`tmux new-session -A -s qursor-<tab>` when the server has tmux, otherwise a
+plain login shell. Quitting, Disconnect or a dropped connection leave the tmux
+session; the tab reattaches on its next login, with its scrollback and state.
+Closing the tab (× or middle click), or deleting the server, kills its session.
+
+Agents (F45) work in persistent tabs: the bootstrap enables tmux passthrough
+for the pane and wraps the markers, and the "is it at rest" check asks tmux
+(`#{alternate_on} #{pane_current_command}`) over an exec channel.
+
+**Commands.** `server_end_tab`. Column `servers.persistent` (migration 9006).

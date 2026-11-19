@@ -1535,6 +1535,8 @@ pub struct Server {
 	pub auth: String,
 	/// The key file for `keyFile`; never copied into the vault.
 	pub key_path: Option<String>,
+	/// Tabs live in tmux sessions on the server, when it has tmux (F48).
+	pub persistent: bool,
 	pub has_password: bool,
 	pub has_private_key: bool,
 	pub has_passphrase: bool,
@@ -1558,6 +1560,8 @@ pub struct ServerInput {
 	pub agent_policy: String,
 	pub auth: String,
 	pub key_path: Option<String>,
+	#[serde(default)]
+	pub persistent: bool,
 	pub password: Option<String>,
 	pub private_key: Option<String>,
 	pub passphrase: Option<String>,

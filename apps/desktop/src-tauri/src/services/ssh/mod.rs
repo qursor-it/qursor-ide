@@ -317,7 +317,8 @@ where
 	Ok(false)
 }
 
-/// A login shell with a PTY, started in `dir` when one is given.
+/// A login shell with a PTY, started in `dir` when one is given, inside the
+/// tmux session `tmux` when that is given and the server has tmux (F48).
 ///
 /// `cd` failing (a folder since removed) still opens the shell, in the home
 /// directory, rather than closing the tab the human just opened.
@@ -326,22 +327,45 @@ pub async fn open_shell(
 	cols: u16,
 	rows: u16,
 	dir: Option<&str>,
+	tmux: Option<&str>,
 ) -> Result<Channel<client::Msg>, SshError> {
 	let ch = conn.channel_open_session().await?;
 	ch.request_pty(true, "xterm-256color", u32::from(cols), u32::from(rows), 0, 0, &[]).await?;
-	match dir.filter(|d| !d.is_empty()) {
-		Some(d) => ch.exec(true, start_in(d)).await?,
+	match start_in(dir, tmux) {
+		Some(cmd) => ch.exec(true, cmd).await?,
 		None => ch.request_shell(true).await?,
 	}
 	Ok(ch)
 }
 
-/// The remote command that opens a login shell in `dir`. sshd runs it through
-/// the user's own shell, which may be fish or csh; wrapping it in `/bin/sh`
-/// keeps the redirection and `${…}` meaning what they say.
-pub fn start_in(dir: &str) -> String {
-	let inner = format!("cd {} 2>/dev/null; exec \"${{SHELL:-/bin/sh}}\" -l", quote(dir));
-	format!("exec /bin/sh -c {}", quote(&inner))
+/// The remote command that opens the tab's shell, if a plain login shell is
+/// not enough. sshd runs it through the user's own shell, which may be fish or
+/// csh; wrapping it in `/bin/sh` keeps the redirection and `${…}` meaning what
+/// they say. A server without tmux gets a plain login shell.
+pub fn start_in(dir: Option<&str>, tmux: Option<&str>) -> Option<String> {
+	let dir = dir.filter(|d| !d.is_empty());
+	if dir.is_none() && tmux.is_none() {
+		return None;
+	}
+	let mut inner = String::new();
+	if let Some(d) = dir {
+		inner.push_str(&format!("cd {} 2>/dev/null; ", quote(d)));
+	}
+	if let Some(name) = tmux {
+		inner.push_str(&format!(
+			"if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s {}; fi; ",
+			quote(name)
+		));
+	}
+	inner.push_str("exec \"${SHELL:-/bin/sh}\" -l");
+	Some(format!("exec /bin/sh -c {}", quote(&inner)))
+}
+
+/// The tmux session a persistent tab lives in (F48): stable across restarts,
+/// because the tab key is.
+pub fn tmux_name(client_key: &str) -> String {
+	let id: String = client_key.chars().filter(char::is_ascii_alphanumeric).collect();
+	format!("qursor-{}", &id[id.len().saturating_sub(12)..])
 }
 
 /// POSIX single-quoting: the only quoting that needs no escaping rules inside.
@@ -486,7 +510,7 @@ mod tests {
 			connect(&t, &known, Some(fingerprint)).await.expect("trusted after confirmation");
 			let conn = connect(&t, &known, None).await.expect("remembered in our known_hosts");
 
-			let ch = open_shell(&conn, 80, 24, Some("/tmp")).await.expect("shell");
+			let ch = open_shell(&conn, 80, 24, Some("/tmp"), None).await.expect("shell");
 			let (master, mut child) = pty::bridge(ch, 80, 24);
 			let mut w = master.take_writer().expect("writer");
 			let mut r = master.try_clone_reader().expect("reader");

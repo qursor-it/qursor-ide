@@ -24,11 +24,17 @@ const MAX_OUTPUT: usize = 512 * 1024;
 const MAX_CARRY: usize = 4096;
 const SCROLLBACK: usize = 2000;
 
-/// The bootstrap: two shell functions, sent once per shell. `$?` at the entry
-/// of `__qe` is still the status of the command before it, in bash, zsh, dash
-/// and busybox sh. Leading space: kept out of history where `HISTCONTROL`
-/// honours it.
-pub const BOOTSTRAP: &str = " __qs(){ printf '\\033]633;C;%s\\007' \"$1\"; }; __qe(){ printf '\\033]633;D;%s;%s;%s\\007' \"$1\" \"$?\" \"$PWD\"; }\n";
+/// The bootstrap: shell functions, sent once per shell. `$?` at the entry of
+/// `__qe` is still the status of the command before it, in bash, zsh, dash and
+/// busybox sh. Inside tmux (F48) the marker is wrapped for tmux's passthrough,
+/// which is switched on for that pane only. Leading space: kept out of history
+/// where `HISTCONTROL` honours it.
+pub const BOOTSTRAP: &str = concat!(
+	" [ -n \"$TMUX\" ] && tmux set -p allow-passthrough on 2>/dev/null;",
+	" __qo(){ if [ -n \"$TMUX\" ]; then printf '\\033Ptmux;\\033\\033]633;%s\\007\\033\\\\' \"$1\";",
+	" else printf '\\033]633;%s\\007' \"$1\"; fi; };",
+	" __qs(){ __qo \"C;$1\"; }; __qe(){ __qo \"D;$1;$?;$PWD\"; }\n",
+);
 
 /// What is typed for one agent command. The command sits in a `{ …\n}` group
 /// so a trailing comment, `&` or heredoc in it cannot swallow the end marker,
@@ -269,6 +275,11 @@ pub fn clean(raw: &str) -> String {
 						}
 					}
 				}
+				// Charset designation (`ESC ( B`, tmux sends it) takes one more byte.
+				Some('(' | ')' | '*' | '+' | '#' | '%') => {
+					chars.next();
+					chars.next();
+				}
 				Some(_) => {
 					chars.next();
 				}
@@ -351,6 +362,11 @@ mod tests {
 		assert!(c.in_full_screen_program());
 		c.feed(b"\x1b[?1049l");
 		assert!(!c.in_full_screen_program());
+	}
+
+	#[test]
+	fn charset_designations_leave_no_letters_behind() {
+		assert_eq!(clean("\x1b(Bset\x1b(0q\x1b(B"), "setq");
 	}
 
 	#[test]
