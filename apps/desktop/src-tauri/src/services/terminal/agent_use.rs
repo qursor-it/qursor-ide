@@ -246,7 +246,7 @@ impl SessionTerminals {
 
 	/// Define the marker functions in this shell, and prove they work.
 	fn bootstrap(h: &Handle, cell: &CaptureCell) -> Result<(), String> {
-		let nonce = format!("probe{}", uuid::Uuid::new_v4().simple());
+		let nonce = format!("p{}", short_nonce());
 		cell.cap.lock().expect(&nonce);
 		Self::write(h, term_capture::BOOTSTRAP.as_bytes())?;
 		Self::write(h, term_capture::wrap(&nonce, ":").as_bytes())?;
@@ -327,7 +327,7 @@ impl TerminalUse for SessionTerminals {
 		if needs_bootstrap {
 			Self::bootstrap(&h, &cell)?;
 		}
-		let nonce = uuid::Uuid::new_v4().simple().to_string();
+		let nonce = short_nonce();
 		cell.cap.lock().expect(&nonce);
 		let started = now_ms();
 		Self::write(&h, term_capture::wrap(&nonce, command).as_bytes())?;
@@ -398,6 +398,12 @@ impl TerminalUse for SessionTerminals {
 		let c = cell.cap.lock();
 		Ok(json!({ "state": Self::state(&h, &c), "screen": c.screen_text() }))
 	}
+}
+
+/// Eight hex digits: short enough not to clutter a shared terminal, unique
+/// enough that a marker printed by anything else cannot be mistaken for ours.
+fn short_nonce() -> String {
+	uuid::Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
 /// Clears the running flag and announces the end, on every exit path.
