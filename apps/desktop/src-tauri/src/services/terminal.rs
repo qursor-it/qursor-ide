@@ -3018,6 +3018,63 @@ mod tests {
 		assert_eq!(r["output"], "heredoc ok", "{r}");
 	}
 
+	/// The MCP frames a session's agent sends, answered by the same tool server
+	/// it is given at spawn: `tools/list` offers the terminal tools, and a
+	/// `tools/call` of `terminal_run` reaches the real remote shell.
+	#[cfg(unix)]
+	#[test]
+	fn the_terminal_tools_answer_over_mcp() {
+		use crate::services::agent_tools::{AgentTools, Routines};
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp")).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+		let none = Arc::new(|_: &str| Ok(Vec::new()));
+		let tools = AgentTools::new(Routines {
+			project_id: "p".into(),
+			project_path: "/local/p".into(),
+			list: none,
+			create: Arc::new(|_| Err(AppError::InvalidInput("no".into()))),
+			update: Arc::new(|_, _| Err(AppError::InvalidInput("no".into()))),
+		})
+		.with_terminals(Arc::new(mgr.session_terminals("sess")));
+
+		let listed =
+			tools.handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).expect("reply");
+		assert!(listed.contains("\"terminal_run\""), "{listed}");
+		let call = serde_json::json!({
+			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": { "name": "terminal_run", "arguments": { "terminal": id, "command": "echo mcp-$((1+1))" } },
+		});
+		let reply = tools.handle(&call.to_string()).expect("reply");
+		let v: serde_json::Value = serde_json::from_str(&reply).expect("json");
+		let text = v["result"]["content"][0]["text"].as_str().unwrap_or_default();
+		let out: serde_json::Value = serde_json::from_str(text).expect("tool json");
+		assert_eq!(out["output"], "mcp-2", "{reply}");
+		assert_eq!(out["exit_code"], 0, "{reply}");
+		assert_ne!(v["result"]["isError"], true, "{reply}");
+	}
+
 	#[test]
 	fn spawn_runs_and_streams_output() {
 		let (mgr, data, exit) = make_manager();
