@@ -101,6 +101,9 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	// Canvas mode (F44, ADR-0103): the session a canvas talks to. A plain
 	// `CREATE TABLE`, so not standalone.
 	("9003_canvas_sessions", include_str!("migrations/9003_canvas_sessions.sql")),
+	// Saved SSH servers and their address-book folders (F44, ADR-0103).
+	// Fork-only, like 9001. Secrets are not here: they are in the vault (ADR-0104).
+	("9004_servers", include_str!("migrations/9004_servers.sql")),
 ];
 
 /// Migrations that need the connection to themselves, with foreign keys off.

@@ -19,6 +19,7 @@ pub mod intelligence;
 pub mod profiles;
 pub mod projects;
 pub mod routines;
+pub mod servers;
 pub mod sessions;
 pub mod settings;
 pub mod sidebar;

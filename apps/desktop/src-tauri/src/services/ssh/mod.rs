@@ -12,6 +12,7 @@
 //! Secrets arrive in [`Auth`] already decrypted from the vault, live in
 //! `Zeroizing` buffers, and are never logged or returned.
 
+pub mod pool;
 pub mod pty;
 
 use std::path::PathBuf;
@@ -106,6 +107,7 @@ impl KnownHosts {
 enum Verdict {
 	Unknown(String),
 	Changed(String),
+	Certificate,
 }
 
 pub struct Client {
@@ -126,21 +128,27 @@ impl client::Handler for Client {
 	) -> Result<bool, Self::Error> {
 		// shortcut: host certificates are refused, upgrade when a user has a CA-signed host.
 		let PublicKeyOrCertificate::PublicKey { key, .. } = server_key else {
-			*self.verdict.lock() = Some(Verdict::Unknown("host certificate".into()));
+			*self.verdict.lock() = Some(Verdict::Certificate);
 			return Ok(false);
 		};
 		let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
+		let mut pinned = false;
 		for file in self.known.read.iter().chain(std::iter::once(&self.known.ours)) {
 			match keys::check_known_hosts_path(&self.host, self.port, key, file) {
 				Ok(true) => return Ok(true),
 				Ok(false) => {}
-				Err(keys::Error::KeyChanged { .. }) => {
-					*self.verdict.lock() = Some(Verdict::Changed(fingerprint));
-					return Ok(false);
-				}
+				Err(keys::Error::KeyChanged { .. }) => pinned = true,
 				// An unreadable file is a file with nothing in it for us.
 				Err(_) => {}
 			}
+			// A key of *another type* is not a new host: an impostor offering only
+			// RSA for a host pinned as ed25519 must not get a "trust?" prompt.
+			pinned |= keys::known_hosts::known_host_keys_path(&self.host, self.port, file)
+				.is_ok_and(|k| !k.is_empty());
+		}
+		if pinned {
+			*self.verdict.lock() = Some(Verdict::Changed(fingerprint));
+			return Ok(false);
 		}
 		if self.accept.as_deref() == Some(fingerprint.as_str()) {
 			keys::known_hosts::learn_known_hosts_path(&self.host, self.port, key, &self.known.ours)
@@ -185,12 +193,19 @@ pub async fn connect(
 				Some(Verdict::Changed(fingerprint)) => {
 					SshError::HostKeyChanged { host: target.host.clone(), fingerprint }
 				}
+				Some(Verdict::Certificate) => SshError::Other(format!(
+					"{} presents a host certificate, which is not supported yet; use the system ssh login for it",
+					target.host
+				)),
 				None => SshError::Other(format!("connecting to {}: {e}", target.host)),
 			});
 		}
 		Err(_) => return Err(SshError::Other(format!("connecting to {} timed out", target.host))),
 	};
-	authenticate(&mut handle, target).await?;
+	// A stuck agent or a slow PAM must not hang the tab forever.
+	tokio::time::timeout(Duration::from_secs(30), authenticate(&mut handle, target))
+		.await
+		.map_err(|_| SshError::Other(format!("logging in to {} timed out", target.host)))??;
 	Ok(handle)
 }
 
@@ -243,18 +258,13 @@ async fn keyboard_interactive_with_password(
 	pw: &Zeroizing<String>,
 ) -> Result<bool, SshError> {
 	use russh::client::KeyboardInteractiveAuthResponse as R;
-	let mut reply = h.authenticate_keyboard_interactive_start(user, None::<String>).await?;
-	for _ in 0..2 {
-		match reply {
-			R::Success => return Ok(true),
-			R::Failure { .. } => return Ok(false),
-			R::InfoRequest { prompts, .. } => {
-				let answers = prompts.iter().map(|_| pw.to_string()).collect();
-				reply = h.authenticate_keyboard_interactive_respond(answers).await?;
-			}
-		}
-	}
-	Ok(matches!(reply, R::Success))
+	let reply = h.authenticate_keyboard_interactive_start(user, None::<String>).await?;
+	let R::InfoRequest { prompts, .. } = reply else { return Ok(matches!(reply, R::Success)) };
+	// The API takes owned strings; they live only for this call.
+	let answers = prompts.iter().map(|_| pw.to_string()).collect();
+	// Only the first round: a second one is a second factor, and answering it
+	// with the password would count towards a lockout.
+	Ok(matches!(h.authenticate_keyboard_interactive_respond(answers).await?, R::Success))
 }
 
 async fn agent(h: &mut Connection, user: &str) -> Result<bool, SshError> {
@@ -318,13 +328,18 @@ pub async fn open_shell(
 	let ch = conn.channel_open_session().await?;
 	ch.request_pty(true, "xterm-256color", u32::from(cols), u32::from(rows), 0, 0, &[]).await?;
 	match dir.filter(|d| !d.is_empty()) {
-		Some(d) => {
-			ch.exec(true, format!("cd {} 2>/dev/null; exec \"${{SHELL:-/bin/sh}}\" -l", quote(d)))
-				.await?
-		}
+		Some(d) => ch.exec(true, start_in(d)).await?,
 		None => ch.request_shell(true).await?,
 	}
 	Ok(ch)
+}
+
+/// The remote command that opens a login shell in `dir`. sshd runs it through
+/// the user's own shell, which may be fish or csh; wrapping it in `/bin/sh`
+/// keeps the redirection and `${…}` meaning what they say.
+pub fn start_in(dir: &str) -> String {
+	let inner = format!("cd {} 2>/dev/null; exec \"${{SHELL:-/bin/sh}}\" -l", quote(dir));
+	format!("exec /bin/sh -c {}", quote(&inner))
 }
 
 /// POSIX single-quoting: the only quoting that needs no escaping rules inside.
@@ -357,9 +372,9 @@ pub(crate) mod test_sshd {
 		}
 	}
 
-	fn keygen(path: &std::path::Path) {
+	fn keygen(path: &std::path::Path, kind: &str) {
 		let ok = Command::new("ssh-keygen")
-			.args(["-q", "-t", "ed25519", "-N", "", "-f"])
+			.args(["-q", "-t", kind, "-N", "", "-f"])
 			.arg(path)
 			.status()
 			.expect("ssh-keygen is installed (openssh-client)")
@@ -374,8 +389,12 @@ pub(crate) mod test_sshd {
 	}
 
 	pub fn new_key(dir: &std::path::Path, name: &str) -> PathBuf {
+		new_key_of(dir, name, "ed25519")
+	}
+
+	pub fn new_key_of(dir: &std::path::Path, name: &str, kind: &str) -> PathBuf {
 		let p = dir.join(name);
-		keygen(&p);
+		keygen(&p, kind);
 		p
 	}
 
@@ -502,6 +521,23 @@ mod tests {
 			matches!(res, Err(SshError::HostKeyChanged { .. })),
 			"a changed key must never connect"
 		);
+	}
+
+	/// A host pinned with a key of another type is not a "new host": the impostor
+	/// offering a different algorithm gets a refusal, not a trust prompt.
+	#[cfg(unix)]
+	#[test]
+	fn a_host_pinned_with_another_key_type_is_refused_not_offered() {
+		let d = test_sshd::start();
+		let (t, known) = target(&d);
+		let rsa = test_sshd::new_key_of(d.dir.path(), "pinned_rsa", "rsa");
+		std::fs::write(
+			&known.ours,
+			format!("[127.0.0.1]:{} {}\n", d.port, test_sshd::public_key_line(&rsa)),
+		)
+		.expect("known_hosts");
+		let res = tauri::async_runtime::block_on(connect(&t, &known, None));
+		assert!(matches!(res, Err(SshError::HostKeyChanged { .. })), "got {:?}", res.err());
 	}
 
 	#[test]

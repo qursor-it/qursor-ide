@@ -5,64 +5,75 @@
 //! SSH tab share the pooled xterm, the base64 events and kill-on-quit with
 //! every other terminal, instead of growing a parallel path.
 //!
-//! One task owns the channel. The PTY threads talk to it through queues, so no
-//! blocking thread ever touches the async channel and no lock is held across
-//! an await.
+//! Two tasks own the channel, one per direction. The PTY threads talk to them
+//! through queues, so no blocking thread ever touches the async channel and no
+//! lock is held across an await.
 
 use std::io::{Read, Write};
 use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use russh::client::Msg;
-use russh::{Channel, ChannelMsg};
+use russh::{Channel, ChannelMsg, ChannelWriteHalf};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 enum Ctl {
 	Data(Vec<u8>),
 	Resize(u16, u16),
-	Close,
 }
+
+type WriteHalf = Arc<ChannelWriteHalf<Msg>>;
 
 /// Exit code reported when the channel closed without an exit status — the
 /// connection dropped, or we closed it.
 const NO_STATUS: u32 = 255;
 
-/// Start the task that owns `channel` and return the PTY pair for it.
+/// Start the tasks that own `channel` and return the PTY pair for it.
+///
+/// **Reading and writing are separate tasks.** A write waits for the server to
+/// open its window; if the same task also read, a large paste echoed back would
+/// fill russh's delivery queue, stall the session loop that processes window
+/// updates, and freeze every channel on the connection. And **closing does not
+/// queue behind a write**: the killer closes the write half directly.
 pub fn bridge(
 	channel: Channel<Msg>,
 	cols: u16,
 	rows: u16,
 ) -> (Box<dyn MasterPty + Send>, Box<dyn Child + Send + Sync>) {
+	let (mut read_half, write_half) = channel.split();
+	let write_half: WriteHalf = Arc::new(write_half);
 	let (ctl, mut ctl_rx) = unbounded_channel::<Ctl>();
 	let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>();
 	let (exit_tx, exit_rx) = mpsc::channel::<u32>();
 
+	let writer = write_half.clone();
 	tauri::async_runtime::spawn(async move {
-		let mut channel = channel;
+		while let Some(c) = ctl_rx.recv().await {
+			let ok = match c {
+				Ctl::Data(d) => writer.data(&d[..]).await.is_ok(),
+				Ctl::Resize(c, r) => {
+					writer.window_change(u32::from(c), u32::from(r), 0, 0).await.is_ok()
+				}
+			};
+			if !ok {
+				break;
+			}
+		}
+	});
+	tauri::async_runtime::spawn(async move {
 		let mut code = None;
 		loop {
-			tokio::select! {
-				c = ctl_rx.recv() => match c {
-					Some(Ctl::Data(d)) => {
-						if channel.data(&d[..]).await.is_err() { break; }
-					}
-					Some(Ctl::Resize(c, r)) => {
-						let _ = channel.window_change(u32::from(c), u32::from(r), 0, 0).await;
-					}
-					Some(Ctl::Close) | None => {
-						let _ = channel.close().await;
+			match read_half.wait().await {
+				Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+					if out_tx.send(data.to_vec()).is_err() {
 						break;
 					}
-				},
-				m = channel.wait() => match m {
-					Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
-						if out_tx.send(data.to_vec()).is_err() { break; }
-					}
-					Some(ChannelMsg::ExitStatus { exit_status }) => code = Some(exit_status),
-					Some(ChannelMsg::Close) | None => break,
-					Some(_) => {}
-				},
+				}
+				Some(ChannelMsg::ExitStatus { exit_status }) => code = Some(exit_status),
+				Some(ChannelMsg::Close) | None => break,
+				Some(_) => {}
 			}
 		}
 		drop(out_tx);
@@ -74,8 +85,17 @@ pub fn bridge(
 		size: Mutex::new(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }),
 		reader: Mutex::new(Some(ChanReader { rx: out_rx, buf: Vec::new(), pos: 0 })),
 	};
-	let child = SshChild { ctl, exit: Mutex::new(exit_rx), done: None };
+	let child = SshChild { close: write_half, exit: Mutex::new(exit_rx), done: None };
 	(Box::new(master), Box::new(child))
+}
+
+/// Close the channel from any thread. The server hangs the shell up (SIGHUP to
+/// its session), which is the remote half of kill-on-quit (ADR-0005).
+fn close(w: &WriteHalf) {
+	let w = w.clone();
+	tauri::async_runtime::spawn(async move {
+		let _ = w.close().await;
+	});
 }
 
 struct SshMaster {
@@ -158,14 +178,17 @@ impl Write for ChanWriter {
 	}
 }
 
-#[derive(Debug)]
-struct SshKiller(UnboundedSender<Ctl>);
+struct SshKiller(WriteHalf);
+
+impl std::fmt::Debug for SshKiller {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.write_str("SshKiller")
+	}
+}
 
 impl ChildKiller for SshKiller {
-	/// Closing the channel hangs up the remote shell (SIGHUP to its session),
-	/// which is the remote half of kill-on-quit (ADR-0005).
 	fn kill(&mut self) -> std::io::Result<()> {
-		let _ = self.0.send(Ctl::Close);
+		close(&self.0);
 		Ok(())
 	}
 
@@ -175,7 +198,7 @@ impl ChildKiller for SshKiller {
 }
 
 struct SshChild {
-	ctl: UnboundedSender<Ctl>,
+	close: WriteHalf,
 	/// Behind a mutex only because `Child` must be `Sync` and a `Receiver` is
 	/// not; the waiter thread is its one caller.
 	exit: Mutex<Receiver<u32>>,
@@ -190,12 +213,12 @@ impl std::fmt::Debug for SshChild {
 
 impl ChildKiller for SshChild {
 	fn kill(&mut self) -> std::io::Result<()> {
-		let _ = self.ctl.send(Ctl::Close);
+		close(&self.close);
 		Ok(())
 	}
 
 	fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
-		Box::new(SshKiller(self.ctl.clone()))
+		Box::new(SshKiller(self.close.clone()))
 	}
 }
 

@@ -2171,6 +2171,52 @@ impl TerminalManager {
 		})
 	}
 
+	/// Whether any SSH tab of `server_id` is still open.
+	pub fn has_ssh_for(&self, server_id: &str) -> bool {
+		self.terminals
+			.iter()
+			.any(|e| e.value().kind == TerminalKind::Ssh && e.value().project_id == server_id)
+	}
+
+	/// Kill every SSH tab of one server: it was deleted or disconnected.
+	pub fn kill_ssh_for(&self, server_id: &str) {
+		let ids: Vec<TerminalId> = self
+			.terminals
+			.iter()
+			.filter(|e| e.value().kind == TerminalKind::Ssh && e.value().project_id == server_id)
+			.map(|e| e.key().clone())
+			.collect();
+		for id in &ids {
+			let _ = self.kill(id);
+		}
+	}
+
+	/// A server tab on the system `ssh` client (F44, ADR-0103): a local process
+	/// in a PTY, for the servers whose config only OpenSSH understands.
+	pub fn spawn_ssh_command(
+		&self,
+		server_id: &str,
+		client_key: String,
+		argv: Vec<String>,
+		cols: u16,
+		rows: u16,
+	) -> AppResult<TerminalId> {
+		self.spawn_inner(
+			PtyRequest {
+				session_id: None,
+				client_key: Some(client_key),
+				project_id: server_id.to_string(),
+				cwd: None,
+				cols,
+				rows,
+				initial_prompt: None,
+				kind: TerminalKind::Ssh,
+				agent: None,
+			},
+			Some(argv),
+		)
+	}
+
 	pub fn write(&self, id: &str, data: &[u8]) -> AppResult<()> {
 		let handle =
 			self.terminals.get(id).ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;

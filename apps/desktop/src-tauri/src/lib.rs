@@ -373,6 +373,22 @@ pub fn run() {
 
 			let usage_db = db.clone();
 			let usage_poll_store = usage.clone();
+			let vault =
+				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
+			let ssh = Arc::new(services::ssh::pool::Pool::new(
+				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
+			));
+			{
+				// The last tab on a server closing ends its login (ADR-0103).
+				let (ssh, terminals) = (ssh.clone(), terminals.clone());
+				std::thread::Builder::new()
+					.name("ssh-reaper".into())
+					.spawn(move || loop {
+						std::thread::sleep(std::time::Duration::from_secs(20));
+						ssh.reap(|id| terminals.has_ssh_for(id));
+					})
+					.expect("spawn ssh reaper");
+			}
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),
@@ -390,6 +406,8 @@ pub fn run() {
 				intelligence,
 				usage: usage.clone(),
 				taskbar_widget: taskbar_widget.clone(),
+				vault,
+				ssh,
 			});
 			// On unless the setting says `off`; a no-op off Windows.
 			taskbar_widget.set_enabled(
@@ -483,6 +501,19 @@ pub fn run() {
 			}
 		})
 		.invoke_handler(tauri::generate_handler![
+			commands::servers::list_servers,
+			commands::servers::save_server,
+			commands::servers::delete_server,
+			commands::servers::create_server_folder,
+			commands::servers::rename_server_folder,
+			commands::servers::delete_server_folder,
+			commands::servers::ssh_config_hosts,
+			commands::servers::vault_status,
+			commands::servers::vault_unlock,
+			commands::servers::vault_lock,
+			commands::servers::vault_set_master_password,
+			commands::servers::server_open_shell,
+			commands::servers::server_disconnect,
 			commands::profiles::list_profiles,
 			commands::profiles::create_profile,
 			commands::profiles::rename_profile,

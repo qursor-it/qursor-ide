@@ -1512,3 +1512,81 @@ pub struct SessionUsage {
 	/// `None` when a model in the session has no known price.
 	pub cost_usd: Option<f64>,
 }
+
+/// A saved SSH server (F44, ADR-0103). Holds no secret: the `has_*` flags say
+/// what the vault holds for it (ADR-0104), never what.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Server {
+	pub id: String,
+	pub name: String,
+	pub host: String,
+	pub port: u16,
+	pub username: String,
+	/// Remote folder the shell starts in; `None` is the login directory.
+	pub start_dir: Option<String>,
+	pub folder_id: Option<String>,
+	/// `dev` | `staging` | `prod`.
+	pub environment: String,
+	/// What an agent may do in this server's terminals: `free` | `confirm` |
+	/// `readonly` (F45).
+	pub agent_policy: String,
+	/// `password` | `key` | `keyFile` | `agent` | `system`.
+	pub auth: String,
+	/// The key file for `keyFile`; never copied into the vault.
+	pub key_path: Option<String>,
+	pub has_password: bool,
+	pub has_private_key: bool,
+	pub has_passphrase: bool,
+	/// A live connection is open to it right now.
+	pub connected: bool,
+}
+
+/// What the server form sends. Secret fields are write-only: `Some("")` clears
+/// one, `None` leaves it as it is.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerInput {
+	pub id: Option<String>,
+	pub name: String,
+	pub host: String,
+	pub port: u16,
+	pub username: String,
+	pub start_dir: Option<String>,
+	pub folder_id: Option<String>,
+	pub environment: String,
+	pub agent_policy: String,
+	pub auth: String,
+	pub key_path: Option<String>,
+	pub password: Option<String>,
+	pub private_key: Option<String>,
+	pub passphrase: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerFolder {
+	pub id: String,
+	pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerBook {
+	pub folders: Vec<ServerFolder>,
+	pub servers: Vec<Server>,
+}
+
+/// One `Host` block of `~/.ssh/config`, offered for import.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshConfigHost {
+	pub alias: String,
+	pub host: String,
+	pub port: u16,
+	pub username: Option<String>,
+	pub identity_file: Option<String>,
+	/// It uses something only the system client understands (`ProxyJump`,
+	/// `ProxyCommand`): import it with `system` auth.
+	pub needs_system_ssh: bool,
+}

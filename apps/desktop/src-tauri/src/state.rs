@@ -54,4 +54,8 @@ pub struct AppState {
 	/// The usage widget in the Windows taskbar (ADR-0086). Held so the setting
 	/// can start and stop it and the quit path can take it down.
 	pub taskbar_widget: Arc<crate::platform::taskbar_widget::TaskbarWidget>,
+	/// SSH passwords and keys for saved servers (F44, ADR-0104).
+	pub vault: Arc<crate::services::vault::Vault>,
+	/// One live connection per server, shared by its tabs (ADR-0103).
+	pub ssh: Arc<crate::services::ssh::pool::Pool>,
 }

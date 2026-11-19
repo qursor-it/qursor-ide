@@ -30,6 +30,9 @@ const KEYCHAIN_USER: &str = "ssh-vault-key";
 /// trying it on a real secret.
 const CHECK: &[u8] = b"qursor-vault-v1";
 const NONCE_LEN: usize = 12;
+/// Argon2id parameters for new master passwords: 19 MiB, 2 passes, 1 lane
+/// (OWASP's minimum recommendation). Stored with the vault.
+const KDF: [u32; 3] = [19 * 1024, 2, 1];
 
 /// Where the random key lives in `Os` mode. A trait only so tests can run
 /// without a desktop keychain; the app uses [`OsKeychain`].
@@ -82,6 +85,10 @@ struct VaultFile {
 	mode: VaultMode,
 	/// Argon2id salt, base64, in `MasterPassword` mode.
 	salt: Option<String>,
+	/// Argon2id memory (KiB), iterations and lanes the key was derived with,
+	/// so a library default changing later cannot lock the vault for good.
+	#[serde(default)]
+	kdf: Option<[u32; 3]>,
 	/// [`CHECK`] encrypted under the current key.
 	check: Option<String>,
 	entries: BTreeMap<String, String>,
@@ -123,6 +130,12 @@ impl Vault {
 		if inner.file.mode == VaultMode::Keychain {
 			match store.load() {
 				Ok(Some(k)) => inner.key = Some(to_key(&k)?),
+				// Entries with no key to open them: never mint a new key over them,
+				// which would make every one of them unrecoverable.
+				Ok(None) if !inner.file.entries.is_empty() => {
+					inner.keychain_error =
+						Some("the vault key is missing from the OS keychain".into())
+				}
 				Ok(None) => {}
 				Err(e) => inner.keychain_error = Some(e),
 			}
@@ -148,7 +161,9 @@ impl Vault {
 		}
 		let salt =
 			i.file.salt.as_deref().ok_or_else(|| AppError::Io("vault has no salt".into()))?;
-		let key = derive(password, &B64.decode(salt).map_err(|e| AppError::Io(e.to_string()))?)?;
+		let kdf = i.file.kdf.unwrap_or(KDF);
+		let key =
+			derive(password, &B64.decode(salt).map_err(|e| AppError::Io(e.to_string()))?, kdf)?;
 		let check = i.file.check.clone().unwrap_or_default();
 		if open(&key, "", &check).ok().as_deref().map(|v| &v[..]) != Some(CHECK) {
 			return Err(AppError::Unauthenticated("wrong master password".into()));
@@ -216,6 +231,9 @@ impl Vault {
 	/// re-encrypting every entry under the new key. The vault must be unlocked.
 	pub fn set_master_password(&self, password: Option<&str>) -> AppResult<()> {
 		let mut i = self.inner.lock();
+		if password.is_none() && i.file.mode == VaultMode::Keychain {
+			return Ok(());
+		}
 		let plain: Vec<(String, Zeroizing<Vec<u8>>)> = match &i.key {
 			Some(k) => i
 				.file
@@ -234,7 +252,11 @@ impl Vault {
 			}
 			Some(pw) => {
 				let salt = new_key();
-				(derive(pw, &salt[..16])?, VaultMode::MasterPassword, Some(B64.encode(&salt[..16])))
+				(
+					derive(pw, &salt[..16], KDF)?,
+					VaultMode::MasterPassword,
+					Some(B64.encode(&salt[..16])),
+				)
 			}
 			None => {
 				let key = new_key();
@@ -248,8 +270,14 @@ impl Vault {
 		for (id, v) in &plain {
 			entries.insert(id.clone(), seal(&key, id, v)?);
 		}
-		let file =
-			VaultFile { version: 1, mode, salt, check: Some(seal(&key, "", CHECK)?), entries };
+		let file = VaultFile {
+			version: 1,
+			mode,
+			salt,
+			kdf: (mode == VaultMode::MasterPassword).then_some(KDF),
+			check: Some(seal(&key, "", CHECK)?),
+			entries,
+		};
 		write(&self.path, &file)?;
 		if mode == VaultMode::MasterPassword {
 			// The keychain key must not outlive the switch: it would decrypt nothing,
@@ -260,6 +288,30 @@ impl Vault {
 		i.key = Some(key);
 		i.keychain_error = None;
 		Ok(())
+	}
+}
+
+/// Open the app's vault. An unreadable file is moved aside, never overwritten:
+/// the secrets in it may still be recoverable, and starting the app must not
+/// depend on them.
+pub fn open_or_set_aside(path: PathBuf) -> Vault {
+	match Vault::open(path.clone(), Box::new(OsKeychain)) {
+		Ok(v) => v,
+		Err(e) => {
+			let aside =
+				path.with_extension(format!("vault.unreadable-{}", chrono::Utc::now().timestamp()));
+			tracing::warn!(error = %e, ?aside, "the SSH vault could not be read; moved aside");
+			let _ = std::fs::rename(&path, &aside);
+			Vault {
+				path,
+				store: Box::new(OsKeychain),
+				inner: Mutex::new(Inner {
+					file: VaultFile::default(),
+					key: None,
+					keychain_error: None,
+				}),
+			}
+		}
 	}
 }
 
@@ -281,9 +333,10 @@ fn to_key(bytes: &[u8]) -> AppResult<KeyBytes> {
 	Ok(Zeroizing::new(arr))
 }
 
-fn derive(password: &str, salt: &[u8]) -> AppResult<KeyBytes> {
+fn derive(password: &str, salt: &[u8], [m, t, p]: [u32; 3]) -> AppResult<KeyBytes> {
 	let mut out = Zeroizing::new([0u8; 32]);
-	argon2::Argon2::default()
+	let params = argon2::Params::new(m, t, p, Some(32)).map_err(|e| AppError::Io(e.to_string()))?;
+	argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
 		.hash_password_into(password.as_bytes(), salt, &mut out[..])
 		.map_err(|e| AppError::Io(format!("deriving the vault key: {e}")))?;
 	Ok(out)
@@ -322,6 +375,7 @@ fn write(path: &Path, file: &VaultFile) -> AppResult<()> {
 	std::fs::create_dir_all(dir)?;
 	let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
 	std::io::Write::write_all(&mut tmp, &serde_json::to_vec_pretty(file)?)?;
+	tmp.as_file().sync_all()?;
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
@@ -392,6 +446,19 @@ mod tests {
 		std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
 		let v = Vault::open(path, Box::new(store)).unwrap();
 		assert!(v.get("b").is_err());
+	}
+
+	#[test]
+	fn a_keychain_that_lost_the_key_locks_the_vault_instead_of_replacing_it() {
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("secrets.vault");
+		let store = MemStore::default();
+		Vault::open(path.clone(), Box::new(store.clone())).unwrap().put("k", b"old").unwrap();
+		*store.0.lock() = None;
+		let v = Vault::open(path.clone(), Box::new(store)).unwrap();
+		assert!(v.status().locked);
+		assert!(v.put("k2", b"new").is_err(), "no new key over existing entries");
+		assert!(std::fs::read_to_string(&path).unwrap().contains("\"k\""));
 	}
 
 	#[test]

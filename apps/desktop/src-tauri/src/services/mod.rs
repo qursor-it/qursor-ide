@@ -27,6 +27,7 @@ pub mod profiles;
 pub mod reveal;
 pub mod routines;
 pub mod search;
+pub mod servers;
 pub mod session_plan;
 pub mod sessions;
 pub mod settings;
