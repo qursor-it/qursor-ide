@@ -106,6 +106,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	("9004_servers", include_str!("migrations/9004_servers.sql")),
 	// The local record of agent commands on servers. Fork-only.
 	("9005_agent_audit", include_str!("migrations/9005_agent_audit.sql")),
+	// Saved local port forwards per server. Fork-only.
+	("9006_server_tunnels", include_str!("migrations/9006_server_tunnels.sql")),
 ];
 
 /// Migrations that need the connection to themselves, with foreign keys off.

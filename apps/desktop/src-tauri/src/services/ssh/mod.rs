@@ -15,6 +15,7 @@
 pub mod pool;
 pub mod pty;
 pub mod sftp;
+pub mod tunnel;
 
 use std::path::PathBuf;
 use std::sync::Arc;

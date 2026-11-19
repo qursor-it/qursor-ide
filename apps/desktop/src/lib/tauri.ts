@@ -67,6 +67,7 @@ import type {
 	SessionWorktreeEvent,
 	AgentRunEvent,
 	RemoteListing,
+	Tunnel,
 	ConfirmEvent,
 	LinkMode,
 	Server,
@@ -550,6 +551,12 @@ export const cmd = {
 	 *  runs the edited line instead. */
 	agentTerminalAnswer: (id: string, run: boolean, command?: string) =>
 		invoke<void>('agent_terminal_answer', { id, run, command }),
+	// ── Tunnels (F47) ──
+	listTunnels: (serverId: string) => invoke<Tunnel[]>('list_tunnels', { serverId }),
+	saveTunnel: (tunnel: Tunnel) => invoke<Tunnel>('save_tunnel', { tunnel }),
+	deleteTunnel: (id: string) => invoke<void>('delete_tunnel', { id }),
+	tunnelStart: (id: string) => invoke<void>('tunnel_start', { id }),
+	tunnelStop: (id: string) => invoke<void>('tunnel_stop', { id }),
 	// ── SFTP (F46) ──
 	sftpList: (serverId: string, path: string) =>
 		invoke<RemoteListing>('sftp_list', { serverId, path }),
@@ -1015,6 +1022,7 @@ interface TestFixture {
 	sshConfigHosts?: SshConfigHost[];
 	/** What `sftp_list` answers, by path (F46). */
 	remoteDirs?: Record<string, RemoteListing>;
+	tunnels?: Tunnel[];
 	filePick?: string;
 	savePick?: string;
 	vaultStatus?: VaultStatus;
@@ -2490,6 +2498,14 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			const path = (args?.path as string) || '~';
 			return (fx?.remoteDirs?.[path] ?? { path, entries: [], truncated: false }) as unknown as T;
 		}
+		case 'list_tunnels':
+			return (fx?.tunnels ?? []) as unknown as T;
+		case 'save_tunnel':
+			return { ...(args?.tunnel as Tunnel), id: 'mock-tunnel-id' } as unknown as T;
+		case 'delete_tunnel':
+		case 'tunnel_start':
+		case 'tunnel_stop':
+			return undefined as unknown as T;
 		case 'sftp_upload':
 			return `${args?.remoteDir}/uploaded` as unknown as T;
 		case 'sftp_download':

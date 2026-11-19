@@ -9091,3 +9091,22 @@ file's mode. Text only, up to 5 MB.
 
 **Not yet.** Opening a remote file in the viewer and saving it back; recursive
 transfers.
+
+## F47 — Tunnels: local port forwards
+
+**What it is.** The `ssh -L` a human would type, saved per server and run as a
+switch from the SSH tab's **Tunnels** menu: `127.0.0.1:<local port>` on this
+computer reaches `<host>:<port>` as the server sees it (`localhost:5432` is the
+server's own Postgres). The listener binds loopback only.
+
+A running tunnel rides the server's one connection (ADR-0103) and keeps it
+alive; each connection through it opens a `direct-tcpip` channel, logging in
+again if the connection had dropped. Stopping it, editing it, deleting the
+server, disconnecting it or quitting the app ends it. A local port already in
+use is refused when the switch is turned on. `system` logins have no tunnels.
+
+**Commands.** `list_tunnels`, `save_tunnel`, `delete_tunnel`, `tunnel_start`,
+`tunnel_stop`. Table `server_tunnels` (migration 9005).
+
+**Not yet.** Remote forwards (`-R`), dynamic SOCKS (`-D`), starting tunnels
+with the app.

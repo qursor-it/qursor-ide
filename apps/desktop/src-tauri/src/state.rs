@@ -60,4 +60,6 @@ pub struct AppState {
 	pub ssh: Arc<crate::services::ssh::pool::Pool>,
 	/// Agent commands waiting for the human's yes or no (ADR-0108).
 	pub confirmations: Arc<crate::services::agent_policy::Confirmations>,
+	/// Running local port forwards (F47).
+	pub tunnels: Arc<crate::services::ssh::tunnel::Tunnels>,
 }

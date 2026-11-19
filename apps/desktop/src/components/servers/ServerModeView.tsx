@@ -34,6 +34,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AgentMenu, AgentPane, ConfirmBanner, RunningChip } from '@components/servers/AgentPane';
 import { ServerDialog } from '@components/servers/ServerDialog';
 import { SftpPanel } from '@components/servers/SftpPanel';
+import { TunnelsMenu } from '@components/servers/TunnelsMenu';
 import { AgentMark } from '@components/layout/AgentMark';
 import { agentName } from '@lib/agents';
 import { answerHostKey, reconnectTab, ServerTerminal } from '@components/servers/ServerTerminal';
@@ -125,6 +126,7 @@ export function ServerModeView() {
 							) : (
 								<AgentMenu tab={tab} server={server} />
 							)}
+							{server.auth !== 'system' && <TunnelsMenu server={server} />}
 							{server.auth !== 'system' && (
 								<Button
 									size="sm"

@@ -1590,3 +1590,22 @@ pub struct SshConfigHost {
 	/// `ProxyCommand`): import it with `system` auth.
 	pub needs_system_ssh: bool,
 }
+
+/// A saved local port forward on a server (F47): `127.0.0.1:local_port` here
+/// reaches `dest_host:dest_port` as the server sees it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tunnel {
+	/// Absent when saving a new one.
+	#[serde(default)]
+	pub id: String,
+	pub server_id: String,
+	#[serde(default)]
+	pub label: String,
+	pub local_port: u16,
+	pub dest_host: String,
+	pub dest_port: u16,
+	/// Listening right now. Ignored when saving.
+	#[serde(default)]
+	pub running: bool,
+}

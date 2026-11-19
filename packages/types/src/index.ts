@@ -2050,3 +2050,16 @@ export interface RemoteListing {
 	entries: RemoteEntry[];
 	truncated: boolean;
 }
+
+/** A saved local port forward on a server (F47). */
+export interface Tunnel {
+	/** Empty when saving a new one. */
+	id: string;
+	serverId: string;
+	label: string;
+	localPort: number;
+	destHost: string;
+	destPort: number;
+	/** Listening right now. */
+	running: boolean;
+}

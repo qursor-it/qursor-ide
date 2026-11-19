@@ -240,4 +240,46 @@ test.describe('servers', () => {
 			isDir: false,
 		});
 	});
+
+	test('@smoke a tunnel is a switch, and a new one is saved for its server', async ({ page }) => {
+		await installMockBridge(page, {
+			serverBook: book,
+			tunnels: [
+				{
+					id: 't1',
+					serverId: 's1',
+					label: 'Postgres',
+					localPort: 5433,
+					destHost: 'localhost',
+					destPort: 5432,
+					running: false,
+				},
+			],
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await page.getByTestId('server-row-web01').dblclick();
+		await page.getByTestId('tunnels-menu').click();
+		await expect(page.getByTestId('tunnel-row')).toContainText('localhost:5433 → localhost:5432');
+		await page.getByRole('switch', { name: /localhost:5433/ }).click();
+		const calls = async (name: string) =>
+			page.evaluate(
+				(n) => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === n),
+				name,
+			);
+		await expect.poll(async () => (await calls('tunnel_start')).length).toBe(1);
+		expect((await calls('tunnel_start'))[0].args).toMatchObject({ id: 't1' });
+
+		await page.keyboard.press('Escape');
+		await page.getByTestId('tunnels-menu').click();
+		await page.getByRole('menuitem', { name: 'Add tunnel…' }).click();
+		const d = page.getByTestId('tunnel-dialog');
+		await d.getByLabel('Local port').fill('8081');
+		await d.getByLabel('Destination port').fill('80');
+		await d.getByTestId('tunnel-save').click();
+		await expect.poll(async () => (await calls('save_tunnel')).length).toBe(1);
+		expect((await calls('save_tunnel'))[0].args).toMatchObject({
+			tunnel: { serverId: 's1', localPort: 8081, destHost: 'localhost', destPort: 80 },
+		});
+	});
 });

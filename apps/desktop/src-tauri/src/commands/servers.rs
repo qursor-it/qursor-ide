@@ -42,6 +42,7 @@ pub fn save_server(state: State<'_, AppState>, input: ServerInput) -> AppResult<
 
 #[tauri::command]
 pub fn delete_server(state: State<'_, AppState>, id: String) -> AppResult<()> {
+	state.tunnels.stop_server(&id);
 	state.terminals.kill_ssh_for(&id);
 	state.ssh.disconnect(&id);
 	state.db.with(|c| servers::delete(c, &state.vault, &id))
@@ -181,6 +182,7 @@ pub async fn server_open_shell(
 /// Close the server's connection and every tab on it.
 #[tauri::command]
 pub fn server_disconnect(state: State<'_, AppState>, server_id: String) {
+	state.tunnels.stop_server(&server_id);
 	state.terminals.kill_ssh_for(&server_id);
 	state.ssh.disconnect(&server_id);
 }
@@ -414,4 +416,71 @@ pub async fn sftp_remove(
 			r.map_err(|e| AppError::Remote(e.to_string()))
 		})
 		.await
+}
+
+/// A server's saved tunnels, each saying whether it is listening (F47).
+#[tauri::command]
+pub fn list_tunnels(
+	state: State<'_, AppState>,
+	server_id: String,
+) -> AppResult<Vec<crate::models::Tunnel>> {
+	let list = state.db.with(|c| servers::list_tunnels(c, &server_id))?;
+	Ok(list
+		.into_iter()
+		.map(|t| crate::models::Tunnel { running: state.tunnels.is_running(&t.id), ..t })
+		.collect())
+}
+
+#[tauri::command]
+pub fn save_tunnel(
+	state: State<'_, AppState>,
+	tunnel: crate::models::Tunnel,
+) -> AppResult<crate::models::Tunnel> {
+	// A changed port or destination takes effect on the next start.
+	state.tunnels.stop(&tunnel.id);
+	state.db.with(|c| servers::save_tunnel(c, &tunnel))
+}
+
+#[tauri::command]
+pub fn delete_tunnel(state: State<'_, AppState>, id: String) -> AppResult<()> {
+	state.tunnels.stop(&id);
+	state.db.with(|c| servers::delete_tunnel(c, &id))
+}
+
+/// Start listening on the tunnel's local port. An unknown host key or a failed
+/// login is reported now, not on the first connection through it.
+#[tauri::command]
+pub async fn tunnel_start(state: State<'_, AppState>, id: String) -> AppResult<()> {
+	let t = state.db.with(|c| servers::get_tunnel(c, &id))?;
+	let server = state.db.with(|c| servers::get(c, &t.server_id))?;
+	if server.auth == "system" {
+		return Err(AppError::InvalidInput(
+			"tunnels need a library login, not the system ssh client".into(),
+		));
+	}
+	let (pool, db, vault) = (state.ssh.clone(), state.db.clone(), state.vault.clone());
+	let server_id = server.id.clone();
+	let conn = move || {
+		let (pool, db, vault, server_id) =
+			(pool.clone(), db.clone(), vault.clone(), server_id.clone());
+		async move {
+			let id = server_id.clone();
+			pool.connection(
+				&server_id,
+				|| async move {
+					let server = db.with(|c| servers::get(c, &id))?;
+					target_for(&server, &vault)
+				},
+				None,
+			)
+			.await
+		}
+	};
+	conn().await?;
+	state.tunnels.start(&t.id, &t.server_id, t.local_port, t.dest_host, t.dest_port, conn).await
+}
+
+#[tauri::command]
+pub fn tunnel_stop(state: State<'_, AppState>, id: String) {
+	state.tunnels.stop(&id);
 }

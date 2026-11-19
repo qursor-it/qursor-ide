@@ -56,6 +56,7 @@ import type {
 	SidebarRow,
 	ServerBook,
 	RemoteListing,
+	Tunnel,
 } from '@factorai/types';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -105,6 +106,8 @@ export interface TestFixture {
 	serverHostKey?: string;
 	/** `sftp_list` answers by path (F46). */
 	remoteDirs?: Record<string, RemoteListing>;
+	/** `list_tunnels` (F47). */
+	tunnels?: Tunnel[];
 	savePick?: string;
 	filePick?: string;
 	/** Session id `start_session` hands back for a new-session click (F6). The

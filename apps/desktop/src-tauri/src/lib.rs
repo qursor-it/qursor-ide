@@ -293,6 +293,7 @@ pub fn run() {
 					},
 				});
 			let mut terminals = terminals;
+			let tunnels = Arc::new(services::ssh::tunnel::Tunnels::default());
 			let vault =
 				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
 			let ssh = Arc::new(services::ssh::pool::Pool::new(
@@ -419,12 +420,12 @@ pub fn run() {
 			let usage_poll_store = usage.clone();
 			{
 				// The last tab on a server closing ends its login (ADR-0103).
-				let (ssh, terminals) = (ssh.clone(), terminals.clone());
+				let (ssh, terminals, tunnels) = (ssh.clone(), terminals.clone(), tunnels.clone());
 				std::thread::Builder::new()
 					.name("ssh-reaper".into())
 					.spawn(move || loop {
 						std::thread::sleep(std::time::Duration::from_secs(20));
-						ssh.reap(|id| terminals.has_ssh_for(id));
+						ssh.reap(|id| terminals.has_ssh_for(id) || tunnels.uses(id));
 					})
 					.expect("spawn ssh reaper");
 			}
@@ -448,6 +449,7 @@ pub fn run() {
 				vault,
 				ssh,
 				confirmations,
+				tunnels,
 			});
 			// On unless the setting says `off`; a no-op off Windows.
 			taskbar_widget.set_enabled(
@@ -566,6 +568,11 @@ pub fn run() {
 			commands::servers::sftp_mkdir,
 			commands::servers::sftp_rename,
 			commands::servers::sftp_remove,
+			commands::servers::list_tunnels,
+			commands::servers::save_tunnel,
+			commands::servers::delete_tunnel,
+			commands::servers::tunnel_start,
+			commands::servers::tunnel_stop,
 			commands::profiles::list_profiles,
 			commands::profiles::create_profile,
 			commands::profiles::rename_profile,

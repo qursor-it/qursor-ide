@@ -8,7 +8,7 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
-use crate::models::{Server, ServerFolder, ServerInput, SshConfigHost};
+use crate::models::{Server, ServerFolder, ServerInput, SshConfigHost, Tunnel};
 use crate::services::vault::Vault;
 
 const ENVIRONMENTS: &[&str] = &["dev", "staging", "prod"];
@@ -213,6 +213,73 @@ pub fn rename_folder(conn: &Connection, id: &str, name: &str) -> AppResult<()> {
 /// Deleting a folder keeps its servers; they move to the top level.
 pub fn delete_folder(conn: &Connection, id: &str) -> AppResult<()> {
 	conn.execute("DELETE FROM server_folders WHERE id = ?1", [id])?;
+	Ok(())
+}
+
+pub fn list_tunnels(conn: &Connection, server_id: &str) -> AppResult<Vec<Tunnel>> {
+	let mut st = conn.prepare(
+		"SELECT id, server_id, label, local_port, dest_host, dest_port FROM server_tunnels
+		 WHERE server_id = ?1 ORDER BY local_port",
+	)?;
+	let rows = st
+		.query_map([server_id], |r| {
+			Ok(Tunnel {
+				id: r.get(0)?,
+				server_id: r.get(1)?,
+				label: r.get(2)?,
+				local_port: r.get(3)?,
+				dest_host: r.get(4)?,
+				dest_port: r.get(5)?,
+				running: false,
+			})
+		})?
+		.collect::<Result<Vec<_>, _>>()?;
+	Ok(rows)
+}
+
+pub fn get_tunnel(conn: &Connection, id: &str) -> AppResult<Tunnel> {
+	conn.query_row(
+		"SELECT id, server_id, label, local_port, dest_host, dest_port FROM server_tunnels WHERE id = ?1",
+		[id],
+		|r| {
+			Ok(Tunnel {
+				id: r.get(0)?,
+				server_id: r.get(1)?,
+				label: r.get(2)?,
+				local_port: r.get(3)?,
+				dest_host: r.get(4)?,
+				dest_port: r.get(5)?,
+				running: false,
+			})
+		},
+	)
+	.optional()?
+	.ok_or_else(|| AppError::NotFound(format!("tunnel {id}")))
+}
+
+pub fn save_tunnel(conn: &Connection, t: &Tunnel) -> AppResult<Tunnel> {
+	let host = t.dest_host.trim();
+	if t.local_port == 0
+		|| t.dest_port == 0
+		|| host.is_empty()
+		|| host.contains(char::is_whitespace)
+	{
+		return Err(AppError::InvalidInput(
+			"a tunnel needs a local port, a destination host and port".into(),
+		));
+	}
+	let id = if t.id.is_empty() { uuid::Uuid::new_v4().to_string() } else { t.id.clone() };
+	conn.execute(
+		"INSERT INTO server_tunnels (id, server_id, label, local_port, dest_host, dest_port)
+		 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+		 ON CONFLICT(id) DO UPDATE SET label=?3, local_port=?4, dest_host=?5, dest_port=?6",
+		params![id, t.server_id, t.label.trim(), t.local_port, host, t.dest_port],
+	)?;
+	get_tunnel(conn, &id)
+}
+
+pub fn delete_tunnel(conn: &Connection, id: &str) -> AppResult<()> {
+	conn.execute("DELETE FROM server_tunnels WHERE id = ?1", [id])?;
 	Ok(())
 }
 
