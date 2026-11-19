@@ -36,6 +36,7 @@ pub mod ssh;
 pub mod terminal;
 pub mod updates;
 pub mod usage;
+pub mod vault;
 pub mod watcher;
 pub mod webview_health;
 pub mod wsl;
