@@ -1,7 +1,7 @@
-# ADR-0103 — Server sessions ride one `russh` connection per server
+# ADR-0105 — Server sessions ride one `russh` connection per server
 
 **Date.** 2026-11-19
-**Status.** Accepted. Arises from F44 (server sessions over SSH). Narrows
+**Status.** Accepted. Arises from F45 (server sessions over SSH). Narrows
 ADR-0005 (kill-on-quit) to say what it means for a process that is not ours.
 
 ## Context

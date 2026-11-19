@@ -245,7 +245,7 @@
 	   signal, and they must be able to move apart. */
 	--usage-warn: oklch(78% 0.15 75);
 
-	/* Production Rose: this server is production (F44, ADR-0106). Its one job:
+	/* Production Rose: this server is production (F45, ADR-0108). Its one job:
 	   the marker on a production server's row, tab and card. A hue nothing else
 	   in the palette uses, so it is never read as a status, a destruction or a
 	   plan limit. */

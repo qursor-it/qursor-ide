@@ -1124,7 +1124,7 @@ interface TerminalProps {
 	/** Which mode's body this terminal lives in (F44). Canvas mode's agent panel
 	 *  shows a session the hidden Sessions route also holds, and a pooled host has
 	 *  one parent: only the surface whose mode is on screen owns it. The Server
-	 *  mode's agent pane is a third such surface (ADR-0109). */
+	 *  mode's agent pane is a third such surface (F46). */
 	surface?: 'sessions' | 'canvas' | 'servers';
 }
 

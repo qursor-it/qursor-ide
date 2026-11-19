@@ -1,7 +1,7 @@
-# ADR-0108 — Every agent command on a server passes that server's policy
+# ADR-0110 — Every agent command on a server passes that server's policy
 
 **Date.** 2026-11-19
-**Status.** Accepted. Arises from F45; keeps PRODUCT.md's "the human keeps every
+**Status.** Accepted. Arises from F46; keeps PRODUCT.md's "the human keeps every
 irreversible decision".
 
 ## Decision

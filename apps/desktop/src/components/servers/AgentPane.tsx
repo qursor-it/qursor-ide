@@ -22,7 +22,7 @@ import { Input, toast } from '@factorai/ui';
 import { answerConfirm } from '@hooks/useServerEvents';
 
 /**
- * Start a session of `agent` for a server and lend it a terminal (F45): this
+ * Start a session of `agent` for a server and lend it a terminal (F46): this
  * tab's own shell when `shared`, a new SSH session of the same server when
  * `own`. The session runs in the server's project, so it is also in the
  * Sessions sidebar and resumes like any other.
@@ -53,7 +53,7 @@ async function startAgent(
 	if (tab.terminalId) await cmd.agentLinkTerminal(tab.terminalId, sessionId, 'shared');
 }
 
-/** The "Agent" control in an SSH session's header (F45, mockup 2). */
+/** The "Agent" control in an SSH session's header (F46, mockup 2). */
 export function AgentMenu({ tab, server }: { tab: ServerTab; server: Server }) {
 	const qc = useQueryClient();
 	const installed = useInstalledAgents();
@@ -116,7 +116,7 @@ export function AgentMenu({ tab, server }: { tab: ServerTab; server: Server }) {
 	);
 }
 
-/** The agent's own terminal, beside the SSH session it was lent (F45). */
+/** The agent's own terminal, beside the SSH session it was lent (F46). */
 export function AgentPane({ agent }: { agent: TabAgent }) {
 	return (
 		<div
@@ -168,7 +168,7 @@ export function RunningChip({ tab }: { tab: ServerTab }) {
 }
 
 /**
- * An agent command waiting for the human on this tab's terminal (ADR-0108):
+ * An agent command waiting for the human on this tab's terminal (ADR-0110):
  * refuse, edit, or run it. Production wears its colour on the Run button too.
  */
 export function ConfirmBanner({ tab }: { tab: ServerTab }) {

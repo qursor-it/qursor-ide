@@ -1,12 +1,12 @@
-# ADR-0109 — A persistent tab outlives the app, by the human's choice
+# ADR-0111 — A persistent tab outlives the app, by the human's choice
 
 **Date.** 2026-11-19
 **Status.** Accepted. Narrows ADR-0005 (kill-on-quit) for one opt-in case, and
-leaves its rule for every process on this computer untouched. Arises from F48.
+leaves its rule for every process on this computer untouched. Arises from F49.
 
 ## Context
 
-ADR-0103 made killing an SSH tab hang up its remote shell, so nothing the app
+ADR-0105 made killing an SSH tab hang up its remote shell, so nothing the app
 started is left behind on a server. The owner also asked for MobaXterm's
 persistent sessions: a long deploy or migration must survive a dropped Wi-Fi,
 a laptop lid, or quitting the app.
@@ -20,7 +20,7 @@ a laptop lid, or quitting the app.
    the server) runs `tmux kill-session` for it. Quitting the app, a dropped
    connection or Disconnect leave the session, and the tab reattaches when it
    is next shown.
-3. **Agents still use the tab** (ADR-0107): the marker bootstrap turns on tmux's
+3. **Agents still use the tab** (ADR-0109): the marker bootstrap turns on tmux's
    passthrough for that pane only and wraps its markers for it; and because
    tmux draws its own alternate screen, whether the pane is at rest (no
    full-screen program, nothing but the shell running) is asked of tmux itself

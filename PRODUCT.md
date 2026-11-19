@@ -116,7 +116,7 @@ table that is not built yet. Treat it as the thinnest of the four verbs.
   token, and fetches no avatars or other assets from the network (ADR-0077).
   The one exception is SSH credentials for saved servers — passwords, private
   keys, passphrases — kept in a local encrypted vault and never shown to an
-  agent (ADR-0104).
+  agent (ADR-0106).
 - English only; no localization in v1. Windows is a native x64 target
   (ADR-0074) beside the WSL 2 path (ADR-0044), which still stands.
 - The official agent CLIs — Claude Code, and Codex behind the same seam

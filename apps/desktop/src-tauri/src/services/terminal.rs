@@ -64,7 +64,7 @@ pub use agent_use::{AgentLink, AgentRunEvent, LinkDto, LinkMode, PolicyCb, Polic
 
 pub type TerminalId = String;
 
-/// A server's display name, from the address book (F45).
+/// A server's display name, from the address book (F46).
 pub type ServerLabelCb = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 /// What a PTY *is*, which is not the same question as what it is doing.
@@ -91,7 +91,7 @@ pub enum TerminalKind {
 	/// with the project, the app, its own `exit`, a `×`, or its cwd going
 	/// missing (ADR-0032).
 	Shell,
-	/// A shell on an SSH server (F44): a channel on the server's connection,
+	/// A shell on an SSH server (F45): a channel on the server's connection,
 	/// not a local process. Like [`Self::Shell`] it has no session id and sits
 	/// outside the work count; unlike it, it belongs to no project, so neither a
 	/// project's kill sweep nor the missing-cwd reap ever touches it.
@@ -727,7 +727,7 @@ struct TerminalHandle {
 	killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
 	/// On Windows, a kill-on-close Job Object owns the PTY root and every
 	/// descendant, including processes that were created just before attach.
-	/// `None` for a remote shell (F44): no local process tree exists to own.
+	/// `None` for a remote shell (F45): no local process tree exists to own.
 	#[cfg(windows)]
 	process_job: Option<WinProcessJob>,
 	status: Mutex<TerminalStatus>,
@@ -757,17 +757,17 @@ struct TerminalHandle {
 	/// the child's argv, and its `Drop` is the teardown.
 	#[allow(dead_code)]
 	agent_tools: Option<AgentToolsServer>,
-	/// What an agent reads from an SSH terminal (F45): markers, screen, cwd.
+	/// What an agent reads from an SSH terminal (F46): markers, screen, cwd.
 	/// `None` for every other kind.
 	capture: Option<Arc<agent_use::CaptureCell>>,
 	/// The last keystroke the *human* sent, ms; agent writes do not count.
 	last_human_input: AtomicI64,
-	/// The last Ctrl+C the human sent, ms (F45).
+	/// The last Ctrl+C the human sent, ms (F46).
 	last_human_interrupt: AtomicI64,
 	/// The human has typed at the prompt without Enter, Ctrl+C or Ctrl+U since:
 	/// an agent must not append its command to their half-typed line.
 	human_line_dirty: AtomicBool,
-	/// The agent session this terminal is lent to, if any (F45).
+	/// The agent session this terminal is lent to, if any (F46).
 	link: Mutex<Option<AgentLink>>,
 	/// An agent command is in flight here.
 	agent_running: AtomicBool,
@@ -843,14 +843,14 @@ pub struct TerminalManager {
 	on_ide_open: IdeOpenCb,
 	on_ide_status: IdeStatusCb,
 	on_adopted: AdoptedCb,
-	/// Asked before an agent command runs on a server (F45, ADR-0108).
+	/// Asked before an agent command runs on a server (F46, ADR-0110).
 	agent_policy: Option<PolicyCb>,
 	on_agent_run: Arc<dyn Fn(AgentRunEvent) + Send + Sync>,
 	/// A server's display name for `terminals_list`, from the address book.
 	server_label: Option<ServerLabelCb>,
-	/// Files on the servers agents use, over SFTP (F46).
+	/// Files on the servers agents use, over SFTP (F47).
 	remote_files: Option<Arc<crate::services::ssh::sftp::RemoteFiles>>,
-	/// The tmux session of each persistent SSH tab (F48), by terminal id.
+	/// The tmux session of each persistent SSH tab (F49), by terminal id.
 	tmux: Arc<DashMap<TerminalId, String>>,
 }
 
@@ -2046,7 +2046,7 @@ impl TerminalManager {
 	///
 	/// The half of a spawn that does not care where the PTY came from: a local
 	/// process from [`Self::spawn_inner`], or a remote shell on an SSH channel
-	/// (F44), which arrives as the same `MasterPty` / `Child` pair.
+	/// (F45), which arrives as the same `MasterPty` / `Child` pair.
 	fn attach(&self, a: Attach) -> AppResult<TerminalId> {
 		let Attach {
 			req,
@@ -2189,7 +2189,7 @@ impl TerminalManager {
 		Ok(id)
 	}
 
-	/// Register a remote shell (F44) as a terminal.
+	/// Register a remote shell (F45) as a terminal.
 	///
 	/// `server_id` stands where a project id would, so `list` can hand a pane
 	/// back to its server after a renderer reload. `label` is what `list`
@@ -2226,7 +2226,7 @@ impl TerminalManager {
 		})
 	}
 
-	/// Record that an SSH tab lives in a tmux session (F48), so an agent asks
+	/// Record that an SSH tab lives in a tmux session (F49), so an agent asks
 	/// tmux whether its pane is at rest instead of reading tmux's own screen.
 	pub fn set_tmux(&self, terminal_id: &str, session: String) {
 		self.tmux.insert(terminal_id.to_string(), session);
@@ -2252,7 +2252,7 @@ impl TerminalManager {
 		}
 	}
 
-	/// A server tab on the system `ssh` client (F44, ADR-0103): a local process
+	/// A server tab on the system `ssh` client (F45, ADR-0105): a local process
 	/// in a PTY, for the servers whose config only OpenSSH understands.
 	pub fn spawn_ssh_command(
 		&self,
@@ -2286,7 +2286,7 @@ impl TerminalManager {
 			.send(data.to_vec())
 			.map_err(|_| AppError::Io(format!("terminal {id} no longer accepts input")))?;
 		handle.last_activity.store(now_ms(), Ordering::Relaxed);
-		// `write` is the human's path; an agent writes through its own (F45).
+		// `write` is the human's path; an agent writes through its own (F46).
 		handle.last_human_input.store(now_ms(), Ordering::Relaxed);
 		if data.contains(&0x03) {
 			handle.last_human_interrupt.store(now_ms(), Ordering::Relaxed);
@@ -2871,7 +2871,7 @@ mod tests {
 	}
 
 	#[cfg(unix)]
-	/// An SSH tab is a terminal like any other (F44): its bytes reach the same
+	/// An SSH tab is a terminal like any other (F45): its bytes reach the same
 	/// data events, it sits outside the work count, and killing it hangs the
 	/// remote shell up and reports the exit.
 	#[cfg(unix)]
@@ -2941,7 +2941,7 @@ mod tests {
 		assert!(gone, "kill-on-quit reaches the server: no orphan left behind (ADR-0005)");
 	}
 
-	/// The F45 path against a real sshd: an agent session runs commands in a
+	/// The F46 path against a real sshd: an agent session runs commands in a
 	/// lent SSH terminal and gets real output, exit codes and the shell's
 	/// directory; the human's own `cd` is visible to it; a human keystroke holds
 	/// it back; a password prompt stops it.
@@ -3147,7 +3147,7 @@ mod tests {
 		(d, mgr, id)
 	}
 
-	/// The server policy sits between the agent and the terminal (ADR-0108): a
+	/// The server policy sits between the agent and the terminal (ADR-0110): a
 	/// refusal types nothing, and an edit by the human is what runs.
 	#[cfg(unix)]
 	#[test]
@@ -3175,7 +3175,7 @@ mod tests {
 		assert_eq!(r["edited_by_human"], "echo edited", "{r}");
 	}
 
-	/// File tools on a lent terminal's server (F46): a relative path resolves
+	/// File tools on a lent terminal's server (F47): a relative path resolves
 	/// against the terminal's directory, an edit replaces exactly what it names,
 	/// and the policy sees each read and write.
 	#[cfg(unix)]
@@ -3231,7 +3231,7 @@ mod tests {
 		assert!(asked.iter().any(|c| c.starts_with("write ")), "{asked:?}");
 	}
 
-	/// A persistent tab (F48): the shell lives in tmux, survives its channel
+	/// A persistent tab (F49): the shell lives in tmux, survives its channel
 	/// closing, and the agent's markers still reach it through tmux.
 	#[cfg(unix)]
 	#[test]
@@ -3308,7 +3308,7 @@ mod tests {
 		let _ = std::process::Command::new("tmux").args(["kill-session", "-t", &name]).status();
 	}
 
-	/// The turn rules from the review of F45: no hidden second line, no
+	/// The turn rules from the review of F46: no hidden second line, no
 	/// appending to the human's half-typed line, and the human's Ctrl+C ends
 	/// the agent's wait at once.
 	#[cfg(unix)]

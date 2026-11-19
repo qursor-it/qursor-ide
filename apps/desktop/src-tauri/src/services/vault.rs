@@ -1,5 +1,5 @@
 //! The local vault for SSH secrets: passwords, private keys, passphrases
-//! (F44, ADR-0104).
+//! (F45, ADR-0106).
 //!
 //! **One encrypted file, one key.** Each entry is AES-256-GCM with its id as
 //! associated data, so an entry cannot be moved under another server's id.

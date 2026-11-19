@@ -82,7 +82,7 @@ pub struct Canvases {
 pub struct AgentTools {
 	routines: Routines,
 	canvases: Canvases,
-	/// The terminals the human lent this session (ADR-0109). `None` only in tests.
+	/// The terminals the human lent this session (ADR-0111). `None` only in tests.
 	terminals: Option<Arc<dyn super::terminals::TerminalUse>>,
 }
 
@@ -958,12 +958,12 @@ mod tests {
 				"canvasRead",
 				"canvasFreeSpot",
 				"canvasPatch",
-				// F45: the SSH terminals a human lends the session.
+				// F46: the SSH terminals a human lends the session.
 				"terminals_list",
 				"terminal_run",
 				"terminal_read",
 				"terminal_send_keys",
-				// F46: files on those terminals' servers.
+				// F47: files on those terminals' servers.
 				"file_read",
 				"file_edit",
 				"file_write",

@@ -62,7 +62,7 @@ async function ensureShell(
 }
 
 /**
- * The active SSH session's terminal, filling the work card (F44).
+ * The active SSH session's terminal, filling the work card (F45).
  *
  * The same pooled xterm and byte stream as every other terminal: switching
  * tabs only shows another pooled host, so a session's scrollback survives it,

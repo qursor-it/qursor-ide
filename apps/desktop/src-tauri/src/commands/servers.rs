@@ -1,4 +1,4 @@
-//! The Server mode's command surface (F44): the address book, the vault, and
+//! The Server mode's command surface (F45): the address book, the vault, and
 //! opening a shell on a server.
 //!
 //! **No command returns a secret.** The vault's contents go one way: from the
@@ -175,7 +175,7 @@ pub async fn server_open_shell(
 		)
 		.await?;
 	// Persistent only where the server has tmux; otherwise a plain shell, and
-	// the tab is treated as one (F48).
+	// the tab is treated as one (F49).
 	let tmux = if server.persistent && files(&state).has_tmux(&server.id).await {
 		Some(ssh::tmux_name(&client_key))
 	} else {
@@ -234,7 +234,7 @@ mod tests {
 	}
 }
 
-/// Lend an SSH terminal to an agent session (F45). One session per terminal.
+/// Lend an SSH terminal to an agent session (F46). One session per terminal.
 #[tauri::command]
 pub fn agent_link_terminal(
 	state: State<'_, AppState>,
@@ -256,7 +256,7 @@ pub fn agent_links(state: State<'_, AppState>) -> Vec<LinkDto> {
 	state.terminals.agent_links()
 }
 
-/// The workspace project a server's agent sessions run in (F45): a folder of
+/// The workspace project a server's agent sessions run in (F46): a folder of
 /// the app's own, one per server, so its sessions have a transcript home, show
 /// in the sidebar and resume like any other. Created on first use.
 #[tauri::command]
@@ -279,7 +279,7 @@ pub fn server_agent_project(
 	Ok(crate::models::Project { display_name: name, ..project })
 }
 
-/// The human's answer to an agent command waiting for confirmation (ADR-0108).
+/// The human's answer to an agent command waiting for confirmation (ADR-0110).
 /// `command` set and different from the request runs the edited line instead.
 #[tauri::command]
 pub fn agent_terminal_answer(
@@ -322,7 +322,7 @@ fn files(state: &AppState) -> crate::services::ssh::sftp::RemoteFiles {
 	)
 }
 
-/// One directory of a server, for the SFTP browser (F46). Empty `path` is the
+/// One directory of a server, for the SFTP browser (F47). Empty `path` is the
 /// login directory.
 #[tauri::command]
 pub async fn sftp_list(
@@ -431,7 +431,7 @@ pub async fn sftp_remove(
 		.await
 }
 
-/// A server's saved tunnels, each saying whether it is listening (F47).
+/// A server's saved tunnels, each saying whether it is listening (F48).
 #[tauri::command]
 pub fn list_tunnels(
 	state: State<'_, AppState>,
@@ -498,7 +498,7 @@ pub fn tunnel_stop(state: State<'_, AppState>, id: String) {
 	state.tunnels.stop(&id);
 }
 
-/// End a persistent tab's tmux session (F48): the human closed the tab, which
+/// End a persistent tab's tmux session (F49): the human closed the tab, which
 /// is the one gesture that means "this work is over". Quitting the app or a
 /// dropped connection leaves it for the next start to reattach.
 #[tauri::command]

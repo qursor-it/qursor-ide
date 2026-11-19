@@ -1,4 +1,4 @@
-//! The saved-server address book (F44): rows in SQLite, secrets in the vault.
+//! The saved-server address book (F45): rows in SQLite, secrets in the vault.
 //!
 //! Validation lives here rather than in the command so every writer — the form,
 //! an import — goes through the same checks.

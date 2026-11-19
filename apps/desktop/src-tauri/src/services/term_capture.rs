@@ -1,4 +1,4 @@
-//! What an agent needs to use a terminal it did not start (F45, ADR-0107):
+//! What an agent needs to use a terminal it did not start (F46, ADR-0109):
 //! where a command's output begins and ends, its exit status, the shell's
 //! directory afterwards, and what is on the screen right now.
 //!
@@ -26,7 +26,7 @@ const SCROLLBACK: usize = 2000;
 
 /// The bootstrap: shell functions, sent once per shell. `$?` at the entry of
 /// `__qe` is still the status of the command before it, in bash, zsh, dash and
-/// busybox sh. Inside tmux (F48) the marker is wrapped for tmux's passthrough,
+/// busybox sh. Inside tmux (F49) the marker is wrapped for tmux's passthrough,
 /// which is switched on for that pane only. Leading space: kept out of history
 /// where `HISTCONTROL` honours it.
 pub const BOOTSTRAP: &str = concat!(
@@ -48,7 +48,7 @@ pub fn wrap(nonce: &str, command: &str) -> String {
 }
 
 /// A command's output read back from a terminal's text history (tmux's,
-/// F48): the lines after the one that typed its end marker, without the
+/// F49): the lines after the one that typed its end marker, without the
 /// prompt that followed.
 pub fn output_after_marker(history: &str, nonce: &str) -> Option<String> {
 	let needle = format!("__qe {nonce}");
@@ -175,7 +175,7 @@ impl Capture {
 	}
 
 	/// The screen is asking for a secret: the agent must stop and the human type
-	/// it (F45). Judged on the cursor's line, where a prompt waits.
+	/// it (F46). Judged on the cursor's line, where a prompt waits.
 	pub fn asks_for_secret(&self) -> bool {
 		looks_like_secret_prompt(&self.cursor_line())
 	}

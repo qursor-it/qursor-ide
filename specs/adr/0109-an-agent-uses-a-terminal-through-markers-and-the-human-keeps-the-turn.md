@@ -1,8 +1,8 @@
-# ADR-0107 — An agent uses a terminal through markers, and the human keeps the turn
+# ADR-0109 — An agent uses a terminal through markers, and the human keeps the turn
 
 **Date.** 2026-11-19
 **Status.** Accepted. Extends ADR-0029 (model-facing tools live on the
-session's own MCP server). Arises from F45.
+session's own MCP server). Arises from F46.
 
 ## Context
 

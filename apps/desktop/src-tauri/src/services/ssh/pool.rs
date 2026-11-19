@@ -1,4 +1,4 @@
-//! One live connection per saved server, shared by every tab on it (ADR-0103).
+//! One live connection per saved server, shared by every tab on it (ADR-0105).
 
 use std::future::Future;
 use std::sync::Arc;

@@ -1,4 +1,4 @@
-//! An agent session using an SSH terminal the human lent it (F45, ADR-0107).
+//! An agent session using an SSH terminal the human lent it (F46, ADR-0109).
 //!
 //! **The human wins every turn.** A command is typed only when the terminal is
 //! at rest: no full-screen program, no password prompt, no human keystroke in
@@ -101,7 +101,7 @@ pub struct LinkDto {
 }
 
 /// Announced when an agent starts and finishes a command, so the tab can say
-/// "Claude is running …" while it does (F45).
+/// "Claude is running …" while it does (F46).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRunEvent {
@@ -111,7 +111,7 @@ pub struct AgentRunEvent {
 	pub running: bool,
 }
 
-/// Decides whether an agent command may run on a server (ADR-0108): `Ok(None)`
+/// Decides whether an agent command may run on a server (ADR-0110): `Ok(None)`
 /// to run it as written, `Ok(Some(edited))` to run what the human edited it
 /// into, `Err(reason)` to refuse. May block while the human is asked.
 pub type PolicyCb = Arc<dyn Fn(&PolicyRequest) -> Result<Option<String>, String> + Send + Sync>;

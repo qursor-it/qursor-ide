@@ -148,7 +148,7 @@ async fn serve(mut stream: TcpStream, token: String, handler: Handler) -> std::i
 		// A frame with no `id` is a notification: acknowledged with 202 and no
 		// body, which is what the MCP HTTP binding asks for.
 		// Off the runtime's workers: a terminal tool waits for a remote command to
-		// finish (F45), which can be minutes, and must not starve the other
+		// finish (F46), which can be minutes, and must not starve the other
 		// sessions' servers in the meantime.
 		let h = handler.clone();
 		let body = request.body;

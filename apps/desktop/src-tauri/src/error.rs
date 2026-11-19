@@ -31,7 +31,7 @@ pub enum AppError {
 	#[error("intelligence: {0}")]
 	Intelligence(String),
 	/// An SSH server presented a key no known_hosts file has. The message is the
-	/// SHA-256 fingerprint the human is asked to confirm (F44).
+	/// SHA-256 fingerprint the human is asked to confirm (F45).
 	#[error("unknown host key: {0}")]
 	HostKey(String),
 }

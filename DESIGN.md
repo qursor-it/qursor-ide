@@ -277,7 +277,7 @@ chroma ~0.016, not pure grey, so the dark reads as soft rather than as black.
   job. It sits near `git-modified`'s hue and is a separate token on purpose:
   that one is content, this is a signal, and they must be free to move apart.
 - **Production Rose** (`--production`, `oklch(70% 0.17 350)`; light
-  `oklch(52% 0.19 350)`): **this server is production** (F44, ADR-0106) — the
+  `oklch(52% 0.19 350)`): **this server is production** (F45, ADR-0108) — the
   `PROD` word on its address-book row and tab, a 2px rule on top of its tab and
   the border of its card. That is its single job, and it never fills a row: a
   marker says where you are, it does not shout.

@@ -1,4 +1,4 @@
-//! What an agent may do in a server's terminals (F45, ADR-0108): the policy
+//! What an agent may do in a server's terminals (F46, ADR-0110): the policy
 //! the human chose per server, the confirmations it asks for, and the local
 //! record of every decision.
 //!

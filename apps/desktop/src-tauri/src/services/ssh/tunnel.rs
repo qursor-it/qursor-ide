@@ -1,4 +1,4 @@
-//! Local port forwards over a server's connection (F47): `127.0.0.1:<port>`
+//! Local port forwards over a server's connection (F48): `127.0.0.1:<port>`
 //! here, carried to `<host>:<port>` as the server sees it — the `ssh -L` the
 //! human would type, as a switch.
 //!

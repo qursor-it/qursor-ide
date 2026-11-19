@@ -1,4 +1,4 @@
-//! An SSH shell channel presented as a `portable_pty` master and child (F44).
+//! An SSH shell channel presented as a `portable_pty` master and child (F45).
 //!
 //! `TerminalManager::attach` already knows how to stream, resize, write to and
 //! kill a PTY; giving it the same two traits for a remote shell is what lets an

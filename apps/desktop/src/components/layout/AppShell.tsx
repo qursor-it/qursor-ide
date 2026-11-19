@@ -230,7 +230,7 @@ export function AppShell({ children }: AppShellProps) {
 			<div className="flex min-h-0 flex-1">
 				<AppRail />
 				{/* Git, Canvas and Servers modes hide this body rather than unmounting
-			    it: the terminals in it must keep running (F35, F44). */}
+			    it: the terminals in it must keep running (F35, F44, F45). */}
 				<div
 					ref={row}
 					className={mode !== 'sessions' ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}

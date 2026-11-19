@@ -1,4 +1,4 @@
--- Saved local port forwards per server (F47). Started and stopped by hand;
+-- Saved local port forwards per server (F48). Started and stopped by hand;
 -- a running tunnel is runtime state, not stored.
 CREATE TABLE server_tunnels (
 	id          TEXT PRIMARY KEY,

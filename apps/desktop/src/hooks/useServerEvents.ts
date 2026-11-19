@@ -5,7 +5,7 @@ import { useGitModeStore } from '@store/gitModeStore';
 import { useServerStore } from '@store/serverStore';
 
 /**
- * Agent activity in SSH terminals (F45), heard wherever the window is: which
+ * Agent activity in SSH terminals (F46), heard wherever the window is: which
  * command an agent is running, and the commands waiting for the human's
  * confirmation. Mounted once, in the app shell.
  */

@@ -50,7 +50,7 @@ export function ModeSwitch() {
 		combine: (results) => results.reduce((n, r) => n + (r.data?.conflicted.length ?? 0), 0),
 	});
 
-	// Agent commands on servers waiting for a yes or no (ADR-0108).
+	// Agent commands on servers waiting for a yes or no (ADR-0110).
 	const confirmsWaiting = useServerStore((s) => s.confirms.length);
 
 	const pick = (next: AppMode) => {

@@ -299,7 +299,7 @@ pub fn run() {
 			let ssh = Arc::new(services::ssh::pool::Pool::new(
 				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
 			));
-			// Files on servers for agents (F46), on the same pooled logins as the tabs.
+			// Files on servers for agents (F47), on the same pooled logins as the tabs.
 			{
 				let (db, vault) = (db.clone(), vault.clone());
 				terminals.set_remote_files(Arc::new(services::ssh::sftp::RemoteFiles::new(
@@ -311,7 +311,7 @@ pub fn run() {
 				)));
 			}
 			let confirmations = Arc::new(services::agent_policy::Confirmations::default());
-			// Agents using SSH terminals (F45): announce their commands, and name
+			// Agents using SSH terminals (F46): announce their commands, and name
 			// a server in `terminals_list` the way the address book does.
 			{
 				let app = app.handle().clone();
@@ -319,7 +319,7 @@ pub fn run() {
 				terminals.set_agent_run_cb(Arc::new(move |e| {
 					let _ = run_app.emit("agent-terminal:run", e);
 				}));
-				// What an agent may do on each server (ADR-0108), decided per
+				// What an agent may do on each server (ADR-0110), decided per
 				// command from the address book, asked of the human when the
 				// policy says so, and written to the local audit log.
 				let policy_db = db.clone();
@@ -419,7 +419,7 @@ pub fn run() {
 			let usage_db = db.clone();
 			let usage_poll_store = usage.clone();
 			{
-				// The last tab on a server closing ends its login (ADR-0103).
+				// The last tab on a server closing ends its login (ADR-0105).
 				let (ssh, terminals, tunnels) = (ssh.clone(), terminals.clone(), tunnels.clone());
 				std::thread::Builder::new()
 					.name("ssh-reaper".into())

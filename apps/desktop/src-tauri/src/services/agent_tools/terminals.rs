@@ -1,5 +1,5 @@
-//! Model-facing tools for the terminals a human lent to this session (F45,
-//! ADR-0107): list them, run a command in one, read its screen, press keys.
+//! Model-facing tools for the terminals a human lent to this session (F46,
+//! ADR-0109): list them, run a command in one, read its screen, press keys.
 //!
 //! **Bound to the session by construction.** The backend handed to
 //! [`super::AgentTools`] already knows which session it serves; no argument here
@@ -21,7 +21,7 @@ pub trait TerminalUse: Send + Sync {
 	fn run(&self, terminal: &str, command: &str, timeout_s: u64) -> Result<Value, String>;
 	fn read(&self, terminal: &str) -> Result<Value, String>;
 	fn send_keys(&self, terminal: &str, keys: &[String]) -> Result<Value, String>;
-	/// Files on the terminal's server, over SFTP (F46).
+	/// Files on the terminal's server, over SFTP (F47).
 	fn file_read(&self, terminal: &str, path: &str) -> Result<Value, String>;
 	fn file_write(&self, terminal: &str, path: &str, content: &str) -> Result<Value, String>;
 	fn file_edit(

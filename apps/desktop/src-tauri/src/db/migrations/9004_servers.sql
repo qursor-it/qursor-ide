@@ -1,6 +1,6 @@
--- Saved SSH servers and the folders of the address book (F44, ADR-0103).
+-- Saved SSH servers and the folders of the address book (F45, ADR-0105).
 -- No secret is stored here: passwords, keys and passphrases live in the vault
--- (ADR-0104) under `server:<id>:<kind>`.
+-- (ADR-0106) under `server:<id>:<kind>`.
 CREATE TABLE server_folders (
 	id         TEXT PRIMARY KEY,
 	name       TEXT NOT NULL,

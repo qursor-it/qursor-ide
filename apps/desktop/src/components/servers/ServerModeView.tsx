@@ -54,7 +54,7 @@ function useServerBook() {
 	});
 }
 
-/** The production marker (ADR-0106 token): a small word, never a whole row. */
+/** The production marker (ADR-0108 token): a small word, never a whole row. */
 function ProdBadge() {
 	return (
 		<span
@@ -70,14 +70,14 @@ function ProdBadge() {
 function closeServerTab(key: string, persistent = false) {
 	const tab = useServerStore.getState().tabs.find((t) => t.key === key);
 	if (tab?.terminalId) cmd.terminalKill(tab.terminalId).catch(() => {});
-	// Closing a persistent tab is the gesture that ends its tmux session (F48).
+	// Closing a persistent tab is the gesture that ends its tmux session (F49).
 	if (tab && persistent) cmd.serverEndTab(tab.serverId, key).catch(() => {});
 	disposeTerminal(key);
 	useServerStore.getState().close(key);
 }
 
 /**
- * The Server mode (F44, ADR-0105): the address book beside the rail and the
+ * The Server mode (F45, ADR-0107): the address book beside the rail and the
  * active SSH session filling the card. The tab strip is in the top bar.
  */
 export function ServerModeView() {

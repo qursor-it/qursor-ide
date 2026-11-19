@@ -107,7 +107,7 @@ function toInput(d: Draft, id?: string): ServerInput {
 }
 
 /**
- * New or edit server (F44). `server` null is "new"; `folderId` preselects the
+ * New or edit server (F45). `server` null is "new"; `folderId` preselects the
  * folder the human started from.
  */
 export function ServerDialog({
@@ -352,7 +352,7 @@ export function ServerDialog({
 							value={d.environment}
 							onValueChange={(v) => {
 								const env = v as ServerEnvironment;
-								// Production starts from "confirm" (F45); the human can still change it.
+								// Production starts from "confirm" (F46); the human can still change it.
 								setD((p) => ({
 									...p,
 									environment: env,

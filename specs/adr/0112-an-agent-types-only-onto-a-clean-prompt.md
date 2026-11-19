@@ -1,13 +1,13 @@
-# ADR-0110 — An agent types only onto a clean prompt, and only what is shown
+# ADR-0112 — An agent types only onto a clean prompt, and only what is shown
 
 **Date.** 2026-11-19
-**Status.** Accepted. Supersedes the typed-line shape in ADR-0107 § 2 and adds
-to its turn rules; the rest of ADR-0107 stands. Arises from an independent
-review of F45.
+**Status.** Accepted. Supersedes the typed-line shape in ADR-0109 § 2 and adds
+to its turn rules; the rest of ADR-0109 stands. Arises from an independent
+review of F46.
 
 ## Context
 
-Review of F45 found ways an agent's line could do something the human did not
+Review of F46 found ways an agent's line could do something the human did not
 see or did not mean: a bare `\r` inside a command is a second line to readline
 (and an invisible one in the confirmation banner); a command typed after the
 human's half-typed text is appended to it; a confirmation can wait ten minutes

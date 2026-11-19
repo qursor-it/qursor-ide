@@ -510,7 +510,7 @@ export const cmd = {
 	 *  `terminalSpawn` because a shell runs no transcript probe, stands up no
 	 *  IDE bridge and no tool server, and starts no routine. */
 	shellSpawn: (opts: ShellSpawnOpts) => invoke<TerminalId>('shell_spawn', { opts }),
-	// ── Servers (F44) ──
+	// ── Servers (F45) ──
 	listServers: () => invoke<ServerBook>('list_servers'),
 	saveServer: (input: ServerInput) => invoke<Server>('save_server', { input }),
 	deleteServer: (id: string) => invoke<void>('delete_server', { id }),
@@ -542,25 +542,25 @@ export const cmd = {
 			acceptFingerprint,
 		}),
 	serverDisconnect: (serverId: string) => invoke<void>('server_disconnect', { serverId }),
-	/** End a persistent tab's tmux session: the human closed the tab (F48). */
+	/** End a persistent tab's tmux session: the human closed the tab (F49). */
 	serverEndTab: (serverId: string, clientKey: string) =>
 		invoke<void>('server_end_tab', { serverId, clientKey }),
-	/** Lend an SSH terminal to an agent session (F45). */
+	/** Lend an SSH terminal to an agent session (F46). */
 	agentLinkTerminal: (terminalId: TerminalId, sessionId: string, mode: LinkMode) =>
 		invoke<void>('agent_link_terminal', { terminalId, sessionId, mode }),
 	agentUnlinkTerminal: (terminalId: TerminalId) =>
 		invoke<void>('agent_unlink_terminal', { terminalId }),
-	/** Answer an agent command waiting for confirmation (ADR-0108). A `command`
+	/** Answer an agent command waiting for confirmation (ADR-0110). A `command`
 	 *  runs the edited line instead. */
 	agentTerminalAnswer: (id: string, run: boolean, command?: string) =>
 		invoke<void>('agent_terminal_answer', { id, run, command }),
-	// ── Tunnels (F47) ──
+	// ── Tunnels (F48) ──
 	listTunnels: (serverId: string) => invoke<Tunnel[]>('list_tunnels', { serverId }),
 	saveTunnel: (tunnel: Tunnel) => invoke<Tunnel>('save_tunnel', { tunnel }),
 	deleteTunnel: (id: string) => invoke<void>('delete_tunnel', { id }),
 	tunnelStart: (id: string) => invoke<void>('tunnel_start', { id }),
 	tunnelStop: (id: string) => invoke<void>('tunnel_stop', { id }),
-	// ── SFTP (F46) ──
+	// ── SFTP (F47) ──
 	sftpList: (serverId: string, path: string) =>
 		invoke<RemoteListing>('sftp_list', { serverId, path }),
 	sftpDownload: (serverId: string, remote: string, local: string) =>
@@ -572,7 +572,7 @@ export const cmd = {
 		invoke<void>('sftp_rename', { serverId, from, to }),
 	sftpRemove: (serverId: string, path: string, isDir: boolean) =>
 		invoke<void>('sftp_remove', { serverId, path, isDir }),
-	/** The project a server's agent sessions run in, created on first use (F45). */
+	/** The project a server's agent sessions run in, created on first use (F46). */
 	serverAgentProject: (serverId: string) => invoke<Project>('server_agent_project', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by
 	 *  `Remove project` and by nothing about a session — closing one says
@@ -813,7 +813,7 @@ export async function copyImageFile(path: string): Promise<void> {
  * than no-op. There the fixture's `folderPick` stands in, since a native dialog
  * is otherwise unreachable from a test.
  */
-/** A file to upload (F46). */
+/** A file to upload (F47). */
 export async function pickFile(title: string): Promise<string | null> {
 	if (!isTauri()) {
 		recordMockCall('dialog.open');
@@ -824,7 +824,7 @@ export async function pickFile(title: string): Promise<string | null> {
 	return typeof picked === 'string' ? picked : null;
 }
 
-/** Where to save a download (F46). */
+/** Where to save a download (F47). */
 export async function pickSavePath(title: string, defaultPath: string): Promise<string | null> {
 	if (!isTauri()) {
 		recordMockCall('dialog.save');
@@ -888,10 +888,10 @@ export const events = {
 		listen<TerminalStatusEvent>('terminal:status', cb),
 	onTerminalExit: (cb: (p: TerminalExitEvent) => void) =>
 		listen<TerminalExitEvent>('terminal:exit', cb),
-	/** An agent started or finished a command in a lent SSH terminal (F45). */
+	/** An agent started or finished a command in a lent SSH terminal (F46). */
 	onAgentTerminalRun: (cb: (p: AgentRunEvent) => void) =>
 		listen<AgentRunEvent>('agent-terminal:run', cb),
-	/** An agent command waits for the human's yes or no (ADR-0108). */
+	/** An agent command waits for the human's yes or no (ADR-0110). */
 	onAgentTerminalConfirm: (cb: (p: ConfirmEvent) => void) =>
 		listen<ConfirmEvent>('agent-terminal:confirm', cb),
 	onQuitRequested: (cb: (p: QuitRequestedEvent) => void) =>
@@ -1019,11 +1019,11 @@ interface TestFixture {
 	/** The id `shell_spawn` hands back in the browser lane (F23). Distinct from
 	 *  `terminalSpawnId` so a test can tell a shell's PTY from its agent's. */
 	shellSpawnId?: TerminalId;
-	/** The address book `list_servers` answers with (F44). */
+	/** The address book `list_servers` answers with (F45). */
 	serverBook?: ServerBook;
 	serverHostKey?: string;
 	sshConfigHosts?: SshConfigHost[];
-	/** What `sftp_list` answers, by path (F46). */
+	/** What `sftp_list` answers, by path (F47). */
 	remoteDirs?: Record<string, RemoteListing>;
 	tunnels?: Tunnel[];
 	filePick?: string;

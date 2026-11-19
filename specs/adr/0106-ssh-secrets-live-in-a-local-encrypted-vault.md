@@ -1,9 +1,9 @@
-# ADR-0104 — SSH secrets live in a local encrypted vault
+# ADR-0106 — SSH secrets live in a local encrypted vault
 
 **Date.** 2026-11-19
 **Status.** Accepted. Amends the credentials line of `PRODUCT.md` § Constraints
 ("the app never reads, stores or sends a token") by narrowing its scope. Arises
-from F44.
+from F45.
 
 ## Context
 

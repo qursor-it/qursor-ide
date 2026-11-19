@@ -99,14 +99,14 @@ export interface TestFixture {
 	 *  gets the same PTY, so only a one-pane spec should — what it buys is a
 	 *  known id to fire `terminal:data` at. Unpinned, the mock counts spawns. */
 	shellSpawnId?: TerminalId;
-	/** The address book `list_servers` answers with (F44). */
+	/** The address book `list_servers` answers with (F45). */
 	serverBook?: ServerBook;
 	/** When set, `server_open_shell` rejects with this host-key fingerprint until
-	 *  it is called again with it accepted (F44). */
+	 *  it is called again with it accepted (F45). */
 	serverHostKey?: string;
-	/** `sftp_list` answers by path (F46). */
+	/** `sftp_list` answers by path (F47). */
 	remoteDirs?: Record<string, RemoteListing>;
-	/** `list_tunnels` (F47). */
+	/** `list_tunnels` (F48). */
 	tunnels?: Tunnel[];
 	savePick?: string;
 	filePick?: string;

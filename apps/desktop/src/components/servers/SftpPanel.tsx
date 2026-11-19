@@ -33,7 +33,7 @@ function size(n: number): string {
 }
 
 /**
- * The server's files beside its SSH session (F46): browse, download, upload,
+ * The server's files beside its SSH session (F47): browse, download, upload,
  * new folder, rename, delete. Over SFTP on the tab's own login; nothing is
  * installed on the server. Deleting asks first and never recurses.
  */

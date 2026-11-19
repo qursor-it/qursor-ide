@@ -1,7 +1,7 @@
-//! Files on a server over SFTP (F46): the browser beside an SSH tab, and the
+//! Files on a server over SFTP (F47): the browser beside an SSH tab, and the
 //! file tools an agent gets on the servers whose terminals it was lent.
 //!
-//! **A channel per operation** on the server's one connection (ADR-0103): an
+//! **A channel per operation** on the server's one connection (ADR-0105): an
 //! SFTP session is a subsystem channel, cheap to open, and keeping none means
 //! none can outlive the connection it rode on.
 //!
@@ -9,7 +9,7 @@
 //! name beside the target, which is then renamed over it with `mv -f` — SFTP v3
 //! has no rename that replaces.
 //!
-//! **An agent writes only what it read** (F46): `agent_read` remembers each
+//! **An agent writes only what it read** (F47): `agent_read` remembers each
 //! file's size and mtime per session, and a write or edit refuses when the
 //! file changed since — a human edited it, or it was never read.
 
@@ -281,7 +281,7 @@ impl RemoteFiles {
 }
 
 impl RemoteFiles {
-	/// Whether a persistent tab's tmux pane is at rest (F48): not in a
+	/// Whether a persistent tab's tmux pane is at rest (F49): not in a
 	/// full-screen program and running nothing but its shell. Asked of tmux
 	/// itself, because tmux draws its own alternate screen whatever the pane does.
 	pub fn tmux_at_rest(&self, server_id: &str, session: &str) -> AppResult<Result<(), String>> {
@@ -295,7 +295,7 @@ impl RemoteFiles {
 		Ok(tmux_verdict(&out))
 	}
 
-	/// A tmux session's text history, for reading a command's output back (F48).
+	/// A tmux session's text history, for reading a command's output back (F49).
 	pub fn tmux_capture(&self, server_id: &str, session: &str) -> AppResult<String> {
 		let cmd = format!("tmux capture-pane -p -J -S -3000 -t {}", quote(session));
 		tauri::async_runtime::block_on(
@@ -303,7 +303,7 @@ impl RemoteFiles {
 		)
 	}
 
-	/// The server has tmux (F48): a persistent tab is only tmux-backed if so.
+	/// The server has tmux (F49): a persistent tab is only tmux-backed if so.
 	pub async fn has_tmux(&self, server_id: &str) -> bool {
 		self.with(server_id, |conn, _| async move {
 			exec_output(&conn, "command -v tmux >/dev/null 2>&1").await.map(|_| ())

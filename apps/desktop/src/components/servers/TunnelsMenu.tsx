@@ -27,7 +27,7 @@ const describe = (t: Tunnel) =>
 	`${t.label ? `${t.label} · ` : ''}localhost:${t.localPort} → ${t.destHost}:${t.destPort}`;
 
 /**
- * A server's local port forwards (F47): each a switch, listening on
+ * A server's local port forwards (F48): each a switch, listening on
  * 127.0.0.1 only, carried over the server's login.
  */
 export function TunnelsMenu({ server }: { server: Server }) {

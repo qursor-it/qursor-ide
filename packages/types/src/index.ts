@@ -1088,7 +1088,7 @@ export type AppError =
 	 *  `<code>: <detail>` with `code` one of {@link IntelligenceErrorCode}; use
 	 *  `intelligenceErrorCode` to split it. */
 	| { kind: 'Intelligence'; message: string }
-	/** An SSH server presented a key no known_hosts file has (F44). `message` is
+	/** An SSH server presented a key no known_hosts file has (F45). `message` is
 	 *  the SHA-256 fingerprint the human is asked to confirm before retrying
 	 *  with it. */
 	| { kind: 'HostKey'; message: string };
@@ -1937,10 +1937,10 @@ export interface CanvasChangedEvent {
 	path: string;
 }
 
-// ── Servers (F44, ADR-0103, ADR-0104) ──────────────────────────────────────
+// ── Servers (F45, ADR-0105, ADR-0106) ──────────────────────────────────────
 
 export type ServerEnvironment = 'dev' | 'staging' | 'prod';
-/** What an agent may do in this server's terminals (F45). */
+/** What an agent may do in this server's terminals (F46). */
 export type AgentPolicy = 'free' | 'confirm' | 'readonly';
 export type ServerAuth = 'password' | 'key' | 'keyFile' | 'agent' | 'system';
 
@@ -1958,7 +1958,7 @@ export interface Server {
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;
 	keyPath: string | null;
-	/** Tabs live in tmux sessions on the server, when it has tmux (F48). */
+	/** Tabs live in tmux sessions on the server, when it has tmux (F49). */
 	persistent: boolean;
 	hasPassword: boolean;
 	hasPrivateKey: boolean;
@@ -2013,10 +2013,10 @@ export interface VaultStatus {
 	keychainError: string | null;
 }
 
-/** How a terminal is lent to an agent session (F45). */
+/** How a terminal is lent to an agent session (F46). */
 export type LinkMode = 'shared' | 'own';
 
-/** An agent started or finished a command in a lent terminal (F45). */
+/** An agent started or finished a command in a lent terminal (F46). */
 export interface AgentRunEvent {
 	terminalId: string;
 	sessionId: string;
@@ -2024,7 +2024,7 @@ export interface AgentRunEvent {
 	running: boolean;
 }
 
-/** An agent command waiting for the human (F45, ADR-0108). */
+/** An agent command waiting for the human (F46, ADR-0110). */
 export interface ConfirmEvent {
 	id: string;
 	serverId: string;
@@ -2040,7 +2040,7 @@ export interface ConfirmEvent {
 	production: boolean;
 }
 
-/** One entry of a server directory, over SFTP (F46). */
+/** One entry of a server directory, over SFTP (F47). */
 export interface RemoteEntry {
 	name: string;
 	isDir: boolean;
@@ -2057,7 +2057,7 @@ export interface RemoteListing {
 	truncated: boolean;
 }
 
-/** A saved local port forward on a server (F47). */
+/** A saved local port forward on a server (F48). */
 export interface Tunnel {
 	/** Empty when saving a new one. */
 	id: string;

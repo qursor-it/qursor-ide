@@ -1513,8 +1513,8 @@ pub struct SessionUsage {
 	pub cost_usd: Option<f64>,
 }
 
-/// A saved SSH server (F44, ADR-0103). Holds no secret: the `has_*` flags say
-/// what the vault holds for it (ADR-0104), never what.
+/// A saved SSH server (F45, ADR-0105). Holds no secret: the `has_*` flags say
+/// what the vault holds for it (ADR-0106), never what.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Server {
@@ -1529,13 +1529,13 @@ pub struct Server {
 	/// `dev` | `staging` | `prod`.
 	pub environment: String,
 	/// What an agent may do in this server's terminals: `free` | `confirm` |
-	/// `readonly` (F45).
+	/// `readonly` (F46).
 	pub agent_policy: String,
 	/// `password` | `key` | `keyFile` | `agent` | `system`.
 	pub auth: String,
 	/// The key file for `keyFile`; never copied into the vault.
 	pub key_path: Option<String>,
-	/// Tabs live in tmux sessions on the server, when it has tmux (F48).
+	/// Tabs live in tmux sessions on the server, when it has tmux (F49).
 	pub persistent: bool,
 	pub has_password: bool,
 	pub has_private_key: bool,
@@ -1595,7 +1595,7 @@ pub struct SshConfigHost {
 	pub needs_system_ssh: bool,
 }
 
-/// A saved local port forward on a server (F47): `127.0.0.1:local_port` here
+/// A saved local port forward on a server (F48): `127.0.0.1:local_port` here
 /// reaches `dest_host:dest_port` as the server sees it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

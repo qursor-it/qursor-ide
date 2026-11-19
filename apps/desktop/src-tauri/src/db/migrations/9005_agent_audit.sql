@@ -1,4 +1,4 @@
--- Every decision about an agent command on a server (F45, ADR-0108): allowed,
+-- Every decision about an agent command on a server (F46, ADR-0110): allowed,
 -- confirmed, edited or refused. Local only; never sent anywhere.
 CREATE TABLE agent_audit (
 	id          INTEGER PRIMARY KEY,

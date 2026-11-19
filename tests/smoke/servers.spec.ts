@@ -1,5 +1,5 @@
 /**
- * F44, ADR-0105 — the Server mode: the address book beside the rail, one tab per
+ * F45, ADR-0107 — the Server mode: the address book beside the rail, one tab per
  * SSH session in the top bar, and the host key as a decision only the human
  * makes. The SSH engine itself is the Rust suite's (a real sshd on loopback);
  * this lane holds the surface's rules.

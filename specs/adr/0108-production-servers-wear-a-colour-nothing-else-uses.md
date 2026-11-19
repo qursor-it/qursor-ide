@@ -1,7 +1,7 @@
-# ADR-0106 — Production servers wear a colour nothing else uses
+# ADR-0108 — Production servers wear a colour nothing else uses
 
 **Date.** 2026-11-19
-**Status.** Accepted. Adds a signal colour to `DESIGN.md`. Arises from F44.
+**Status.** Accepted. Adds a signal colour to `DESIGN.md`. Arises from F45.
 
 ## Context
 
@@ -19,5 +19,5 @@ top of its tab, the border of its card. It never fills a row or a background.
 
 ## Consequences
 
-- Agent policy for production servers starts at "confirm every command" (F45);
+- Agent policy for production servers starts at "confirm every command" (F46);
   the colour says where you are, the policy decides what an agent may do.

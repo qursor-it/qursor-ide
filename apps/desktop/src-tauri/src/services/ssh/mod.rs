@@ -1,4 +1,4 @@
-//! SSH connections for server sessions (F44, ADR-0103).
+//! SSH connections for server sessions (F45, ADR-0105).
 //!
 //! **One library connection per server, many channels on it.** A second tab on
 //! the same server is a second shell channel, not a second login, which is the
@@ -318,7 +318,7 @@ where
 }
 
 /// A login shell with a PTY, started in `dir` when one is given, inside the
-/// tmux session `tmux` when that is given and the server has tmux (F48).
+/// tmux session `tmux` when that is given and the server has tmux (F49).
 ///
 /// `cd` failing (a folder since removed) still opens the shell, in the home
 /// directory, rather than closing the tab the human just opened.
@@ -361,7 +361,7 @@ pub fn start_in(dir: Option<&str>, tmux: Option<&str>) -> Option<String> {
 	Some(format!("exec /bin/sh -c {}", quote(&inner)))
 }
 
-/// The tmux session a persistent tab lives in (F48): stable across restarts,
+/// The tmux session a persistent tab lives in (F49): stable across restarts,
 /// because the tab key is.
 pub fn tmux_name(client_key: &str) -> String {
 	let id: String = client_key.chars().filter(char::is_ascii_alphanumeric).collect();
