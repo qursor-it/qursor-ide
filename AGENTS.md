@@ -17,7 +17,8 @@ the human is absent — every irreversible action keeps its confirmation, and "t
 agent already did it" is never a reason to skip asking.
 
 Tauri 2 (Rust) + React 19 + TypeScript, pnpm monorepo, oxlint + oxfmt,
-Turborepo. macOS and Linux only for v1. Layout: `apps/desktop` (renderer +
+Turborepo. macOS, Linux and native Windows x64 (ADR-0074; see "What this project
+does not do"). Layout: `apps/desktop` (renderer +
 `src-tauri`), `apps/docs` (the site: Docusaurus, the hero and later the guide,
 ADR-0051), `packages/ui` (shadcn-style primitives), `packages/types`
 (cross-boundary types), `tests/smoke` (Playwright).
