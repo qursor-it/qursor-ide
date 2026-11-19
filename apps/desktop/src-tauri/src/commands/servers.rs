@@ -263,3 +263,34 @@ pub fn server_agent_project(
 	})?;
 	Ok(crate::models::Project { display_name: name, ..project })
 }
+
+/// The human's answer to an agent command waiting for confirmation (ADR-0108).
+/// `command` set and different from the request runs the edited line instead.
+#[tauri::command]
+pub fn agent_terminal_answer(
+	state: State<'_, AppState>,
+	id: String,
+	run: bool,
+	command: Option<String>,
+) -> AppResult<()> {
+	use crate::services::agent_policy::Answer;
+	let answer = match (run, command.filter(|c| !c.trim().is_empty())) {
+		(false, _) => Answer::Refuse,
+		(true, Some(c)) => Answer::RunEdited(c),
+		(true, None) => Answer::Run,
+	};
+	if state.confirmations.answer(&id, answer) {
+		Ok(())
+	} else {
+		Err(AppError::NotFound("that confirmation is no longer waiting".into()))
+	}
+}
+
+/// The last decisions about agent commands on one server, newest first.
+#[tauri::command]
+pub fn agent_audit(
+	state: State<'_, AppState>,
+	server_id: String,
+) -> AppResult<Vec<crate::services::agent_policy::AuditRow>> {
+	state.db.with(|c| Ok(crate::services::agent_policy::recent(c, &server_id, 200)?))
+}

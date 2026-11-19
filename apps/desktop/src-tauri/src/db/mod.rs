@@ -104,6 +104,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	// Saved SSH servers and their address-book folders (F44, ADR-0103).
 	// Fork-only, like 9001. Secrets are not here: they are in the vault (ADR-0104).
 	("9004_servers", include_str!("migrations/9004_servers.sql")),
+	// The local record of agent commands on servers. Fork-only.
+	("9005_agent_audit", include_str!("migrations/9005_agent_audit.sql")),
 ];
 
 /// Migrations that need the connection to themselves, with foreign keys off.

@@ -18,7 +18,8 @@ import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { type ServerTab, type TabAgent, useServerStore } from '@store/serverStore';
-import { toast } from '@factorai/ui';
+import { Input, toast } from '@factorai/ui';
+import { answerConfirm } from '@hooks/useServerEvents';
 
 /**
  * Start a session of `agent` for a server and lend it a terminal (F45): this
@@ -162,6 +163,84 @@ export function RunningChip({ tab }: { tab: ServerTab }) {
 			>
 				Ctrl+C
 			</Button>
+		</div>
+	);
+}
+
+/**
+ * An agent command waiting for the human on this tab's terminal (ADR-0108):
+ * refuse, edit, or run it. Production wears its colour on the Run button too.
+ */
+export function ConfirmBanner({ tab }: { tab: ServerTab }) {
+	const confirm = useServerStore((s) =>
+		tab.terminalId ? s.confirms.find((c) => c.terminalId === tab.terminalId) : undefined,
+	);
+	const [editing, setEditing] = useState<string | null>(null);
+	if (!confirm) return null;
+	const agent = tab.agent?.agent;
+	return (
+		<div
+			data-testid="confirm-banner"
+			className={`flex shrink-0 items-start gap-3 border-b px-4 py-2.5 text-sm ${
+				confirm.production ? 'border-production/30 bg-production/10' : 'border-border bg-primary/5'
+			}`}
+		>
+			{agent && <AgentMark agent={agent} className="mt-0.5" />}
+			<div className="min-w-0 flex-1">
+				<div className="font-medium">
+					{agent ? agentName(agent) : 'An agent'} wants to {confirm.keys ? 'press keys' : 'run'} on{' '}
+					{confirm.serverName}
+					{confirm.production ? ' (production)' : ''}
+				</div>
+				{editing === null ? (
+					<code className="mt-1.5 block rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs break-all">
+						{confirm.command}
+					</code>
+				) : (
+					<Input
+						autoFocus
+						aria-label="Edited command"
+						className="mt-1.5 font-mono text-xs"
+						value={editing}
+						onChange={(e) => setEditing(e.target.value)}
+					/>
+				)}
+				<div className="mt-1 text-xs text-muted-foreground">
+					It will be typed in{' '}
+					{tab.agent?.mode === 'shared' ? 'your terminal' : "the agent's terminal"}.
+				</div>
+			</div>
+			<div className="flex shrink-0 items-center gap-1.5 self-center">
+				<Button
+					size="sm"
+					variant="outline"
+					className="text-destructive"
+					data-testid="confirm-refuse"
+					onClick={() => {
+						setEditing(null);
+						answerConfirm(confirm.id, false);
+					}}
+				>
+					Refuse
+				</Button>
+				{!confirm.keys && editing === null && (
+					<Button size="sm" variant="outline" onClick={() => setEditing(confirm.command)}>
+						Edit…
+					</Button>
+				)}
+				<Button
+					size="sm"
+					data-testid="confirm-run"
+					className={confirm.production ? 'bg-production text-white hover:bg-production/90' : ''}
+					onClick={() => {
+						const edited = editing !== null && editing !== confirm.command ? editing : undefined;
+						setEditing(null);
+						answerConfirm(confirm.id, true, edited);
+					}}
+				>
+					Run on {confirm.serverName}
+				</Button>
+			</div>
 		</div>
 	);
 }

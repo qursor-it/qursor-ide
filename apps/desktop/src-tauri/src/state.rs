@@ -58,4 +58,6 @@ pub struct AppState {
 	pub vault: Arc<crate::services::vault::Vault>,
 	/// One live connection per server, shared by its tabs (ADR-0103).
 	pub ssh: Arc<crate::services::ssh::pool::Pool>,
+	/// Agent commands waiting for the human's yes or no (ADR-0108).
+	pub confirmations: Arc<crate::services::agent_policy::Confirmations>,
 }

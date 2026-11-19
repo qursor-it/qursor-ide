@@ -66,6 +66,7 @@ import type {
 	SessionUsage,
 	SessionWorktreeEvent,
 	AgentRunEvent,
+	ConfirmEvent,
 	LinkMode,
 	Server,
 	ServerBook,
@@ -544,6 +545,10 @@ export const cmd = {
 		invoke<void>('agent_link_terminal', { terminalId, sessionId, mode }),
 	agentUnlinkTerminal: (terminalId: TerminalId) =>
 		invoke<void>('agent_unlink_terminal', { terminalId }),
+	/** Answer an agent command waiting for confirmation (ADR-0108). A `command`
+	 *  runs the edited line instead. */
+	agentTerminalAnswer: (id: string, run: boolean, command?: string) =>
+		invoke<void>('agent_terminal_answer', { id, run, command }),
 	/** The project a server's agent sessions run in, created on first use (F45). */
 	serverAgentProject: (serverId: string) => invoke<Project>('server_agent_project', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by
@@ -842,6 +847,9 @@ export const events = {
 	/** An agent started or finished a command in a lent SSH terminal (F45). */
 	onAgentTerminalRun: (cb: (p: AgentRunEvent) => void) =>
 		listen<AgentRunEvent>('agent-terminal:run', cb),
+	/** An agent command waits for the human's yes or no (ADR-0108). */
+	onAgentTerminalConfirm: (cb: (p: ConfirmEvent) => void) =>
+		listen<ConfirmEvent>('agent-terminal:confirm', cb),
 	onQuitRequested: (cb: (p: QuitRequestedEvent) => void) =>
 		listen<QuitRequestedEvent>('app:quit-requested', cb),
 	/** The window came to the front. Tauri's own event, not ours — it is what
@@ -2440,6 +2448,7 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 				displayName: 'server',
 				missing: false,
 			} as unknown as T;
+		case 'agent_terminal_answer':
 		case 'agent_link_terminal':
 		case 'agent_unlink_terminal':
 		case 'delete_server':

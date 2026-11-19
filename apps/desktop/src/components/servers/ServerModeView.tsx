@@ -31,7 +31,7 @@ import {
 	X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { AgentMenu, AgentPane, RunningChip } from '@components/servers/AgentPane';
+import { AgentMenu, AgentPane, ConfirmBanner, RunningChip } from '@components/servers/AgentPane';
 import { ServerDialog } from '@components/servers/ServerDialog';
 import { AgentMark } from '@components/layout/AgentMark';
 import { agentName } from '@lib/agents';
@@ -39,7 +39,7 @@ import { answerHostKey, reconnectTab, ServerTerminal } from '@components/servers
 import { disposeTerminal } from '@components/terminal/Terminal';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
-import { cmd, events } from '@lib/tauri';
+import { cmd } from '@lib/tauri';
 import { tabLabel, useServerStore } from '@store/serverStore';
 
 const POLL_MS = 3_000;
@@ -87,24 +87,6 @@ export function ServerModeView() {
 
 	// A renderer reload keeps every PTY running: give each tab its live one back
 	// instead of logging in a second time.
-	// "Claude is running …" on the tab and over its terminal (F45).
-	useEffect(() => {
-		let off: (() => void) | undefined;
-		let gone = false;
-		events
-			.onAgentTerminalRun((e) =>
-				useServerStore.getState().setRunning(e.terminalId, e.running ? e.command : null),
-			)
-			.then((fn) => {
-				if (gone) fn();
-				else off = fn;
-			});
-		return () => {
-			gone = true;
-			off?.();
-		};
-	}, []);
-
 	useEffect(() => {
 		cmd.terminalList().then((list) => {
 			for (const t of list) {
@@ -142,6 +124,7 @@ export function ServerModeView() {
 								<AgentMenu tab={tab} server={server} />
 							)}
 						</header>
+						<ConfirmBanner tab={tab} />
 						<div className="min-h-0 flex-1">
 							{tab.dead ? (
 								<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -568,6 +551,7 @@ export function ServerTabs() {
 	const active = useServerStore((s) => s.active);
 	const activate = useServerStore((s) => s.activate);
 	const running = useServerStore((s) => s.running);
+	const confirms = useServerStore((s) => s.confirms);
 	const byId = new Map((book.data?.servers ?? []).map((s) => [s.id, s]));
 	return (
 		<div
@@ -612,11 +596,13 @@ export function ServerTabs() {
 								}`}
 							>
 								<AgentMark agent={t.agent.agent} className="size-3" />
-								{t.agent.mode === 'own'
-									? `${agentName(t.agent.agent)}'s`
-									: t.terminalId && running[t.terminalId]
-										? 'running'
-										: agentName(t.agent.agent)}
+								{confirms.some((c) => c.terminalId === t.terminalId)
+									? 'confirm'
+									: t.agent.mode === 'own'
+										? `${agentName(t.agent.agent)}'s`
+										: t.terminalId && running[t.terminalId]
+											? 'running'
+											: agentName(t.agent.agent)}
 							</span>
 						)}
 						<IconButton

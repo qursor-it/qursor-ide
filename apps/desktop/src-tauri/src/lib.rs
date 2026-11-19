@@ -293,12 +293,25 @@ pub fn run() {
 					},
 				});
 			let mut terminals = terminals;
+			let confirmations = Arc::new(services::agent_policy::Confirmations::default());
 			// Agents using SSH terminals (F45): announce their commands, and name
 			// a server in `terminals_list` the way the address book does.
 			{
 				let app = app.handle().clone();
+				let run_app = app.clone();
 				terminals.set_agent_run_cb(Arc::new(move |e| {
-					let _ = app.emit("agent-terminal:run", e);
+					let _ = run_app.emit("agent-terminal:run", e);
+				}));
+				// What an agent may do on each server (ADR-0108), decided per
+				// command from the address book, asked of the human when the
+				// policy says so, and written to the local audit log.
+				let policy_db = db.clone();
+				let policy_app = app.clone();
+				let asks = confirmations.clone();
+				terminals.set_agent_policy(Arc::new(move |req| {
+					services::agent_policy::decide(&policy_db, &asks, req, |ev| {
+						let _ = policy_app.emit("agent-terminal:confirm", ev);
+					})
 				}));
 				let db = db.clone();
 				terminals.set_server_label(Arc::new(move |id| {
@@ -423,6 +436,7 @@ pub fn run() {
 				taskbar_widget: taskbar_widget.clone(),
 				vault,
 				ssh,
+				confirmations,
 			});
 			// On unless the setting says `off`; a no-op off Windows.
 			taskbar_widget.set_enabled(
@@ -533,6 +547,8 @@ pub fn run() {
 			commands::servers::agent_unlink_terminal,
 			commands::servers::agent_links,
 			commands::servers::server_agent_project,
+			commands::servers::agent_terminal_answer,
+			commands::servers::agent_audit,
 			commands::profiles::list_profiles,
 			commands::profiles::create_profile,
 			commands::profiles::rename_profile,

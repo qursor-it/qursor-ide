@@ -3075,6 +3075,68 @@ mod tests {
 		assert_ne!(v["result"]["isError"], true, "{reply}");
 	}
 
+	/// A manager with one SSH terminal on a loopback sshd, in a login shell at
+	/// `/tmp`, lent to session `sess`. The sshd guard must outlive the test.
+	#[cfg(unix)]
+	fn lent_terminal(
+		configure: impl FnOnce(&mut TerminalManager),
+	) -> (crate::services::ssh::test_sshd::Sshd, TerminalManager, TerminalId) {
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp")).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mut mgr, _data, _exit) = make_manager();
+		configure(&mut mgr);
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+		(d, mgr, id)
+	}
+
+	/// The server policy sits between the agent and the terminal (ADR-0108): a
+	/// refusal types nothing, and an edit by the human is what runs.
+	#[cfg(unix)]
+	#[test]
+	fn the_policy_refuses_or_edits_before_anything_is_typed() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		let (_d, mgr, id) = lent_terminal(|m| {
+			m.set_agent_policy(Arc::new(|req| {
+				if req.command.starts_with("rm") {
+					Err("refused by the human".into())
+				} else if req.command == "echo original" {
+					Ok(Some("echo edited".into()))
+				} else {
+					Ok(None)
+				}
+			}))
+		});
+		let agent = mgr.session_terminals("sess");
+		let err = agent.run(&id, "rm -rf /tmp/qursor-nothing", 10).expect_err("refused");
+		assert!(err.contains("refused"), "{err}");
+		let screen =
+			agent.read(&id).expect("read")["screen"].as_str().unwrap_or_default().to_string();
+		assert!(!screen.contains("rm -rf"), "a refused command is never typed: {screen}");
+		let r = agent.run(&id, "echo original", 15).expect("run");
+		assert_eq!(r["output"], "edited", "{r}");
+		assert_eq!(r["edited_by_human"], "echo edited", "{r}");
+	}
+
 	#[test]
 	fn spawn_runs_and_streams_output() {
 		let (mgr, data, exit) = make_manager();

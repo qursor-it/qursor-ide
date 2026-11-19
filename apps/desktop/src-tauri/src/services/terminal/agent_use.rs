@@ -86,9 +86,10 @@ pub struct AgentRunEvent {
 	pub running: bool,
 }
 
-/// Decides whether an agent command may run on a server (M3, ADR-0108): `Ok`
-/// to run it, `Err(reason)` to refuse. May block while the human is asked.
-pub type PolicyCb = Arc<dyn Fn(&PolicyRequest) -> Result<(), String> + Send + Sync>;
+/// Decides whether an agent command may run on a server (ADR-0108): `Ok(None)`
+/// to run it as written, `Ok(Some(edited))` to run what the human edited it
+/// into, `Err(reason)` to refuse. May block while the human is asked.
+pub type PolicyCb = Arc<dyn Fn(&PolicyRequest) -> Result<Option<String>, String> + Send + Sync>;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -210,7 +211,7 @@ impl SessionTerminals {
 		terminal: &str,
 		command: &str,
 		keys: bool,
-	) -> Result<(), String> {
+	) -> Result<Option<String>, String> {
 		match &self.mgr.agent_policy {
 			Some(p) => p(&PolicyRequest {
 				server_id: h.project_id.clone(),
@@ -219,7 +220,7 @@ impl SessionTerminals {
 				command: command.to_string(),
 				keys,
 			}),
-			None => Ok(()),
+			None => Ok(None),
 		}
 	}
 
@@ -309,7 +310,8 @@ impl TerminalUse for SessionTerminals {
 				"the human is typing in this terminal; wait and try again, or ask them".into()
 			);
 		}
-		self.check_policy(&h, terminal, command, false)?;
+		let edited = self.check_policy(&h, terminal, command, false)?;
+		let command = edited.as_deref().unwrap_or(command);
 		if h.agent_running.swap(true, Ordering::AcqRel) {
 			return Err("another command of yours is already running in this terminal".into());
 		}
@@ -362,6 +364,9 @@ impl TerminalUse for SessionTerminals {
 		};
 		if interrupted {
 			out["human"] = json!("the human typed in this terminal while your command ran");
+		}
+		if edited.is_some() {
+			out["edited_by_human"] = json!(command);
 		}
 		Ok(out)
 	}

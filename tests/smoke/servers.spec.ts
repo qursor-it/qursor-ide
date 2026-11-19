@@ -149,4 +149,46 @@ test.describe('servers', () => {
 		const own = (await calls('agent_link_terminal'))[1];
 		expect(own.args).toMatchObject({ mode: 'own' });
 	});
+
+	test('@smoke an agent command on a confirm server waits for the human in a banner', async ({
+		page,
+	}) => {
+		await installMockBridge(page, {
+			serverBook: book,
+			claudeCli: { installed: true, binaryPath: '/usr/local/bin/claude', version: '2.1.0' },
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await page.getByTestId('server-row-db01').dblclick();
+		await page.getByTestId('agent-menu').click();
+		await page.getByTestId('agent-claude-shared').click();
+		const linkCall = async () =>
+			page.evaluate(() =>
+				(window.__FACTORAI_TEST_CALLS__ ?? []).find((c) => c.name === 'agent_link_terminal'),
+			);
+		await expect.poll(async () => !!(await linkCall())).toBe(true);
+		const terminalId = ((await linkCall())?.args as { terminalId: string }).terminalId;
+		await page.evaluate((tid) => {
+			window.__FACTORAI_EMIT__?.('agent-terminal:confirm', {
+				id: 'c1',
+				serverId: 's2',
+				serverName: 'db01',
+				terminalId: tid,
+				sessionId: 'x',
+				command: 'sudo journalctl --vacuum-time=14d',
+				keys: false,
+				production: true,
+			});
+		}, terminalId);
+		const banner = page.getByTestId('confirm-banner');
+		await expect(banner).toContainText('sudo journalctl --vacuum-time=14d');
+		await expect(banner).toContainText('production');
+		await expect(page.getByTestId('mode-servers-count')).toHaveText('1');
+		await banner.getByTestId('confirm-run').click();
+		await expect(banner).toHaveCount(0);
+		const answer = await page.evaluate(() =>
+			(window.__FACTORAI_TEST_CALLS__ ?? []).find((c) => c.name === 'agent_terminal_answer'),
+		);
+		expect(answer?.args).toMatchObject({ id: 'c1', run: true });
+	});
 });

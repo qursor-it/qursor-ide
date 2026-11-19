@@ -2020,3 +2020,16 @@ export interface AgentRunEvent {
 	command: string;
 	running: boolean;
 }
+
+/** An agent command waiting for the human (F45, ADR-0108). */
+export interface ConfirmEvent {
+	id: string;
+	serverId: string;
+	serverName: string;
+	terminalId: string;
+	sessionId: string;
+	command: string;
+	/** Keys to press rather than a command line. */
+	keys: boolean;
+	production: boolean;
+}

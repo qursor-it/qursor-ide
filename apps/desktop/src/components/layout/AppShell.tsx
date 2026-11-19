@@ -8,6 +8,7 @@ import { FileTreePanel } from '@components/files/FileTreePanel';
 import { CanvasModeView } from '@components/canvas/CanvasModeView';
 import { GitModeView } from '@components/gitmode/GitModeView';
 import { ServerModeView } from '@components/servers/ServerModeView';
+import { useServerEvents } from '@hooks/useServerEvents';
 import { GitErrorHost } from '@components/gitmode/GitErrorDialog';
 import { GitConfirmHost } from '@components/gitmode/OpLog';
 import { ShellDock } from '@components/terminal/ShellDock';
@@ -62,6 +63,7 @@ export function AppShell({ children }: AppShellProps) {
 	const sidebarWidth = effectiveSidebarWidth(storedSidebarWidth, sidebarCollapsed);
 	const panelOpen = usePanelStore((s) => s.open);
 	const mode = useGitModeStore((s) => s.mode);
+	useServerEvents();
 	const gitMode = mode === 'git';
 	const canvasMode = mode === 'canvas';
 	const panelWidth = usePanelStore((s) => s.width);

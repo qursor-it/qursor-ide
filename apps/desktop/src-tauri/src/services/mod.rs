@@ -1,4 +1,5 @@
 pub mod agent_cli;
+pub mod agent_policy;
 pub mod agent_tools;
 pub mod attention;
 pub mod canvas;

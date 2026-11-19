@@ -1,4 +1,4 @@
-import type { AgentId, LinkMode } from '@factorai/types';
+import type { AgentId, ConfirmEvent, LinkMode } from '@factorai/types';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
@@ -45,6 +45,10 @@ interface ServerState {
 	/** Commands agents are running, by terminal id (F45). Memory only. */
 	running: Record<string, string>;
 	setRunning: (terminalId: string, command: string | null) => void;
+	/** Agent commands waiting for the human (ADR-0108). Memory only. */
+	confirms: ConfirmEvent[];
+	addConfirm: (c: ConfirmEvent) => void;
+	removeConfirm: (id: string) => void;
 	close: (key: string) => void;
 	activate: (key: string) => void;
 	attach: (key: string, terminalId: string) => void;
@@ -77,6 +81,9 @@ export const useServerStore = create<ServerState>()(
 			},
 			setAgent: (key, agent) =>
 				set((s) => ({ tabs: s.tabs.map((t) => (t.key === key ? { ...t, agent } : t)) })),
+			confirms: [],
+			addConfirm: (c) => set((s) => ({ confirms: [...s.confirms, c] })),
+			removeConfirm: (id) => set((s) => ({ confirms: s.confirms.filter((c) => c.id !== id) })),
 			running: {},
 			setRunning: (terminalId, command) =>
 				set((s) => {
