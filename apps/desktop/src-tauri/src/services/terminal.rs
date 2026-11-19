@@ -762,6 +762,11 @@ struct TerminalHandle {
 	capture: Option<Arc<agent_use::CaptureCell>>,
 	/// The last keystroke the *human* sent, ms; agent writes do not count.
 	last_human_input: AtomicI64,
+	/// The last Ctrl+C the human sent, ms (F45).
+	last_human_interrupt: AtomicI64,
+	/// The human has typed at the prompt without Enter, Ctrl+C or Ctrl+U since:
+	/// an agent must not append its command to their half-typed line.
+	human_line_dirty: AtomicBool,
 	/// The agent session this terminal is lent to, if any (F45).
 	link: Mutex<Option<AgentLink>>,
 	/// An agent command is in flight here.
@@ -2121,6 +2126,8 @@ impl TerminalManager {
 			capture: (kind == TerminalKind::Ssh)
 				.then(|| Arc::new(agent_use::CaptureCell::new(req.cols, req.rows))),
 			last_human_input: AtomicI64::new(0),
+			last_human_interrupt: AtomicI64::new(0),
+			human_line_dirty: AtomicBool::new(false),
 			link: Mutex::new(None),
 			agent_running: AtomicBool::new(false),
 		});
@@ -2281,6 +2288,17 @@ impl TerminalManager {
 		handle.last_activity.store(now_ms(), Ordering::Relaxed);
 		// `write` is the human's path; an agent writes through its own (F45).
 		handle.last_human_input.store(now_ms(), Ordering::Relaxed);
+		if data.contains(&0x03) {
+			handle.last_human_interrupt.store(now_ms(), Ordering::Relaxed);
+		}
+		// Enter, Ctrl+C or Ctrl+U leaves the prompt clean; anything printable
+		// after them leaves a half-typed line an agent must not extend.
+		let last_clear = data.iter().rposition(|b| matches!(b, b'\r' | b'\n' | 0x03 | 0x15));
+		let typed_after =
+			data[last_clear.map_or(0, |i| i + 1)..].iter().any(|b| *b >= 0x20 && *b != 0x7f);
+		if last_clear.is_some() || typed_after {
+			handle.human_line_dirty.store(typed_after, Ordering::Relaxed);
+		}
 		Ok(())
 	}
 
@@ -3288,6 +3306,40 @@ mod tests {
 		assert_eq!(r["output"], "kept=42", "the shell's state outlived its channel: {r}");
 		mgr.kill(&id2).expect("close");
 		let _ = std::process::Command::new("tmux").args(["kill-session", "-t", &name]).status();
+	}
+
+	/// The turn rules from the review of F45: no hidden second line, no
+	/// appending to the human's half-typed line, and the human's Ctrl+C ends
+	/// the agent's wait at once.
+	#[cfg(unix)]
+	#[test]
+	fn the_agent_never_types_over_the_human() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		let (_d, mgr, id) = lent_terminal(|_| {});
+		let agent = mgr.session_terminals("sess");
+		let e = agent.run(&id, "ls\rrm -rf /tmp/qursor-never", 5).expect_err("refused");
+		assert!(e.contains("control character"), "{e}");
+
+		mgr.write(&id, b"echo half-typ").expect("human types");
+		std::thread::sleep(Duration::from_millis(1700));
+		let e = agent.run(&id, "echo agent", 5).expect_err("half-typed line");
+		assert!(e.contains("half-typed"), "{e}");
+		mgr.write(&id, b"\x15").expect("human clears the line");
+		std::thread::sleep(Duration::from_millis(1700));
+		let r = agent.run(&id, "echo agent", 10).expect("run");
+		assert_eq!(r["output"], "agent", "{r}");
+
+		let mgr2 = mgr.clone();
+		let id2 = id.clone();
+		let interrupter = std::thread::spawn(move || {
+			std::thread::sleep(Duration::from_millis(1500));
+			mgr2.write(&id2, b"\x03").expect("human interrupts");
+		});
+		let t0 = std::time::Instant::now();
+		let r = agent.run(&id, "sleep 30", 60).expect("run");
+		interrupter.join().expect("join");
+		assert!(t0.elapsed() < Duration::from_secs(10), "the wait ended with the human's Ctrl+C");
+		assert!(r["status"].as_str().unwrap_or_default().contains("interrupted"), "{r}");
 	}
 
 	#[test]

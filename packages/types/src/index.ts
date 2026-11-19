@@ -2034,6 +2034,9 @@ export interface ConfirmEvent {
 	command: string;
 	/** Keys to press rather than a command line. */
 	keys: boolean;
+	/** A command line the human may edit before it runs; file operations and
+	 *  keys are run or refused as they are. */
+	editable: boolean;
 	production: boolean;
 }
 

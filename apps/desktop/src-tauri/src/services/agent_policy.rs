@@ -37,6 +37,8 @@ pub struct ConfirmEvent {
 	pub session_id: String,
 	pub command: String,
 	pub keys: bool,
+	/// A command line the human may edit before it runs.
+	pub editable: bool,
 	pub production: bool,
 }
 
@@ -87,40 +89,28 @@ const READ_ONLY: &[&str] = &[
 	"free",
 	"uptime",
 	"uname",
-	"hostname",
 	"whoami",
 	"id",
 	"pwd",
 	"echo",
-	"date",
 	"ps",
 	"top",
 	"pgrep",
-	"ss",
-	"netstat",
-	"ip",
 	"lsblk",
-	"mount",
-	"env",
 	"printenv",
 	"which",
 	"type",
 	"journalctl",
-	"dmesg",
-	"sort",
-	"uniq",
 	"cut",
-	"awk",
-	"sed",
 	"tr",
 	"diff",
 	"md5sum",
+	"sort",
 	"sha256sum",
 	"readlink",
 	"realpath",
 	"basename",
 	"dirname",
-	"tree",
 	"true",
 	"test",
 	"[",
@@ -131,39 +121,59 @@ const READ_ONLY_SUB: &[(&str, &[&str])] = &[
 		"systemctl",
 		&["status", "is-active", "is-enabled", "list-units", "list-timers", "show", "cat"],
 	),
-	(
-		"git",
-		&["status", "log", "diff", "show", "branch", "remote", "rev-parse", "describe", "blame"],
-	),
+	("git", &["status", "log", "diff", "show", "rev-parse", "describe", "blame"]),
 	("docker", &["ps", "logs", "inspect", "images", "stats", "version", "info"]),
 	("kubectl", &["get", "describe", "logs", "top", "version"]),
 	("nginx", &["-t", "-T", "-v", "-V"]),
+];
+/// Options that make a reading program write, delete or run something.
+const ACTING_OPTIONS: &[&str] = &[
+	"-delete",
+	"-exec",
+	"-execdir",
+	"-ok",
+	"-okdir",
+	"-fprint",
+	"-fprint0",
+	"-fprintf",
+	"-fls",
+	"--output",
+	"-o",
+	"--vacuum-size",
+	"--vacuum-time",
+	"--vacuum-files",
+	"--rotate",
+	"--flush",
+	"--relinquish-var",
+	"--setup-keys",
 ];
 
 /// Whether a command line stays within reading. Conservative: anything it
 /// cannot classify is not read-only.
 pub fn is_read_only(command: &str) -> bool {
-	if command.contains(['>', '`', '\n']) || command.contains("$(") {
+	if command.chars().any(char::is_control)
+		&& !command.chars().all(|c| !c.is_control() || c == '\t')
+	{
+		return false;
+	}
+	if command.contains(['>', '`']) || command.contains("$(") || command.contains("<(") {
 		return false;
 	}
 	command.split(['|', ';', '&']).map(str::trim).filter(|s| !s.is_empty()).all(|segment| {
-		let mut words = segment.split_whitespace();
-		let Some(first) = words.next() else { return true };
-		// `sed -i` edits in place; `find -delete` / `-exec` act.
-		if first == "sed" && segment.split_whitespace().any(|w| w.starts_with("-i")) {
-			return false;
-		}
-		if first == "find"
-			&& segment.split_whitespace().any(|w| matches!(w, "-delete" | "-exec" | "-execdir"))
+		let words: Vec<&str> = segment.split_whitespace().collect();
+		let Some(first) = words.first() else { return true };
+		if words
+			.iter()
+			.any(|w| ACTING_OPTIONS.iter().any(|o| *w == *o || w.starts_with(&format!("{o}="))))
 		{
 			return false;
 		}
-		if READ_ONLY.contains(&first) {
+		if READ_ONLY.contains(first) {
 			return true;
 		}
-		READ_ONLY_SUB.iter().any(|(tool, subs)| {
-			*tool == first && words.next().is_some_and(|sub| subs.contains(&sub))
-		})
+		READ_ONLY_SUB
+			.iter()
+			.any(|(tool, subs)| tool == first && words.get(1).is_some_and(|sub| subs.contains(sub)))
 	})
 }
 
@@ -217,6 +227,7 @@ pub fn decide(
 				session_id: req.session_id.clone(),
 				command: req.command.clone(),
 				keys: req.keys,
+				editable: req.editable,
 				production: server.environment == "prod",
 			};
 			match confirmations.ask(ev, announce) {
@@ -309,6 +320,14 @@ mod tests {
 			"ls; reboot",
 			"echo $(rm -rf /)",
 			"git push",
+			"ls\rrm -rf ~",
+			"env rm -rf /",
+			"awk 'BEGIN{system(\"id\")}'",
+			"sort -o out in",
+			"find . -fprint /tmp/x",
+			"cat <(id)",
+			"journalctl --vacuum-time=1d",
+			"git branch -D main",
 		] {
 			assert!(!is_read_only(no), "{no}");
 		}
@@ -342,6 +361,7 @@ mod tests {
 			session_id: "x".into(),
 			command: "rm -rf /tmp/a".into(),
 			keys: false,
+			editable: true,
 			production: true,
 		};
 		let got = c.ask(ev, |_| {});

@@ -180,6 +180,7 @@ test.describe('servers', () => {
 				sessionId: 'x',
 				command: 'sudo journalctl --vacuum-time=14d',
 				keys: false,
+				editable: true,
 				production: true,
 			});
 		}, terminalId);

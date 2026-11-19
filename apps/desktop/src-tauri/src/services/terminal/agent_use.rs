@@ -29,6 +29,30 @@ const HUMAN_GRACE_MS: i64 = 1500;
 /// How long the one-off bootstrap probe may take before the shell is declared
 /// unable to run agent commands.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
+/// How long a typed command may take to print its start marker before the
+/// shell is presumed to have lost the marker functions.
+const START_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// What a policy request is, which decides whether the human may edit it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PolicyKind {
+	Command,
+	Keys,
+	File,
+}
+
+/// Only newline and tab among the control characters: a bare `\r` would be a
+/// second command line the banner does not show, and escape sequences would
+/// drive readline. The human types those; an agent does not.
+fn refuse_control_bytes(text: &str) -> Result<(), String> {
+	match text.chars().find(|c| (c.is_control() && *c != '\n' && *c != '\t') || *c == '\u{7f}') {
+		Some(c) => Err(format!(
+			"the command contains the control character U+{:04X}; nothing was typed",
+			c as u32
+		)),
+		None => Ok(()),
+	}
+}
 
 pub struct CaptureCell {
 	cap: Mutex<Capture>,
@@ -98,9 +122,11 @@ pub struct PolicyRequest {
 	pub server_id: String,
 	pub terminal_id: TerminalId,
 	pub session_id: String,
-	/// The command line, or the keys for `send_keys`.
+	/// The command line, the keys for `send_keys`, or a file operation.
 	pub command: String,
 	pub keys: bool,
+	/// The human may edit it before it runs: true for a command line only.
+	pub editable: bool,
 }
 
 impl TerminalManager {
@@ -212,21 +238,72 @@ impl SessionTerminals {
 
 	fn check_policy(
 		&self,
-		h: &Handle,
 		terminal: &str,
 		command: &str,
-		keys: bool,
+		kind: PolicyKind,
 	) -> Result<Option<String>, String> {
-		match &self.mgr.agent_policy {
-			Some(p) => p(&PolicyRequest {
-				server_id: h.project_id.clone(),
-				terminal_id: terminal.to_string(),
-				session_id: self.session_id.clone(),
-				command: command.to_string(),
-				keys,
-			}),
-			None => Ok(None),
+		let (h, _, _) = self.lent(terminal)?;
+		let Some(p) = &self.mgr.agent_policy else { return Ok(None) };
+		let answer = p(&PolicyRequest {
+			server_id: h.project_id.clone(),
+			terminal_id: terminal.to_string(),
+			session_id: self.session_id.clone(),
+			command: command.to_string(),
+			keys: kind == PolicyKind::Keys,
+			editable: kind == PolicyKind::Command,
+		})?;
+		if answer.is_some() && kind != PolicyKind::Command {
+			return Err("only a command line can be edited; nothing was done".into());
 		}
+		Ok(answer)
+	}
+
+	/// Everything that must hold before a byte is typed, asked again after a
+	/// confirmation: still lent, at rest, and the human not mid-line.
+	fn preflight(&self, terminal: &str) -> Result<(Handle, Arc<CaptureCell>), String> {
+		let (h, cell, _) = self.lent(terminal)?;
+		{
+			let c = cell.cap.lock();
+			let state = Self::state(&h, &c, self.mgr.tmux.contains_key(terminal));
+			if state != "ready" {
+				return Err(format!(
+					"the terminal is {state}; nothing was typed. Current screen:\n{}",
+					c.screen_text()
+				));
+			}
+		}
+		if let (Some(session), Some(files)) =
+			(self.mgr.tmux.get(terminal).map(|s| s.clone()), self.mgr.remote_files.clone())
+		{
+			if let Err(why) =
+				files.tmux_at_rest(&h.project_id, &session).map_err(|e| e.to_string())?
+			{
+				return Err(format!("the terminal is {why}; nothing was typed"));
+			}
+		}
+		if now_ms() - h.last_human_input.load(Ordering::Relaxed) < HUMAN_GRACE_MS {
+			return Err(
+				"the human is typing in this terminal; wait and try again, or ask them".into()
+			);
+		}
+		if h.human_line_dirty.load(Ordering::Relaxed) {
+			return Err(
+				"the human has a half-typed line at the prompt; nothing was typed. Ask them to \
+				 finish or clear it"
+					.into(),
+			);
+		}
+		Ok((h, cell))
+	}
+
+	/// A persistent tab's output, read from tmux's own history: tmux redraws
+	/// the pane after the end marker has already passed through.
+	fn tmux_output(&self, h: &Handle, terminal: &str, nonce: &str) -> Option<String> {
+		let session = self.mgr.tmux.get(terminal).map(|s| s.clone())?;
+		let files = self.mgr.remote_files.clone()?;
+		std::thread::sleep(Duration::from_millis(150));
+		let text = files.tmux_capture(&h.project_id, &session).ok()?;
+		term_capture::output_after_marker(&text, nonce)
 	}
 
 	/// Wait on the capture until `done` says so or `deadline` passes.
@@ -324,34 +401,13 @@ impl TerminalUse for SessionTerminals {
 	}
 
 	fn run(&self, terminal: &str, command: &str, timeout_s: u64) -> Result<Value, String> {
-		let (h, cell, _) = self.lent(terminal)?;
-		{
-			let c = cell.cap.lock();
-			let state = Self::state(&h, &c, self.mgr.tmux.contains_key(terminal));
-			if state != "ready" {
-				return Err(format!(
-					"the terminal is {state}; nothing was typed. Current screen:\n{}",
-					c.screen_text()
-				));
-			}
-		}
-		// A persistent tab's screen is tmux's own: ask tmux about the pane.
-		if let (Some(session), Some(files)) =
-			(self.mgr.tmux.get(terminal).map(|s| s.clone()), self.mgr.remote_files.clone())
-		{
-			if let Err(why) =
-				files.tmux_at_rest(&h.project_id, &session).map_err(|e| e.to_string())?
-			{
-				return Err(format!("the terminal is {why}; nothing was typed"));
-			}
-		}
-		if now_ms() - h.last_human_input.load(Ordering::Relaxed) < HUMAN_GRACE_MS {
-			return Err(
-				"the human is typing in this terminal; wait and try again, or ask them".into()
-			);
-		}
-		let edited = self.check_policy(&h, terminal, command, false)?;
+		refuse_control_bytes(command)?;
+		self.preflight(terminal)?;
+		let edited = self.check_policy(terminal, command, PolicyKind::Command)?;
 		let command = edited.as_deref().unwrap_or(command);
+		refuse_control_bytes(command)?;
+		// A confirmation can take minutes: everything is judged again after it.
+		let (h, cell) = self.preflight(terminal)?;
 		if h.agent_running.swap(true, Ordering::AcqRel) {
 			return Err("another command of yours is already running in this terminal".into());
 		}
@@ -363,33 +419,70 @@ impl TerminalUse for SessionTerminals {
 			command: command.to_string(),
 			running: true,
 		});
-		let needs_bootstrap = !cell.cap.lock().bootstrapped;
-		if needs_bootstrap {
-			Self::bootstrap(&h, &cell)?;
-		}
 		let nonce = short_nonce();
-		cell.cap.lock().expect(&nonce);
 		let started = now_ms();
-		Self::write(&h, term_capture::wrap(&nonce, command).as_bytes())?;
+		// The functions may be gone (`exec bash`, `su -`, a nested ssh): a run
+		// whose start marker does not come back is retried once, after a fresh
+		// bootstrap. `__qs N && { … }` means the command itself never ran.
+		let mut attempt = 0;
+		loop {
+			if !cell.cap.lock().bootstrapped {
+				Self::bootstrap(&h, &cell)?;
+			}
+			cell.cap.lock().expect(&nonce);
+			Self::write(&h, term_capture::wrap(&nonce, command).as_bytes())?;
+			let began = Self::wait(&cell, Instant::now() + START_TIMEOUT, |c| {
+				(c.started(&nonce) || c.has_finished(&nonce)).then_some(())
+			});
+			if began.is_some() {
+				break;
+			}
+			let mut c = cell.cap.lock();
+			c.cancel(&nonce);
+			c.bootstrapped = false;
+			drop(c);
+			attempt += 1;
+			if attempt > 1 {
+				return Err("the shell did not run the command (its markers never came back); \
+					 read the screen with terminal_read"
+					.into());
+			}
+		}
 		enum End {
 			Done(term_capture::Finished),
 			Secret,
+			Interrupted,
 		}
 		let deadline = Instant::now() + Duration::from_secs(timeout_s);
 		let end = Self::wait(&cell, deadline, |c| {
 			if let Some(f) = c.take_finished(&nonce) {
 				return Some(End::Done(f));
 			}
+			// The human's Ctrl+C ends the list before its end marker prints.
+			if h.last_human_interrupt.load(Ordering::Relaxed) > started {
+				c.clear_pending();
+				return Some(End::Interrupted);
+			}
 			c.asks_for_secret().then_some(End::Secret)
 		});
-		let interrupted = h.last_human_input.load(Ordering::Relaxed) > started;
+		let typed = h.last_human_input.load(Ordering::Relaxed) > started;
 		drop(guard);
 		let mut out = match end {
-			Some(End::Done(f)) => json!({
-				"exit_code": f.exit,
-				"cwd": f.cwd,
-				"output": f.output,
-				"output_truncated": f.truncated,
+			Some(End::Done(f)) => {
+				let output = match self.tmux_output(&h, terminal, &nonce) {
+					Some(o) => o,
+					None => f.output,
+				};
+				json!({
+					"exit_code": f.exit,
+					"cwd": f.cwd,
+					"output": output,
+					"output_truncated": f.truncated,
+				})
+			}
+			Some(End::Interrupted) => json!({
+				"status": "interrupted by the human (Ctrl+C)",
+				"note": "The human stopped it. Ask before running it again.",
 			}),
 			Some(End::Secret) => json!({
 				"status": "waiting for a password",
@@ -402,7 +495,7 @@ impl TerminalUse for SessionTerminals {
 				"note": format!("Not finished after {timeout_s}s; it keeps running. Read it with terminal_read, or interrupt with terminal_send_keys <ctrl-c>."),
 			}),
 		};
-		if interrupted {
+		if typed {
 			out["human"] = json!("the human typed in this terminal while your command ran");
 		}
 		if edited.is_some() {
@@ -424,7 +517,7 @@ impl TerminalUse for SessionTerminals {
 
 	fn file_read(&self, terminal: &str, path: &str) -> Result<Value, String> {
 		let (h, files, path) = self.file_target(terminal, path)?;
-		self.check_policy(&h, terminal, &format!("cat {path}"), false)?;
+		self.check_policy(terminal, &format!("cat {path}"), PolicyKind::File)?;
 		let text =
 			files.agent_read(&self.session_id, &h.project_id, &path).map_err(|e| e.to_string())?;
 		Ok(json!({ "path": path, "content": text }))
@@ -432,7 +525,14 @@ impl TerminalUse for SessionTerminals {
 
 	fn file_write(&self, terminal: &str, path: &str, content: &str) -> Result<Value, String> {
 		let (h, files, path) = self.file_target(terminal, path)?;
-		self.check_policy(&h, terminal, &format!("write {path} ({} bytes)", content.len()), false)?;
+		// The human approves what will be written, not just where.
+		let shown: String = content.chars().take(4000).collect();
+		let more = if shown.len() < content.len() { "\n…" } else { "" };
+		self.check_policy(
+			terminal,
+			&format!("write {path} ({} bytes):\n{shown}{more}", content.len()),
+			PolicyKind::File,
+		)?;
 		files
 			.agent_write(&self.session_id, &h.project_id, &path, content)
 			.map_err(|e| e.to_string())?;
@@ -450,10 +550,9 @@ impl TerminalUse for SessionTerminals {
 		let (h, files, path) = self.file_target(terminal, path)?;
 		let shown = |s: &str| s.chars().take(160).collect::<String>();
 		self.check_policy(
-			&h,
 			terminal,
 			&format!("edit {path}: «{}» → «{}»", shown(old), shown(new)),
-			false,
+			PolicyKind::File,
 		)?;
 		let n = files
 			.agent_edit(&self.session_id, &h.project_id, &path, old, new, all)
@@ -466,7 +565,12 @@ impl TerminalUse for SessionTerminals {
 		if cell.cap.lock().asks_for_secret() {
 			return Err("the terminal is waiting for a password; only the human types it".into());
 		}
-		self.check_policy(&h, terminal, &keys.join(" "), true)?;
+		for k in keys {
+			if !(k.starts_with('<') && k.ends_with('>')) {
+				refuse_control_bytes(k)?;
+			}
+		}
+		self.check_policy(terminal, &keys.join(" "), PolicyKind::Keys)?;
 		let bytes: Vec<u8> = keys.iter().flat_map(|k| key_bytes(k)).collect();
 		if keys.iter().any(|k| k.eq_ignore_ascii_case("<ctrl-c>")) {
 			// An interrupt ends the wrapped line before its end marker can print.

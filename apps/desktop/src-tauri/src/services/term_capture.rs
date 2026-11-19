@@ -40,8 +40,27 @@ pub const BOOTSTRAP: &str = concat!(
 /// so a trailing comment, `&` or heredoc in it cannot swallow the end marker,
 /// and the whole group is parsed before anything runs — a command that reads
 /// stdin never eats the marker line.
+///
+/// `&&` after the start marker: if the functions are gone (`exec bash`, `su -`)
+/// the command does not run at all, and the run is retried after a bootstrap.
 pub fn wrap(nonce: &str, command: &str) -> String {
-	format!(" __qs {nonce}; {{ {}\n}}; __qe {nonce}\n", command.trim_end())
+	format!(" __qs {nonce} && {{ {}\n}}; __qe {nonce}\n", command.trim_end())
+}
+
+/// A command's output read back from a terminal's text history (tmux's,
+/// F48): the lines after the one that typed its end marker, without the
+/// prompt that followed.
+pub fn output_after_marker(history: &str, nonce: &str) -> Option<String> {
+	let needle = format!("__qe {nonce}");
+	let lines: Vec<&str> = history.lines().collect();
+	let at = lines.iter().rposition(|l| l.contains(&needle))?;
+	let mut out: Vec<&str> = lines[at + 1..].iter().map(|l| l.trim_end()).collect();
+	while out.last().is_some_and(|l| l.is_empty()) {
+		out.pop();
+	}
+	// The prompt the shell printed after the command.
+	out.pop();
+	Some(out.join("\n").trim_matches('\n').to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +128,15 @@ impl Capture {
 			.map(|p| clean(&String::from_utf8_lossy(&p.out)))
 	}
 
+	/// The run's start marker has arrived: the command is executing.
+	pub fn started(&self, nonce: &str) -> bool {
+		self.pending.as_ref().is_some_and(|p| p.nonce == nonce && p.started)
+	}
+
+	pub fn has_finished(&self, nonce: &str) -> bool {
+		self.finished.contains_key(nonce)
+	}
+
 	/// A command is wrapped and has not printed its end marker yet.
 	pub fn has_pending(&self) -> bool {
 		self.pending.is_some()
@@ -161,19 +189,29 @@ impl Capture {
 		let mut plain_from = 0;
 		while i < buf.len() {
 			if buf[i] == 0x1b && buf.get(i + 1) == Some(&b']') {
-				let Some((end, term_len)) = osc_end(&buf, i + 2) else {
-					// Unterminated: keep it for the next read.
-					self.push_output(&buf[plain_from..i]);
-					if buf.len() - i <= MAX_CARRY {
-						self.carry = buf[i..].to_vec();
+				match osc_end(&buf, i + 2) {
+					Osc::Incomplete => {
+						// Unterminated: keep it for the next read.
+						self.push_output(&buf[plain_from..i]);
+						if buf.len() - i <= MAX_CARRY {
+							self.carry = buf[i..].to_vec();
+						}
+						return;
 					}
-					return;
-				};
-				self.push_output(&buf[plain_from..i]);
-				self.on_osc(&buf[i + 2..end]);
-				i = end + term_len;
-				plain_from = i;
-				continue;
+					// A stray `ESC ]` in output (binary data) is abandoned at the
+					// next ESC, as xterm does, so it cannot swallow our markers.
+					Osc::Aborted(at) => {
+						i = at;
+						continue;
+					}
+					Osc::End(end, term_len) => {
+						self.push_output(&buf[plain_from..i]);
+						self.on_osc(&buf[i + 2..end]);
+						i = end + term_len;
+						plain_from = i;
+						continue;
+					}
+				}
 			}
 			i += 1;
 		}
@@ -195,12 +233,9 @@ impl Capture {
 		let Some(rest) = text.strip_prefix("633;") else { return };
 		let mut parts = rest.splitn(4, ';');
 		let (kind, nonce) = (parts.next(), parts.next().unwrap_or_default());
-		let Some(p) = self.pending.as_mut().filter(|p| p.nonce == nonce) else {
-			// A marker from a bootstrap probe, or a stale run: the shell has the
-			// functions either way.
-			self.bootstrapped = true;
-			return;
-		};
+		// Only our own nonce counts: another integration's `633;` markers (VS Code
+		// prints them at every prompt) prove nothing about our functions.
+		let Some(p) = self.pending.as_mut().filter(|p| p.nonce == nonce) else { return };
 		self.bootstrapped = true;
 		match kind {
 			Some("C") => p.started = true,
@@ -224,26 +259,44 @@ impl Capture {
 	}
 }
 
-/// Where the OSC starting at `from` ends: `(index of terminator, its length)`.
-fn osc_end(buf: &[u8], from: usize) -> Option<(usize, usize)> {
+enum Osc {
+	/// Terminator at this index, of this length.
+	End(usize, usize),
+	/// Abandoned at this ESC, which starts something else.
+	Aborted(usize),
+	Incomplete,
+}
+
+/// Where the OSC starting at `from` ends.
+fn osc_end(buf: &[u8], from: usize) -> Osc {
 	let mut j = from;
 	while j < buf.len() {
 		match buf[j] {
-			0x07 => return Some((j, 1)),
-			0x1b if buf.get(j + 1) == Some(&b'\\') => return Some((j, 2)),
-			0x1b if j + 1 == buf.len() => return None,
+			0x07 => return Osc::End(j, 1),
+			0x1b => {
+				return match buf.get(j + 1) {
+					Some(b'\\') => Osc::End(j, 2),
+					Some(_) => Osc::Aborted(j),
+					None => Osc::Incomplete,
+				}
+			}
 			_ => j += 1,
 		}
 	}
-	None
+	Osc::Incomplete
 }
 
 pub fn looks_like_secret_prompt(line: &str) -> bool {
 	let l = line.trim_end().to_ascii_lowercase();
-	(l.ends_with(':') || l.ends_with(": "))
-		&& ["password", "passphrase", "passcode", "verification code", "otp", "pin"]
+	if !l.ends_with(':') {
+		return false;
+	}
+	let words: Vec<&str> =
+		l.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| !w.is_empty()).collect();
+	l.contains("verification code")
+		|| words
 			.iter()
-			.any(|w| l.contains(w))
+			.any(|w| matches!(*w, "password" | "passphrase" | "passcode" | "otp" | "pin"))
 }
 
 /// Output as an agent should read it: escape sequences removed, carriage-return
@@ -353,6 +406,8 @@ mod tests {
 		let mut c = Capture::new(80, 24);
 		c.feed(b"Password changed successfully\r\n$ ");
 		assert!(!c.asks_for_secret());
+		assert!(!looks_like_secret_prompt("Shipping:"), "words, not substrings");
+		assert!(looks_like_secret_prompt("Enter PIN:"));
 	}
 
 	#[test]
@@ -362,6 +417,28 @@ mod tests {
 		assert!(c.in_full_screen_program());
 		c.feed(b"\x1b[?1049l");
 		assert!(!c.in_full_screen_program());
+	}
+
+	#[test]
+	fn a_stray_osc_start_in_binary_output_cannot_swallow_the_end_marker() {
+		let mut c = Capture::new(80, 24);
+		c.expect("n9");
+		c.feed(b"\x1b]633;C;n9\x07junk \x1b]garbage without end ");
+		c.feed(b"\x1b]633;D;n9;0;/\x07$ ");
+		assert!(c.take_finished("n9").is_some());
+	}
+
+	#[test]
+	fn foreign_shell_integration_markers_do_not_count_as_ours() {
+		let mut c = Capture::new(80, 24);
+		c.feed(b"\x1b]633;A\x07$ \x1b]633;B\x07");
+		assert!(!c.bootstrapped);
+	}
+
+	#[test]
+	fn output_is_read_back_from_a_history_after_the_end_marker_line() {
+		let h = "$  __qs ab12 && { echo hi\n> }; __qe ab12\nhi\nthere\n$ \n\n";
+		assert_eq!(output_after_marker(h, "ab12").as_deref(), Some("hi\nthere"));
 	}
 
 	#[test]

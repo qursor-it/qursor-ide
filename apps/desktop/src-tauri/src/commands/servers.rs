@@ -174,7 +174,13 @@ pub async fn server_open_shell(
 			accept_fingerprint,
 		)
 		.await?;
-	let tmux = server.persistent.then(|| ssh::tmux_name(&client_key));
+	// Persistent only where the server has tmux; otherwise a plain shell, and
+	// the tab is treated as one (F48).
+	let tmux = if server.persistent && files(&state).has_tmux(&server.id).await {
+		Some(ssh::tmux_name(&client_key))
+	} else {
+		None
+	};
 	let channel =
 		ssh::open_shell(&conn, cols, rows, server.start_dir.as_deref(), tmux.as_deref()).await?;
 	let (master, child) = pty::bridge(channel, cols, rows);

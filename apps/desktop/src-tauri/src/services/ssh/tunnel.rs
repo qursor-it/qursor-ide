@@ -25,7 +25,7 @@ struct Running {
 
 #[derive(Default)]
 pub struct Tunnels {
-	running: DashMap<String, Running>,
+	running: Arc<DashMap<String, Running>>,
 }
 
 impl Tunnels {
@@ -60,10 +60,14 @@ impl Tunnels {
 			.await
 			.map_err(|e| AppError::Io(format!("cannot listen on 127.0.0.1:{local_port}: {e}")))?;
 		let conn = Arc::new(conn);
+		let (running, id) = (self.running.clone(), tunnel_id.to_string());
 		let task = tauri::async_runtime::spawn(async move {
+			// Owned by this task: aborting it (stop) drops the set, which aborts
+			// every connection still being forwarded.
+			let mut open = tokio::task::JoinSet::new();
 			while let Ok((mut socket, peer)) = listener.accept().await {
 				let (conn, host) = (conn.clone(), dest_host.clone());
-				tauri::async_runtime::spawn(async move {
+				open.spawn(async move {
 					let Ok(c) = conn().await else { return };
 					let Ok(ch) = c
 						.channel_open_direct_tcpip(
@@ -79,7 +83,10 @@ impl Tunnels {
 					let mut remote = ch.into_stream();
 					let _ = tokio::io::copy_bidirectional(&mut socket, &mut remote).await;
 				});
+				while open.try_join_next().is_some() {}
 			}
+			// The listener failed (out of descriptors): no longer running.
+			running.remove(&id);
 		});
 		self.running
 			.insert(tunnel_id.to_string(), Running { server_id: server_id.to_string(), task });
@@ -160,8 +167,21 @@ mod tests {
 			let mut got = vec![0u8; 18];
 			client.read_exact(&mut got).await.expect("read");
 			assert_eq!(&got, b"through-the-tunnel");
+			// A connection still open when the tunnel stops is cut with it.
+			let mut held =
+				tokio::net::TcpStream::connect(("127.0.0.1", local)).await.expect("dial");
+			held.write_all(b"x").await.expect("write");
+			let mut one = [0u8; 1];
+			held.read_exact(&mut one).await.expect("echo");
 			tunnels.stop("t1");
 			assert!(!tunnels.uses("s1"));
+			let mut rest = Vec::new();
+			let ended = tokio::time::timeout(
+				std::time::Duration::from_secs(2),
+				held.read_to_end(&mut rest),
+			)
+			.await;
+			assert!(ended.is_ok(), "the held connection ends instead of hanging");
 			tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 			assert!(
 				tokio::net::TcpStream::connect(("127.0.0.1", local)).await.is_err(),

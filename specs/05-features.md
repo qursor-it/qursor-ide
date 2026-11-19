@@ -9054,7 +9054,15 @@ full-screen program, waiting for a password, still running an earlier command.
 
 **While an agent runs** a command, its tab chip says so and a chip over the
 terminal offers Ctrl+C. Typing in a shared terminal hands the turn back to the
-human; the agent's result says the human typed.
+human; the agent's result says the human typed, and the human's Ctrl+C ends the
+agent's wait at once as an interrupt.
+
+**What an agent may type** (ADR-0110): no control characters but newline and
+tab; never onto a half-typed human line (printable input since the last Enter,
+Ctrl+C or Ctrl+U); and every check is repeated after a confirmation. A shell
+that lost the marker functions gets one fresh bootstrap and one retry, and the
+command never runs without its start marker. In a persistent tab (F48) the
+output is read back from tmux's history.
 
 **Policy** per server: free, confirm (a banner with Refuse / Edit / Run, a badge
 on the Servers rail icon and a toast when the terminal is not on screen; no

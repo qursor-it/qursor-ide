@@ -193,7 +193,7 @@ export function ConfirmBanner({ tab }: { tab: ServerTab }) {
 					{confirm.production ? ' (production)' : ''}
 				</div>
 				{editing === null ? (
-					<code className="mt-1.5 block rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs break-all">
+					<code className="mt-1.5 block max-h-48 overflow-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs break-all whitespace-pre-wrap">
 						{confirm.command}
 					</code>
 				) : (
@@ -223,7 +223,7 @@ export function ConfirmBanner({ tab }: { tab: ServerTab }) {
 				>
 					Refuse
 				</Button>
-				{!confirm.keys && editing === null && (
+				{confirm.editable && editing === null && (
 					<Button size="sm" variant="outline" onClick={() => setEditing(confirm.command)}>
 						Edit…
 					</Button>

@@ -98,28 +98,53 @@ async fn stamp(s: &SftpSession, path: &str) -> AppResult<Option<(u64, u32)>> {
 	}
 }
 
-/// Write `bytes` to `path` atomically, keeping the existing file's mode.
+/// Write `bytes` to `path` atomically, keeping the existing file's mode and,
+/// where the login may, its owner and group. A symlink is written through, not
+/// replaced: the target it points to is what changes.
 pub async fn write_atomic(
 	conn: &Connection,
 	s: &SftpSession,
 	path: &str,
 	bytes: &[u8],
 ) -> AppResult<()> {
+	use russh_sftp::protocol::{FileAttributes, OpenFlags};
+	use tokio::io::AsyncWriteExt;
+	let path = match s.canonicalize(path).await {
+		Ok(real) => real,
+		// A new file: nothing to resolve yet.
+		Err(_) => path.to_string(),
+	};
+	let existing = s.metadata(path.as_str()).await.ok();
 	let tmp = format!("{path}.qursor-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+	let mut attrs = FileAttributes::empty();
+	// Born with the target's mode (or owner-only for a new file), never wider.
+	attrs.permissions =
+		Some(existing.as_ref().and_then(|m| m.permissions).unwrap_or(0o600) & 0o7777);
 	{
-		use tokio::io::AsyncWriteExt;
-		let mut f = s.create(tmp.as_str()).await.map_err(sftp_err)?;
+		let mut f = s
+			.open_with_flags_and_attributes(
+				tmp.as_str(),
+				OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE | OpenFlags::EXCLUDE,
+				attrs.clone(),
+			)
+			.await
+			.map_err(sftp_err)?;
 		f.write_all(bytes).await.map_err(sftp_err)?;
 		f.shutdown().await.map_err(sftp_err)?;
 	}
-	if let Ok(m) = s.metadata(path).await {
-		if let Some(mode) = m.permissions {
-			let mut attrs = russh_sftp::protocol::FileAttributes::empty();
-			attrs.permissions = Some(mode);
-			let _ = s.set_metadata(tmp.as_str(), attrs).await;
-		}
+	// Mode again (a umask may have narrowed it), then owner and group, which
+	// only a privileged login may set: best effort, the mode is not.
+	if let Err(e) = s.set_metadata(tmp.as_str(), attrs).await {
+		let _ = s.remove_file(tmp.as_str()).await;
+		return Err(sftp_err(e));
 	}
-	let moved = exec(conn, &format!("mv -f -- {} {}", quote(&tmp), quote(path))).await;
+	if let Some(m) = &existing {
+		let mut owner = FileAttributes::empty();
+		owner.uid = m.uid;
+		owner.gid = m.gid;
+		let _ = s.set_metadata(tmp.as_str(), owner).await;
+	}
+	let moved = exec(conn, &format!("mv -f -- {} {}", quote(&tmp), quote(&path))).await;
 	if moved.is_err() {
 		let _ = s.remove_file(tmp.as_str()).await;
 	}
@@ -268,6 +293,23 @@ impl RemoteFiles {
 			self.with(server_id, |conn, _| async move { exec_output(&conn, &cmd).await }),
 		)?;
 		Ok(tmux_verdict(&out))
+	}
+
+	/// A tmux session's text history, for reading a command's output back (F48).
+	pub fn tmux_capture(&self, server_id: &str, session: &str) -> AppResult<String> {
+		let cmd = format!("tmux capture-pane -p -J -S -3000 -t {}", quote(session));
+		tauri::async_runtime::block_on(
+			self.with(server_id, |conn, _| async move { exec_output(&conn, &cmd).await }),
+		)
+	}
+
+	/// The server has tmux (F48): a persistent tab is only tmux-backed if so.
+	pub async fn has_tmux(&self, server_id: &str) -> bool {
+		self.with(server_id, |conn, _| async move {
+			exec_output(&conn, "command -v tmux >/dev/null 2>&1").await.map(|_| ())
+		})
+		.await
+		.is_ok()
 	}
 
 	/// Replace `old` with `new` in a file this session read and that has not
