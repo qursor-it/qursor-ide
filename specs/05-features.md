@@ -8975,3 +8975,90 @@ Canvas, and the session route's terminal adopts it again on returning to
 Sessions.
 
 **Not in it (yet).** The pen (ink nodes) arrives in a later slice.
+
+## F44 — Servers: an SSH session manager
+
+**Decisions.** ADR-0103 (one `russh` connection per server), ADR-0104 (the
+vault), ADR-0105 (a tab per SSH session), ADR-0106 (Production Rose).
+
+**What it is.** A third window mode, **Servers**, beside Sessions and Git. Its
+sidebar is an address book: folders, servers, a connection dot, the `PROD` word
+on production servers, the vault's state at the foot. Its top bar has **one tab
+per SSH session**; opening a server twice is two tabs (`web01 · 1`, `web01 ·
+2`). A tab's card is the SSH terminal, with the footer shells' pooled xterm,
+base64 stream and kill-on-quit.
+
+**A server** is a row (`servers`, migration 9003): name, host, port, user,
+optional start folder, folder in the book, environment (`dev` | `staging` |
+`prod`), agent policy (F45), login (`password` | `key` | `keyFile` | `agent` |
+`system`) and, for `keyFile`, a path. No secret is in the row.
+
+**Logins.**
+- `password`, `key` (a private key kept in the vault, with its passphrase),
+  `keyFile` (a key the user already has; not copied), `agent` (`SSH_AUTH_SOCK`;
+  on Windows the OpenSSH agent pipe, then Pageant) go through the library: one
+  connection per server, each tab a channel on it.
+- `system` runs the user's own `ssh -t` in a PTY, for what only OpenSSH
+  understands (`ProxyJump`, `Match`); each tab is a fresh login.
+- `keyboard-interactive` is answered with the saved password for its first
+  round only; a second factor is never answered.
+
+**Host keys.** The user's `~/.ssh/known_hosts` is read and never written. An
+unknown key is refused with `AppError::HostKey(fingerprint)`; the renderer shows
+the fingerprint and retries with it only when the human trusts it, and the key
+is then written to the app's own `known_hosts`. A changed key — including a key
+of another type for a pinned host — is refused with no override.
+
+**The vault** (`secrets.vault` in the data directory): AES-256-GCM per entry
+with the id as associated data, under a random key in the OS keychain, or under
+an Argon2id key from a master password that locks the vault at every start.
+With no keychain (headless Linux) the footer offers a master password and
+nothing is stored unprotected. No command returns a secret.
+
+**Lifetime.** The last tab of a server closing ends its login within 20s.
+Killing a tab closes its channel and the server hangs the shell up; quitting the
+app does the same for every tab. Tabs persist without their PTYs and log in
+again when shown; a renderer reload re-adopts live PTYs by client key.
+
+**Commands.** `list_servers`, `save_server`, `delete_server`,
+`create_server_folder`, `rename_server_folder`, `delete_server_folder`,
+`ssh_config_hosts`, `vault_status`, `vault_unlock`, `vault_lock`,
+`vault_set_master_password`, `server_open_shell`, `server_disconnect`.
+
+**Not yet.** SFTP browser, tunnels, tmux persistence, `Include` in
+`~/.ssh/config`, host certificates.
+
+## F45 — Agents in SSH terminals
+
+**Decisions.** ADR-0107 (markers, the human's turn), ADR-0108 (per-server
+policy).
+
+**Lending a terminal.** An SSH tab's **Agent** menu starts a Claude or Codex
+session for the server — in the server's own project, a folder of the app's
+under `servers/<id>`, so the session is in the Sessions sidebar and resumes
+like any other — and lends it a terminal:
+- **shares this terminal**: the human's own shell; both type into it, and the
+  agent's terminal is drawn beside it in the same tab;
+- **its own SSH tab**: a new SSH session of the same server, marked as the
+  agent's.
+A terminal is lent to one session at a time. "Take this terminal back" ends the
+loan; the session keeps running.
+
+**Tools** (on the session's MCP server, ADR-0029): `terminals_list`,
+`terminal_run` (output, exit code, directory afterwards; timeout 1–600s, default
+60), `terminal_read` (screen and state), `terminal_send_keys` (named keys such
+as `<ctrl-c>`, never a password). States: ready, running your command, in a
+full-screen program, waiting for a password, still running an earlier command.
+
+**While an agent runs** a command, its tab chip says so and a chip over the
+terminal offers Ctrl+C. Typing in a shared terminal hands the turn back to the
+human; the agent's result says the human typed.
+
+**Policy** per server: free, confirm (a banner with Refuse / Edit / Run, a badge
+on the Servers rail icon and a toast when the terminal is not on screen; no
+answer in ten minutes refuses), read-only (only reading commands run).
+Decisions go to `agent_audit` (migration 9004).
+
+**Commands.** `agent_link_terminal`, `agent_unlink_terminal`, `agent_links`,
+`server_agent_project`, `agent_terminal_answer`, `agent_audit`. **Events.**
+`agent-terminal:run`, `agent-terminal:confirm`.
