@@ -8,7 +8,7 @@ import {
 	type PooledTerm,
 	showOnly,
 } from '@components/terminal/Terminal';
-import { isAppError } from '@lib/errors';
+import { formatError, isAppError } from '@lib/errors';
 import { cmd } from '@lib/tauri';
 import { type ServerTab, useServerStore } from '@store/serverStore';
 
@@ -88,7 +88,12 @@ export function ServerTerminal({ tab }: { tab: ServerTab }) {
 		requestAnimationFrame(() => fitToHost(entry));
 		attachStream(
 			entry,
-			(cols, rows) => ensureShell(key, serverId, cols, rows),
+			(cols, rows) =>
+				ensureShell(key, serverId, cols, rows).catch((e: unknown) => {
+					// A tab that never got a shell is dead, with Reconnect and the reason.
+					useServerStore.getState().fail(key, formatError(e));
+					throw e;
+				}),
 			'Could not open the SSH session',
 			() => {
 				const id = useServerStore.getState().tabs.find((t) => t.key === key)?.terminalId;

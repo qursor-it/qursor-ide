@@ -9025,8 +9025,10 @@ again when shown; a renderer reload re-adopts live PTYs by client key.
 `ssh_config_hosts`, `vault_status`, `vault_unlock`, `vault_lock`,
 `vault_set_master_password`, `server_open_shell`, `server_disconnect`.
 
-**Not yet.** SFTP browser, tunnels, tmux persistence, `Include` in
-`~/.ssh/config`, host certificates.
+A tab whose login fails is dead at once, showing why, with **Reconnect**.
+
+**Not yet.** Tunnels, tmux persistence, `Include` in `~/.ssh/config`, host
+certificates.
 
 ## F45 — Agents in SSH terminals
 
@@ -9062,3 +9064,30 @@ Decisions go to `agent_audit` (migration 9004).
 **Commands.** `agent_link_terminal`, `agent_unlink_terminal`, `agent_links`,
 `server_agent_project`, `agent_terminal_answer`, `agent_audit`. **Events.**
 `agent-terminal:run`, `agent-terminal:confirm`.
+
+## F46 — Files on a server, over SFTP
+
+**Decisions.** ADR-0103 (the SFTP channel rides the server's one connection).
+
+**The Files panel.** **Files** in an SSH tab's header (library logins only; a
+`system` login has no connection of ours) opens the server's files beside the
+terminal, starting at the server's start folder. Double-click enters a folder or
+downloads a file; the path field takes any remote path. Per entry: Download…,
+Rename…, Delete… (a confirmation, files and empty folders only, never
+recursive). Header: parent folder, Upload a file here (never over an existing
+name), New folder, Refresh. A listing stops at 2000 entries and says so.
+
+**Agent file tools** (on the session's MCP server, beside F45's): `file_read`,
+`file_edit` (exact `old_string`, unique unless `replace_all`), `file_write`. A
+relative path resolves against the terminal's directory. Each passes the
+server's policy (a read is judged as `cat <path>`). A write or edit refuses
+unless this session read the file and it is unchanged since (size and mtime) —
+a human edited it, or it was never read; a new file needs no read. Writes are
+atomic (a temporary name renamed over the target with `mv -f`) and keep the
+file's mode. Text only, up to 5 MB.
+
+**Commands.** `sftp_list`, `sftp_download`, `sftp_upload`, `sftp_mkdir`,
+`sftp_rename`, `sftp_remove`.
+
+**Not yet.** Opening a remote file in the viewer and saving it back; recursive
+transfers.

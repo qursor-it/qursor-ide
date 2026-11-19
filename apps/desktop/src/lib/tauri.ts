@@ -66,6 +66,7 @@ import type {
 	SessionUsage,
 	SessionWorktreeEvent,
 	AgentRunEvent,
+	RemoteListing,
 	ConfirmEvent,
 	LinkMode,
 	Server,
@@ -549,6 +550,18 @@ export const cmd = {
 	 *  runs the edited line instead. */
 	agentTerminalAnswer: (id: string, run: boolean, command?: string) =>
 		invoke<void>('agent_terminal_answer', { id, run, command }),
+	// ── SFTP (F46) ──
+	sftpList: (serverId: string, path: string) =>
+		invoke<RemoteListing>('sftp_list', { serverId, path }),
+	sftpDownload: (serverId: string, remote: string, local: string) =>
+		invoke<void>('sftp_download', { serverId, remote, local }),
+	sftpUpload: (serverId: string, local: string, remoteDir: string) =>
+		invoke<string>('sftp_upload', { serverId, local, remoteDir }),
+	sftpMkdir: (serverId: string, path: string) => invoke<void>('sftp_mkdir', { serverId, path }),
+	sftpRename: (serverId: string, from: string, to: string) =>
+		invoke<void>('sftp_rename', { serverId, from, to }),
+	sftpRemove: (serverId: string, path: string, isDir: boolean) =>
+		invoke<void>('sftp_remove', { serverId, path, isDir }),
 	/** The project a server's agent sessions run in, created on first use (F45). */
 	serverAgentProject: (serverId: string) => invoke<Project>('server_agent_project', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by
@@ -790,6 +803,27 @@ export async function copyImageFile(path: string): Promise<void> {
  * than no-op. There the fixture's `folderPick` stands in, since a native dialog
  * is otherwise unreachable from a test.
  */
+/** A file to upload (F46). */
+export async function pickFile(title: string): Promise<string | null> {
+	if (!isTauri()) {
+		recordMockCall('dialog.open');
+		return testFixture()?.filePick ?? null;
+	}
+	const { open } = await import('@tauri-apps/plugin-dialog');
+	const picked = await open({ directory: false, multiple: false, title });
+	return typeof picked === 'string' ? picked : null;
+}
+
+/** Where to save a download (F46). */
+export async function pickSavePath(title: string, defaultPath: string): Promise<string | null> {
+	if (!isTauri()) {
+		recordMockCall('dialog.save');
+		return testFixture()?.savePick ?? null;
+	}
+	const { save } = await import('@tauri-apps/plugin-dialog');
+	return (await save({ title, defaultPath })) ?? null;
+}
+
 export async function pickFolder(title = 'Add project folder'): Promise<string | null> {
 	if (!isTauri()) {
 		recordMockCall('dialog.open');
@@ -979,6 +1013,10 @@ interface TestFixture {
 	serverBook?: ServerBook;
 	serverHostKey?: string;
 	sshConfigHosts?: SshConfigHost[];
+	/** What `sftp_list` answers, by path (F46). */
+	remoteDirs?: Record<string, RemoteListing>;
+	filePick?: string;
+	savePick?: string;
 	vaultStatus?: VaultStatus;
 	/** Session id `start_session` hands back for a new-session click. */
 	newSessionId?: string;
@@ -2448,6 +2486,16 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 				displayName: 'server',
 				missing: false,
 			} as unknown as T;
+		case 'sftp_list': {
+			const path = (args?.path as string) || '~';
+			return (fx?.remoteDirs?.[path] ?? { path, entries: [], truncated: false }) as unknown as T;
+		}
+		case 'sftp_upload':
+			return `${args?.remoteDir}/uploaded` as unknown as T;
+		case 'sftp_download':
+		case 'sftp_mkdir':
+		case 'sftp_rename':
+		case 'sftp_remove':
 		case 'agent_terminal_answer':
 		case 'agent_link_terminal':
 		case 'agent_unlink_terminal':

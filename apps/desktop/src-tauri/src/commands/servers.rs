@@ -294,3 +294,124 @@ pub fn agent_audit(
 ) -> AppResult<Vec<crate::services::agent_policy::AuditRow>> {
 	state.db.with(|c| Ok(crate::services::agent_policy::recent(c, &server_id, 200)?))
 }
+
+/// The SFTP backend for the browser: the same pooled login as the server's tabs.
+fn files(state: &AppState) -> crate::services::ssh::sftp::RemoteFiles {
+	let (db, vault) = (state.db.clone(), state.vault.clone());
+	crate::services::ssh::sftp::RemoteFiles::new(
+		state.ssh.clone(),
+		std::sync::Arc::new(move |id| {
+			let server = db.with(|c| servers::get(c, id))?;
+			target_for(&server, &vault)
+		}),
+	)
+}
+
+/// One directory of a server, for the SFTP browser (F46). Empty `path` is the
+/// login directory.
+#[tauri::command]
+pub async fn sftp_list(
+	state: State<'_, AppState>,
+	server_id: String,
+	path: String,
+) -> AppResult<crate::services::ssh::sftp::RemoteListing> {
+	files(&state)
+		.with(&server_id, |_, s| async move { crate::services::ssh::sftp::list(&s, &path).await })
+		.await
+}
+
+/// Copy a remote file to a local path the human chose.
+#[tauri::command]
+pub async fn sftp_download(
+	state: State<'_, AppState>,
+	server_id: String,
+	remote: String,
+	local: String,
+) -> AppResult<()> {
+	files(&state)
+		.with(&server_id, |_, s| async move {
+			let mut from =
+				s.open(remote.as_str()).await.map_err(|e| AppError::Remote(e.to_string()))?;
+			let mut to = tokio::fs::File::create(&local).await?;
+			tokio::io::copy(&mut from, &mut to).await?;
+			Ok(())
+		})
+		.await
+}
+
+/// Copy a local file into a remote directory, under its own name. An existing
+/// remote file of that name is not overwritten.
+#[tauri::command]
+pub async fn sftp_upload(
+	state: State<'_, AppState>,
+	server_id: String,
+	local: String,
+	remote_dir: String,
+) -> AppResult<String> {
+	let name = std::path::Path::new(&local)
+		.file_name()
+		.map(|n| n.to_string_lossy().into_owned())
+		.ok_or_else(|| AppError::InvalidInput("choose a file".into()))?;
+	let remote = format!("{}/{}", remote_dir.trim_end_matches('/'), name);
+	files(&state)
+		.with(&server_id, |_, s| async move {
+			if s.try_exists(remote.as_str()).await.unwrap_or(false) {
+				return Err(AppError::InvalidInput(format!("{remote} already exists")));
+			}
+			let mut from = tokio::fs::File::open(&local).await?;
+			let mut to =
+				s.create(remote.as_str()).await.map_err(|e| AppError::Remote(e.to_string()))?;
+			tokio::io::copy(&mut from, &mut to).await?;
+			tokio::io::AsyncWriteExt::shutdown(&mut to).await?;
+			Ok(remote)
+		})
+		.await
+}
+
+#[tauri::command]
+pub async fn sftp_mkdir(
+	state: State<'_, AppState>,
+	server_id: String,
+	path: String,
+) -> AppResult<()> {
+	files(&state)
+		.with(&server_id, |_, s| async move {
+			s.create_dir(path.as_str()).await.map_err(|e| AppError::Remote(e.to_string()))
+		})
+		.await
+}
+
+#[tauri::command]
+pub async fn sftp_rename(
+	state: State<'_, AppState>,
+	server_id: String,
+	from: String,
+	to: String,
+) -> AppResult<()> {
+	files(&state)
+		.with(&server_id, |_, s| async move {
+			s.rename(from.as_str(), to.as_str()).await.map_err(|e| AppError::Remote(e.to_string()))
+		})
+		.await
+}
+
+/// Delete a file, or an empty directory. Asked for by the renderer only after
+/// the human confirmed; never recursive.
+#[tauri::command]
+pub async fn sftp_remove(
+	state: State<'_, AppState>,
+	server_id: String,
+	path: String,
+	is_dir: bool,
+) -> AppResult<()> {
+	files(&state)
+		.with(&server_id, |_, s| async move {
+			let r = if is_dir {
+				s.remove_dir(path.as_str()).await
+			} else {
+				s.remove_file(path.as_str()).await
+			};
+			r.map_err(|e| AppError::Remote(e.to_string()))
+		})
+		.await
+}

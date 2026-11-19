@@ -11,6 +11,8 @@ export interface ServerTab {
 	terminalId: string | null;
 	/** Its shell exited or the connection dropped; the tab stays until closed. */
 	dead: boolean;
+	/** Why it could not connect, when that is why it is dead. */
+	error?: string | null;
 	/** The agent session this SSH session is lent to (F45), if any. */
 	agent?: TabAgent | null;
 }
@@ -54,6 +56,8 @@ interface ServerState {
 	attach: (key: string, terminalId: string) => void;
 	markDead: (terminalId: string) => void;
 	revive: (key: string) => void;
+	/** The tab never got a shell: dead, with the reason to show. */
+	fail: (key: string, error: string) => void;
 	toggleFolder: (id: string) => void;
 	setPendingHostKey: (p: PendingHostKey | null) => void;
 }
@@ -112,7 +116,15 @@ export const useServerStore = create<ServerState>()(
 					),
 				})),
 			revive: (key) =>
-				set((s) => ({ tabs: s.tabs.map((t) => (t.key === key ? { ...t, dead: false } : t)) })),
+				set((s) => ({
+					tabs: s.tabs.map((t) => (t.key === key ? { ...t, dead: false, error: null } : t)),
+				})),
+			fail: (key, error) =>
+				set((s) => ({
+					tabs: s.tabs.map((t) =>
+						t.key === key ? { ...t, terminalId: null, dead: true, error } : t,
+					),
+				})),
 			toggleFolder: (id) =>
 				set((s) => ({
 					collapsed: s.collapsed.includes(id)
@@ -125,7 +137,7 @@ export const useServerStore = create<ServerState>()(
 			name: 'qursor.servers',
 			storage: createJSONStorage(() => localStorage),
 			partialize: (s) => ({
-				tabs: s.tabs.map((t) => ({ ...t, terminalId: null, dead: false })),
+				tabs: s.tabs.map((t) => ({ ...t, terminalId: null, dead: false, error: null })),
 				active: s.active,
 				collapsed: s.collapsed,
 			}),

@@ -2033,3 +2033,20 @@ export interface ConfirmEvent {
 	keys: boolean;
 	production: boolean;
 }
+
+/** One entry of a server directory, over SFTP (F46). */
+export interface RemoteEntry {
+	name: string;
+	isDir: boolean;
+	isSymlink: boolean;
+	size: number;
+	/** Seconds since the epoch. */
+	mtime: number | null;
+}
+
+export interface RemoteListing {
+	/** The directory, canonical. */
+	path: string;
+	entries: RemoteEntry[];
+	truncated: boolean;
+}

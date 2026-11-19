@@ -33,6 +33,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { AgentMenu, AgentPane, ConfirmBanner, RunningChip } from '@components/servers/AgentPane';
 import { ServerDialog } from '@components/servers/ServerDialog';
+import { SftpPanel } from '@components/servers/SftpPanel';
 import { AgentMark } from '@components/layout/AgentMark';
 import { agentName } from '@lib/agents';
 import { answerHostKey, reconnectTab, ServerTerminal } from '@components/servers/ServerTerminal';
@@ -82,6 +83,7 @@ export function ServerModeView() {
 	const active = useServerStore((s) => s.active);
 	const attach = useServerStore((s) => s.attach);
 	const tab = tabs.find((t) => t.key === active) ?? null;
+	const [filesOpen, setFilesOpen] = useState(false);
 	const servers = book.data?.servers ?? [];
 	const server = tab ? servers.find((s) => s.id === tab.serverId) : undefined;
 
@@ -123,12 +125,23 @@ export function ServerModeView() {
 							) : (
 								<AgentMenu tab={tab} server={server} />
 							)}
+							{server.auth !== 'system' && (
+								<Button
+									size="sm"
+									variant={filesOpen ? 'secondary' : 'ghost'}
+									data-testid="toggle-files"
+									aria-pressed={filesOpen}
+									onClick={() => setFilesOpen((o) => !o)}
+								>
+									Files
+								</Button>
+							)}
 						</header>
 						<ConfirmBanner tab={tab} />
 						<div className="min-h-0 flex-1">
 							{tab.dead ? (
 								<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-									The session ended.
+									{tab.error ?? 'The session ended.'}
 								</div>
 							) : (
 								<div className="flex h-full min-w-0">
@@ -137,6 +150,9 @@ export function ServerModeView() {
 										<RunningChip tab={tab} />
 									</div>
 									{tab.agent && <AgentPane key={tab.agent.sessionId} agent={tab.agent} />}
+									{filesOpen && server.auth !== 'system' && (
+										<SftpPanel key={server.id} server={server} />
+									)}
 								</div>
 							)}
 						</div>

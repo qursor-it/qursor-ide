@@ -55,6 +55,7 @@ import type {
 	TerminalId,
 	SidebarRow,
 	ServerBook,
+	RemoteListing,
 } from '@factorai/types';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -102,6 +103,10 @@ export interface TestFixture {
 	/** When set, `server_open_shell` rejects with this host-key fingerprint until
 	 *  it is called again with it accepted (F44). */
 	serverHostKey?: string;
+	/** `sftp_list` answers by path (F46). */
+	remoteDirs?: Record<string, RemoteListing>;
+	savePick?: string;
+	filePick?: string;
 	/** Session id `start_session` hands back for a new-session click (F6). The
 	 *  mock falls back to a fixed uuid, so a spec only sets this when it wants
 	 *  to talk about the id. */

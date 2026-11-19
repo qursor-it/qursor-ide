@@ -193,4 +193,51 @@ test.describe('servers', () => {
 		);
 		expect(answer?.args).toMatchObject({ id: 'c1', run: true });
 	});
+
+	test('@smoke the Files panel browses the server and asks before deleting', async ({ page }) => {
+		await installMockBridge(page, {
+			serverBook: book,
+			savePick: '/home/me/Downloads/app.conf',
+			remoteDirs: {
+				'/var/www': {
+					path: '/var/www',
+					entries: [
+						{ name: 'shop', isDir: true, isSymlink: false, size: 0, mtime: null },
+						{ name: 'app.conf', isDir: false, isSymlink: false, size: 2048, mtime: null },
+					],
+					truncated: false,
+				},
+			},
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await page.getByTestId('server-row-web01').dblclick();
+		await page.getByTestId('toggle-files').click();
+		const panel = page.getByTestId('sftp-panel');
+		await expect(panel.getByTestId('sftp-shop')).toBeVisible();
+		await expect(panel.getByTestId('sftp-app.conf')).toContainText('2.0 KB');
+
+		await panel.getByTestId('sftp-app.conf').dblclick();
+		const calls = async (name: string) =>
+			page.evaluate(
+				(n) => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === n),
+				name,
+			);
+		await expect.poll(async () => (await calls('sftp_download')).length).toBe(1);
+		expect((await calls('sftp_download'))[0].args).toMatchObject({
+			remote: '/var/www/app.conf',
+			local: '/home/me/Downloads/app.conf',
+		});
+
+		await panel.getByTestId('sftp-app.conf').hover();
+		await panel.getByRole('button', { name: 'app.conf actions', exact: true }).click();
+		await page.getByRole('menuitem', { name: 'Delete…' }).click();
+		expect(await calls('sftp_remove')).toHaveLength(0);
+		await page.getByRole('button', { name: 'Delete', exact: true }).click();
+		await expect.poll(async () => (await calls('sftp_remove')).length).toBe(1);
+		expect((await calls('sftp_remove'))[0].args).toMatchObject({
+			path: '/var/www/app.conf',
+			isDir: false,
+		});
+	});
 });
