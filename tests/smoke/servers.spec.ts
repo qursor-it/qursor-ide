@@ -4,9 +4,11 @@
  * makes. The SSH engine itself is the Rust suite's (a real sshd on loopback);
  * this lane holds the surface's rules.
  */
-import type { Server, ServerBook } from '@factorai/types';
 import { expect, test } from '@playwright/test';
-import { installMockBridge } from './fixtures';
+import { installMockBridge, type TestFixture } from './fixtures';
+
+type ServerBook = NonNullable<TestFixture['serverBook']>;
+type Server = ServerBook['servers'][number];
 
 function server(over: Partial<Server>): Server {
 	return {

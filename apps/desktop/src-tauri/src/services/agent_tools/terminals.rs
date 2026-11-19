@@ -51,6 +51,7 @@ pub fn definitions() -> Vec<Value> {
 							again whenever you are unsure where a terminal is.",
 			"inputSchema": { "type": "object", "properties": {} },
 			"annotations": { "title": "List lent terminals", "readOnlyHint": true },
+			"_meta": { "anthropic/searchHint": "run commands in remote server SSH terminals the human lent this session in Qursor IDE" },
 		}),
 		json!({
 			"name": "terminal_run",
@@ -74,6 +75,7 @@ pub fn definitions() -> Vec<Value> {
 				"required": ["terminal", "command"],
 			},
 			"annotations": { "title": "Run in a remote terminal", "destructiveHint": true },
+			"_meta": { "anthropic/searchHint": "run commands in remote server SSH terminals the human lent this session in Qursor IDE" },
 		}),
 		json!({
 			"name": "terminal_read",
@@ -86,6 +88,7 @@ pub fn definitions() -> Vec<Value> {
 				"required": ["terminal"],
 			},
 			"annotations": { "title": "Read a remote terminal", "readOnlyHint": true },
+			"_meta": { "anthropic/searchHint": "run commands in remote server SSH terminals the human lent this session in Qursor IDE" },
 		}),
 		json!({
 			"name": "terminal_send_keys",
@@ -102,6 +105,7 @@ pub fn definitions() -> Vec<Value> {
 				"required": ["terminal", "keys"],
 			},
 			"annotations": { "title": "Press keys in a remote terminal", "destructiveHint": true },
+			"_meta": { "anthropic/searchHint": "run commands in remote server SSH terminals the human lent this session in Qursor IDE" },
 		}),
 	]
 }

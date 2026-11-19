@@ -3050,13 +3050,19 @@ mod tests {
 		std::thread::sleep(Duration::from_millis(800));
 		mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
 		let none = Arc::new(|_: &str| Ok(Vec::new()));
-		let tools = AgentTools::new(Routines {
-			project_id: "p".into(),
-			project_path: "/local/p".into(),
-			list: none,
-			create: Arc::new(|_| Err(AppError::InvalidInput("no".into()))),
-			update: Arc::new(|_, _| Err(AppError::InvalidInput("no".into()))),
-		})
+		let tools = AgentTools::new(
+			Routines {
+				project_id: "p".into(),
+				project_path: "/local/p".into(),
+				list: none,
+				create: Arc::new(|_| Err(AppError::InvalidInput("no".into()))),
+				update: Arc::new(|_, _| Err(AppError::InvalidInput("no".into()))),
+			},
+			crate::services::agent_tools::Canvases {
+				root: Arc::new(|| Err(AppError::InvalidInput("no canvases".into()))),
+				linked: Arc::new(|| Ok(None)),
+			},
+		)
 		.with_terminals(Arc::new(mgr.session_terminals("sess")));
 
 		let listed =

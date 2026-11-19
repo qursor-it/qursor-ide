@@ -26,7 +26,7 @@ export interface TabAgent {
 }
 
 /** A host key waiting for the human, raised by a tab's first connect. */
-export interface PendingHostKey {
+interface PendingHostKey {
 	tabKey: string;
 	serverId: string;
 	fingerprint: string;

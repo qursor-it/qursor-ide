@@ -82,7 +82,7 @@ function draftFrom(s: Server | null, folderId: string | null): Draft {
 
 /** The form as the backend takes it. Secrets typed here are sent once and
  *  never read back; an untouched field leaves the saved one alone. */
-export function toInput(d: Draft, id?: string): ServerInput {
+function toInput(d: Draft, id?: string): ServerInput {
 	const input: ServerInput = {
 		id,
 		name: d.name,

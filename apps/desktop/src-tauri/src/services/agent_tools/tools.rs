@@ -957,7 +957,12 @@ mod tests {
 				"canvasOutline",
 				"canvasRead",
 				"canvasFreeSpot",
-				"canvasPatch"
+				"canvasPatch",
+				// F45: the SSH terminals a human lends the session.
+				"terminals_list",
+				"terminal_run",
+				"terminal_read",
+				"terminal_send_keys",
 			]
 		);
 		// The one that is absent on purpose (ADR-0028): the editor's delete asks
@@ -1009,11 +1014,14 @@ mod tests {
 
 		for t in tools {
 			let hint = t["_meta"]["anthropic/searchHint"].as_str().unwrap_or_default();
-			assert!(
-				hint.contains("routine") || hint.contains("canvas"),
-				"{} has no usable search hint",
-				t["name"]
-			);
+			let topic = if t["name"].as_str().unwrap_or_default().starts_with("terminal") {
+				"terminal"
+			} else if t["name"].as_str().unwrap_or_default().starts_with("canvas") {
+				"canvas"
+			} else {
+				"routine"
+			};
+			assert!(hint.contains(topic), "{} has no usable search hint", t["name"]);
 			assert!(hint.contains("Qursor IDE"), "{} does not name the app", t["name"]);
 		}
 	}
@@ -1028,12 +1036,24 @@ mod tests {
 		for t in reply["result"]["tools"].as_array().unwrap() {
 			let name = t["name"].as_str().unwrap();
 			let read_only = t["annotations"]["readOnlyHint"] == json!(true);
-			let reads = ["listRoutines", "canvasOutline", "canvasRead", "canvasFreeSpot"];
+			let reads = [
+				"listRoutines",
+				"canvasOutline",
+				"canvasRead",
+				"canvasFreeSpot",
+				"terminals_list",
+				"terminal_read",
+			];
 			assert_eq!(read_only, reads.contains(&name), "{name}");
 			assert!(t["annotations"]["title"].is_string(), "{name} has no title");
-			// Nothing here destroys anything — which is what leaving
-			// `deleteRoutine` out bought (ADR-0028).
-			assert_ne!(t["annotations"]["destructiveHint"], json!(true), "{name}");
+			// No routine tool destroys anything — which is what leaving
+			// `deleteRoutine` out bought (ADR-0028). A remote command may, and says so.
+			let destructive = t["annotations"]["destructiveHint"] == json!(true);
+			assert_eq!(
+				destructive,
+				matches!(name, "terminal_run" | "terminal_send_keys"),
+				"{name}"
+			);
 		}
 	}
 

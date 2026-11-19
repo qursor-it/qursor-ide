@@ -44,7 +44,7 @@ import { tabLabel, useServerStore } from '@store/serverStore';
 
 const POLL_MS = 3_000;
 
-export function useServerBook() {
+function useServerBook() {
 	return useQuery({
 		queryKey: queryKeys.servers(),
 		queryFn: () => cmd.listServers(),
@@ -53,7 +53,7 @@ export function useServerBook() {
 }
 
 /** The production marker (ADR-0106 token): a small word, never a whole row. */
-export function ProdBadge() {
+function ProdBadge() {
 	return (
 		<span
 			data-testid="prod-badge"
@@ -65,7 +65,7 @@ export function ProdBadge() {
 }
 
 /** Close a tab: its shell is hung up and its terminal thrown away. */
-export function closeServerTab(key: string) {
+function closeServerTab(key: string) {
 	const tab = useServerStore.getState().tabs.find((t) => t.key === key);
 	if (tab?.terminalId) cmd.terminalKill(tab.terminalId).catch(() => {});
 	disposeTerminal(key);
