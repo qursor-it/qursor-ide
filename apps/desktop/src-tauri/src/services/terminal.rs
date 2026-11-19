@@ -64,6 +64,9 @@ pub use agent_use::{AgentLink, AgentRunEvent, LinkDto, LinkMode, PolicyCb, Polic
 
 pub type TerminalId = String;
 
+/// A server's display name, from the address book (F45).
+pub type ServerLabelCb = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
 /// What a PTY *is*, which is not the same question as what it is doing.
 ///
 /// Everything in factorai was a Claude session until F23, and several passes over
@@ -839,7 +842,7 @@ pub struct TerminalManager {
 	agent_policy: Option<PolicyCb>,
 	on_agent_run: Arc<dyn Fn(AgentRunEvent) + Send + Sync>,
 	/// A server's display name for `terminals_list`, from the address book.
-	server_label: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
+	server_label: Option<ServerLabelCb>,
 }
 
 impl TerminalManager {
@@ -929,7 +932,7 @@ impl TerminalManager {
 		}
 	}
 
-	pub fn set_server_label(&mut self, cb: Arc<dyn Fn(&str) -> String + Send + Sync>) {
+	pub fn set_server_label(&mut self, cb: ServerLabelCb) {
 		self.server_label = Some(cb);
 	}
 
