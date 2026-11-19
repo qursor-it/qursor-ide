@@ -30,6 +30,10 @@ pub enum AppError {
 	/// without the union growing a variant per reason.
 	#[error("intelligence: {0}")]
 	Intelligence(String),
+	/// An SSH server presented a key no known_hosts file has. The message is the
+	/// SHA-256 fingerprint the human is asked to confirm (F44).
+	#[error("unknown host key: {0}")]
+	HostKey(String),
 }
 
 impl From<std::io::Error> for AppError {

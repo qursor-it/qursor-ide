@@ -87,6 +87,13 @@ tempfile = "3"
 ureq = "2"
 # Taskbar widget renderer (usage monitor): a CPU pixmap + glyph rasteriser, no GPU,
 # no PNG codec in release builds.
+# Server sessions over SSH (F44, ADR-0103): one connection per server carrying
+# every shell tab, SFTP and tunnels as channels. `ring` instead of the default
+# `aws-lc-rs`, which needs cmake and NASM to build on Windows; `ring` is already
+# in the tree.
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+# Decrypted SSH secrets are wiped from memory when dropped. Already in the tree.
+zeroize = "1"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 fontdue = "0.9"
 

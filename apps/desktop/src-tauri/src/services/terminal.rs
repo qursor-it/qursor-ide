@@ -85,6 +85,11 @@ pub enum TerminalKind {
 	/// with the project, the app, its own `exit`, a `×`, or its cwd going
 	/// missing (ADR-0032).
 	Shell,
+	/// A shell on an SSH server (F44): a channel on the server's connection,
+	/// not a local process. Like [`Self::Shell`] it has no session id and sits
+	/// outside the work count; unlike it, it belongs to no project, so neither a
+	/// project's kill sweep nor the missing-cwd reap ever touches it.
+	Ssh,
 }
 
 /// What a session is doing, derived from Claude's own terminal title — see
@@ -2127,6 +2132,43 @@ impl TerminalManager {
 		);
 
 		Ok(id)
+	}
+
+	/// Register a remote shell (F44) as a terminal.
+	///
+	/// `server_id` stands where a project id would, so `list` can hand a pane
+	/// back to its server after a renderer reload. `label` is what `list`
+	/// reports as the cwd: the remote folder, which is not a local path.
+	pub fn attach_ssh(
+		&self,
+		server_id: &str,
+		client_key: String,
+		label: &str,
+		master: Box<dyn MasterPty + Send>,
+		child: Box<dyn Child + Send + Sync>,
+	) -> AppResult<TerminalId> {
+		let size = master.get_size().map_err(|e| AppError::Process(e.to_string()))?;
+		self.attach(Attach {
+			req: PtyRequest {
+				session_id: None,
+				client_key: Some(client_key),
+				project_id: server_id.to_string(),
+				cwd: None,
+				cols: size.cols,
+				rows: size.rows,
+				initial_prompt: None,
+				kind: TerminalKind::Ssh,
+				agent: None,
+			},
+			master,
+			child,
+			#[cfg(windows)]
+			process_job: None,
+			store_dir: self.claude_dir.clone(),
+			cwd: PathBuf::from(label),
+			ide: IdeSlot::None,
+			agent_tools: None,
+		})
 	}
 
 	pub fn write(&self, id: &str, data: &[u8]) -> AppResult<()> {
