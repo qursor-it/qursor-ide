@@ -43,6 +43,10 @@ async function ensureShell(
 		try {
 			const id = await cmd.serverOpenShell(serverId, tabKey, cols, rows, accept);
 			useServerStore.getState().attach(tabKey, id);
+			// A tab that already has its agent (an agent's own session, or one
+			// restored after a restart) lends the new PTY to it straight away.
+			const agent = useServerStore.getState().tabs.find((t) => t.key === tabKey)?.agent;
+			if (agent) await cmd.agentLinkTerminal(id, agent.sessionId, agent.mode);
 			return id;
 		} catch (e) {
 			if (!isHostKey(e) || accept) throw e;

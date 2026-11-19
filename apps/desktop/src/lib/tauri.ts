@@ -65,6 +65,8 @@ import type {
 	SessionSummary,
 	SessionUsage,
 	SessionWorktreeEvent,
+	AgentRunEvent,
+	LinkMode,
 	Server,
 	ServerBook,
 	ServerFolder,
@@ -537,6 +539,13 @@ export const cmd = {
 			acceptFingerprint,
 		}),
 	serverDisconnect: (serverId: string) => invoke<void>('server_disconnect', { serverId }),
+	/** Lend an SSH terminal to an agent session (F45). */
+	agentLinkTerminal: (terminalId: TerminalId, sessionId: string, mode: LinkMode) =>
+		invoke<void>('agent_link_terminal', { terminalId, sessionId, mode }),
+	agentUnlinkTerminal: (terminalId: TerminalId) =>
+		invoke<void>('agent_unlink_terminal', { terminalId }),
+	/** The project a server's agent sessions run in, created on first use (F45). */
+	serverAgentProject: (serverId: string) => invoke<Project>('server_agent_project', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by
 	 *  `Remove project` and by nothing about a session — closing one says
 	 *  nothing about the shells under it. The agent is killed by `terminalKill`
@@ -830,6 +839,9 @@ export const events = {
 		listen<TerminalStatusEvent>('terminal:status', cb),
 	onTerminalExit: (cb: (p: TerminalExitEvent) => void) =>
 		listen<TerminalExitEvent>('terminal:exit', cb),
+	/** An agent started or finished a command in a lent SSH terminal (F45). */
+	onAgentTerminalRun: (cb: (p: AgentRunEvent) => void) =>
+		listen<AgentRunEvent>('agent-terminal:run', cb),
 	onQuitRequested: (cb: (p: QuitRequestedEvent) => void) =>
 		listen<QuitRequestedEvent>('app:quit-requested', cb),
 	/** The window came to the front. Tauri's own event, not ours — it is what
@@ -2421,6 +2433,15 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			}
 			mockShellSpawns += 1;
 			return `mock-ssh-id-${mockShellSpawns}` as unknown as T;
+		case 'server_agent_project':
+			return {
+				id: `server-project-${args?.serverId}`,
+				realPath: `/data/servers/${args?.serverId}`,
+				displayName: 'server',
+				missing: false,
+			} as unknown as T;
+		case 'agent_link_terminal':
+		case 'agent_unlink_terminal':
 		case 'delete_server':
 		case 'rename_server_folder':
 		case 'delete_server_folder':

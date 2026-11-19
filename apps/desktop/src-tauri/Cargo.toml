@@ -101,6 +101,9 @@ argon2 = "0.6"
 # The vault key in the OS keychain: Windows Credential Manager, macOS Keychain,
 # Secret Service over zbus (already in the tree) on Linux.
 keyring = "4"
+# The screen an agent reads from a terminal it was lent (F45): a VT parser fed
+# the same bytes as xterm, so "what is on screen" is answered in Rust.
+vt100 = "0.18"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 fontdue = "0.9"
 

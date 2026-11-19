@@ -292,6 +292,21 @@ pub fn run() {
 						})
 					},
 				});
+			let mut terminals = terminals;
+			// Agents using SSH terminals (F45): announce their commands, and name
+			// a server in `terminals_list` the way the address book does.
+			{
+				let app = app.handle().clone();
+				terminals.set_agent_run_cb(Arc::new(move |e| {
+					let _ = app.emit("agent-terminal:run", e);
+				}));
+				let db = db.clone();
+				terminals.set_server_label(Arc::new(move |id| {
+					db.with(|c| services::servers::get(c, id))
+						.map(|s| format!("{} ({}@{})", s.name, s.username, s.host))
+						.unwrap_or_else(|_| id.to_string())
+				}));
+			}
 			let live = terminals.clone();
 			let reap = terminals.clone();
 			// Project Intelligence (F33). Asks the terminals which sessions are
@@ -514,6 +529,10 @@ pub fn run() {
 			commands::servers::vault_set_master_password,
 			commands::servers::server_open_shell,
 			commands::servers::server_disconnect,
+			commands::servers::agent_link_terminal,
+			commands::servers::agent_unlink_terminal,
+			commands::servers::agent_links,
+			commands::servers::server_agent_project,
 			commands::profiles::list_profiles,
 			commands::profiles::create_profile,
 			commands::profiles::rename_profile,

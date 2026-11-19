@@ -34,6 +34,7 @@ pub mod settings;
 pub mod shell_path;
 pub mod sops;
 pub mod ssh;
+pub mod term_capture;
 pub mod terminal;
 pub mod updates;
 pub mod usage;

@@ -1,3 +1,4 @@
+import type { AgentId, LinkMode } from '@factorai/types';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
@@ -10,6 +11,18 @@ export interface ServerTab {
 	terminalId: string | null;
 	/** Its shell exited or the connection dropped; the tab stays until closed. */
 	dead: boolean;
+	/** The agent session this SSH session is lent to (F45), if any. */
+	agent?: TabAgent | null;
+}
+
+/** An agent session using a tab's terminal (F45). */
+export interface TabAgent {
+	sessionId: string;
+	projectId: string;
+	projectCwd: string;
+	agent: AgentId;
+	/** `shared`: the human's own shell. `own`: a session opened for the agent. */
+	mode: LinkMode;
 }
 
 /** A host key waiting for the human, raised by a tab's first connect. */
@@ -25,8 +38,13 @@ interface ServerState {
 	/** Address-book folders the user closed. */
 	collapsed: string[];
 	pendingHostKey: PendingHostKey | null;
-	/** Open a new SSH session on a server and activate it; returns its key. */
-	open: (serverId: string) => string;
+	/** Open a new SSH session on a server and activate it; returns its key. An
+	 *  `agent` makes it that agent's own session (F45). */
+	open: (serverId: string, agent?: TabAgent) => string;
+	setAgent: (key: string, agent: TabAgent | null) => void;
+	/** Commands agents are running, by terminal id (F45). Memory only. */
+	running: Record<string, string>;
+	setRunning: (terminalId: string, command: string | null) => void;
 	close: (key: string) => void;
 	activate: (key: string) => void;
 	attach: (key: string, terminalId: string) => void;
@@ -49,14 +67,24 @@ export const useServerStore = create<ServerState>()(
 			active: null,
 			collapsed: [],
 			pendingHostKey: null,
-			open: (serverId) => {
+			open: (serverId, agent) => {
 				const key = `ssh:${crypto.randomUUID()}`;
 				set((s) => ({
-					tabs: [...s.tabs, { key, serverId, terminalId: null, dead: false }],
+					tabs: [...s.tabs, { key, serverId, terminalId: null, dead: false, agent: agent ?? null }],
 					active: key,
 				}));
 				return key;
 			},
+			setAgent: (key, agent) =>
+				set((s) => ({ tabs: s.tabs.map((t) => (t.key === key ? { ...t, agent } : t)) })),
+			running: {},
+			setRunning: (terminalId, command) =>
+				set((s) => {
+					const running = { ...s.running };
+					if (command === null) delete running[terminalId];
+					else running[terminalId] = command;
+					return { running };
+				}),
 			close: (key) =>
 				set((s) => {
 					const i = s.tabs.findIndex((t) => t.key === key);

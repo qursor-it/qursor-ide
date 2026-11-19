@@ -147,7 +147,15 @@ async fn serve(mut stream: TcpStream, token: String, handler: Handler) -> std::i
 
 		// A frame with no `id` is a notification: acknowledged with 202 and no
 		// body, which is what the MCP HTTP binding asks for.
-		match handler(&request.body) {
+		// Off the runtime's workers: a terminal tool waits for a remote command to
+		// finish (F45), which can be minutes, and must not starve the other
+		// sessions' servers in the meantime.
+		let h = handler.clone();
+		let body = request.body;
+		let reply = tokio::task::spawn_blocking(move || h(&body))
+			.await
+			.map_err(|e| std::io::Error::other(e.to_string()))?;
+		match reply {
 			Some(reply) => write_response(&mut stream, 200, &reply).await?,
 			None => write_response(&mut stream, 202, "").await?,
 		}

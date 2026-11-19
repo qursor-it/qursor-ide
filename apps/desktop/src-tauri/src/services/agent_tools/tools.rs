@@ -82,11 +82,18 @@ pub struct Canvases {
 pub struct AgentTools {
 	routines: Routines,
 	canvases: Canvases,
+	/// The terminals the human lent this session (ADR-0109). `None` only in tests.
+	terminals: Option<Arc<dyn super::terminals::TerminalUse>>,
 }
 
 impl AgentTools {
 	pub fn new(routines: Routines, canvases: Canvases) -> Self {
-		Self { routines, canvases }
+		Self { routines, canvases, terminals: None }
+	}
+
+	pub fn with_terminals(mut self, t: Arc<dyn super::terminals::TerminalUse>) -> Self {
+		self.terminals = Some(t);
+		self
 	}
 
 	/// What this session needs to know that is not a tool.
@@ -127,8 +134,9 @@ impl AgentTools {
 			"patches with that revision. The open board reloads by itself.",
 		);
 		format!(
-			"This session is running inside Qursor IDE, in the project at {}.\n\n{BODY}\n\n{CANVAS}",
-			self.routines.project_path
+			"This session is running inside Qursor IDE, in the project at {}.\n\n{BODY}\n\n{CANVAS}\n\n{}",
+			self.routines.project_path,
+			super::terminals::INSTRUCTIONS
 		)
 	}
 
@@ -184,6 +192,10 @@ impl AgentTools {
 			"canvasRead" => Ok(self.canvas_read(&args)),
 			"canvasFreeSpot" => Ok(self.canvas_free_spot(&args)),
 			"canvasPatch" => Ok(self.canvas_patch(&args)),
+			t if super::terminals::is_terminal_tool(t) => match &self.terminals {
+				Some(backend) => Ok(super::terminals::call(backend.as_ref(), t, &args)),
+				None => Ok(tool_error("no terminals can be lent to this session")),
+			},
 			other => Err(Failure::rpc(METHOD_NOT_FOUND, format!("no such tool: {other}"))),
 		}
 	}
@@ -520,6 +532,14 @@ fn stamp(ms: i64) -> String {
 ///   `isConcurrencySafe()`. Nothing here sets `destructiveHint`, because nothing
 ///   here destroys anything — that is what leaving `deleteRoutine` out bought.
 fn tools_list() -> Value {
+	let mut v = routine_tools();
+	if let Some(list) = v.get_mut("tools").and_then(Value::as_array_mut) {
+		list.extend(super::terminals::definitions());
+	}
+	v
+}
+
+fn routine_tools() -> Value {
 	json!({
 		"tools": [
 			{

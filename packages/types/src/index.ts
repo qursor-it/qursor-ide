@@ -2009,3 +2009,14 @@ export interface VaultStatus {
 	locked: boolean;
 	keychainError: string | null;
 }
+
+/** How a terminal is lent to an agent session (F45). */
+export type LinkMode = 'shared' | 'own';
+
+/** An agent started or finished a command in a lent terminal (F45). */
+export interface AgentRunEvent {
+	terminalId: string;
+	sessionId: string;
+	command: string;
+	running: boolean;
+}

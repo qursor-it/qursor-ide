@@ -110,4 +110,43 @@ test.describe('servers', () => {
 		expect(input).not.toHaveProperty('password');
 		expect(input).not.toHaveProperty('privateKey');
 	});
+
+	test('@smoke an agent session can share the SSH terminal or open its own tab', async ({
+		page,
+	}) => {
+		await installMockBridge(page, {
+			serverBook: book,
+			claudeCli: { installed: true, binaryPath: '/usr/local/bin/claude', version: '2.1.0' },
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await page.getByTestId('server-row-web01').dblclick();
+		await expect(page.getByTestId('server-terminal')).toBeVisible();
+
+		await page.getByTestId('agent-menu').click();
+		await page.getByTestId('agent-claude-shared').click();
+		await expect(page.getByTestId('agent-pane')).toBeVisible();
+		await expect(page.getByTestId('tab-agent')).toHaveCount(1);
+		const calls = async (name: string) =>
+			page.evaluate(
+				(n) => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === n),
+				name,
+			);
+		await expect.poll(async () => (await calls('agent_link_terminal')).length).toBe(1);
+		const [link] = await calls('agent_link_terminal');
+		expect(link.args).toMatchObject({ mode: 'shared' });
+
+		// Its own SSH session: a second tab, the agent's, not a tab for the agent.
+		await page.getByTestId('agent-menu').click();
+		await page.getByTestId('agent-detach').click();
+		await expect(page.getByTestId('agent-pane')).toHaveCount(0);
+		await page.getByTestId('agent-menu').click();
+		await page.getByTestId('agent-claude-own').click();
+		const tabs = page.getByTestId('server-tab');
+		await expect(tabs).toHaveCount(2);
+		await expect(tabs.nth(1).getByTestId('tab-agent')).toContainText("Claude Code's");
+		await expect.poll(async () => (await calls('agent_link_terminal')).length).toBe(2);
+		const own = (await calls('agent_link_terminal'))[1];
+		expect(own.args).toMatchObject({ mode: 'own' });
+	});
 });

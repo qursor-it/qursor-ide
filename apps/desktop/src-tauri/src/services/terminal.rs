@@ -59,6 +59,9 @@ use crate::services::ide::ui_state::UiState;
 use crate::services::osc_title::TitleScanner;
 use crate::services::usage::statusline;
 
+mod agent_use;
+pub use agent_use::{AgentLink, AgentRunEvent, LinkDto, LinkMode, PolicyCb, PolicyRequest};
+
 pub type TerminalId = String;
 
 /// What a PTY *is*, which is not the same question as what it is doing.
@@ -751,6 +754,15 @@ struct TerminalHandle {
 	/// the child's argv, and its `Drop` is the teardown.
 	#[allow(dead_code)]
 	agent_tools: Option<AgentToolsServer>,
+	/// What an agent reads from an SSH terminal (F45): markers, screen, cwd.
+	/// `None` for every other kind.
+	capture: Option<Arc<agent_use::CaptureCell>>,
+	/// The last keystroke the *human* sent, ms; agent writes do not count.
+	last_human_input: AtomicI64,
+	/// The agent session this terminal is lent to, if any (F45).
+	link: Mutex<Option<AgentLink>>,
+	/// An agent command is in flight here.
+	agent_running: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -823,6 +835,11 @@ pub struct TerminalManager {
 	on_ide_open: IdeOpenCb,
 	on_ide_status: IdeStatusCb,
 	on_adopted: AdoptedCb,
+	/// Asked before an agent command runs on a server (F45, ADR-0108).
+	agent_policy: Option<PolicyCb>,
+	on_agent_run: Arc<dyn Fn(AgentRunEvent) + Send + Sync>,
+	/// A server's display name for `terminals_list`, from the address book.
+	server_label: Option<Arc<dyn Fn(&str) -> String + Send + Sync>>,
 }
 
 impl TerminalManager {
@@ -871,6 +888,9 @@ impl TerminalManager {
 			on_worktree: Arc::new(move |e| {
 				let _ = app_worktree.emit("session:worktree", e);
 			}),
+			agent_policy: None,
+			on_agent_run: Arc::new(|_| {}),
+			server_label: None,
 		}
 	}
 
@@ -903,7 +923,18 @@ impl TerminalManager {
 			on_ide_open: Arc::new(|_| {}),
 			on_ide_status: Arc::new(|_| {}),
 			on_adopted: Arc::new(|_| {}),
+			agent_policy: None,
+			on_agent_run: Arc::new(|_| {}),
+			server_label: None,
 		}
+	}
+
+	pub fn set_server_label(&mut self, cb: Arc<dyn Fn(&str) -> String + Send + Sync>) {
+		self.server_label = Some(cb);
+	}
+
+	fn server_label(&self, server_id: &str) -> String {
+		self.server_label.as_ref().map_or_else(|| server_id.to_string(), |f| f(server_id))
 	}
 
 	/// Watch adoptions. For tests only — production wires this to a Tauri
@@ -1398,7 +1429,8 @@ impl TerminalManager {
 				)
 			}),
 		};
-		let tools = AgentTools::new(routines, canvases);
+		let tools = AgentTools::new(routines, canvases)
+			.with_terminals(Arc::new(self.session_terminals(session_id)));
 		AgentToolsServer::start(Arc::new(move |text| tools.handle(text)))
 	}
 
@@ -2075,6 +2107,11 @@ impl TerminalManager {
 			cwd: cwd_path.clone(),
 			ide,
 			agent_tools,
+			capture: (kind == TerminalKind::Ssh)
+				.then(|| Arc::new(agent_use::CaptureCell::new(req.cols, req.rows))),
+			last_human_input: AtomicI64::new(0),
+			link: Mutex::new(None),
+			agent_running: AtomicBool::new(false),
 		});
 
 		self.terminals.insert(id.clone(), handle.clone());
@@ -2225,6 +2262,8 @@ impl TerminalManager {
 			.send(data.to_vec())
 			.map_err(|_| AppError::Io(format!("terminal {id} no longer accepts input")))?;
 		handle.last_activity.store(now_ms(), Ordering::Relaxed);
+		// `write` is the human's path; an agent writes through its own (F45).
+		handle.last_human_input.store(now_ms(), Ordering::Relaxed);
 		Ok(())
 	}
 
@@ -2241,6 +2280,9 @@ impl TerminalManager {
 				pixel_height: 0,
 			})
 			.map_err(|e| AppError::Process(format!("resize: {e}")))?;
+		if let Some(cap) = &handle.capture {
+			cap.resize(cols.max(20), rows.max(5));
+		}
 		Ok(())
 	}
 
@@ -2446,6 +2488,9 @@ fn spawn_reader(
 								}
 							}
 							_ => {}
+						}
+						if let Some(cap) = &handle_r.capture {
+							cap.feed(&tmp[..n]);
 						}
 						buf_r.lock().extend_from_slice(&tmp[..n]);
 					}
@@ -2859,6 +2904,115 @@ mod tests {
 			!running()
 		});
 		assert!(gone, "kill-on-quit reaches the server: no orphan left behind (ADR-0005)");
+	}
+
+	/// The F45 path against a real sshd: an agent session runs commands in a
+	/// lent SSH terminal and gets real output, exit codes and the shell's
+	/// directory; the human's own `cd` is visible to it; a human keystroke holds
+	/// it back; a password prompt stops it.
+	#[cfg(unix)]
+	#[test]
+	fn an_agent_runs_commands_in_a_lent_ssh_terminal() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			// `sh`, not the user's login shell, so the test does not depend on rc files.
+			let ch = conn.channel_open_session().await.expect("channel");
+			ch.request_pty(true, "xterm-256color", 100, 30, 0, 0, &[]).await.expect("pty");
+			ch.exec(true, "exec env PS1='$ ' sh -i").await.expect("exec");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "~", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(500));
+		let agent = mgr.session_terminals("session-A");
+		assert!(agent.run(&id, "echo hi", 10).is_err(), "not lent yet");
+
+		mgr.link_agent(&id, "session-A", LinkMode::Shared).expect("link");
+		assert!(
+			mgr.link_agent(&id, "session-B", LinkMode::Shared).is_err(),
+			"one agent per terminal"
+		);
+		let r = agent.run(&id, "cd /tmp && echo \"hello $((6*7))\"", 15).expect("run");
+		assert_eq!(r["exit_code"], 0, "{r}");
+		assert_eq!(r["output"], "hello 42", "{r}");
+		assert_eq!(r["cwd"], "/tmp", "{r}");
+		let r = agent.run(&id, "false", 15).expect("run");
+		assert_eq!(r["exit_code"], 1, "{r}");
+
+		// The human moves the shared shell; the agent sees where it is now.
+		mgr.write(&id, b"cd /\n").expect("human types");
+		assert!(agent.run(&id, "pwd", 5).is_err(), "the human just typed: the agent waits");
+		std::thread::sleep(Duration::from_millis(1700));
+		let r = agent.run(&id, "pwd", 15).expect("run");
+		assert_eq!(r["output"], "/", "{r}");
+
+		// A password prompt stops the agent, and its keys are refused there.
+		let r = agent.run(&id, "printf 'Password: '; read secret", 15).expect("run");
+		assert_eq!(r["status"], "waiting for a password", "{r}");
+		assert!(agent.send_keys(&id, &["hunter2".into()]).is_err());
+		let listed = agent.list();
+		assert!(
+			listed["terminals"][0]["state"].as_str().unwrap_or_default().contains("password"),
+			"{listed}"
+		);
+		assert!(
+			mgr.session_terminals("session-B").read(&id).is_err(),
+			"another session cannot read it"
+		);
+	}
+
+	/// The same markers through the user's real login shell (bash with
+	/// readline and its rc files), the way an SSH tab opens it.
+	#[cfg(unix)]
+	#[test]
+	fn agent_markers_work_in_a_login_shell() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp")).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "s", LinkMode::Own).expect("link");
+		let agent = mgr.session_terminals("s");
+		let r =
+			agent.run(&id, "for i in 1 2 3; do echo line$i; done # a comment", 15).expect("run");
+		assert_eq!(r["output"], "line1\nline2\nline3", "{r}");
+		assert_eq!(r["cwd"], "/tmp", "{r}");
+		let r = agent.run(&id, "cat <<EOF\nheredoc ok\nEOF", 15).expect("run");
+		assert_eq!(r["output"], "heredoc ok", "{r}");
 	}
 
 	#[test]

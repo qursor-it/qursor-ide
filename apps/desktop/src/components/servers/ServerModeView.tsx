@@ -31,12 +31,15 @@ import {
 	X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { AgentMenu, AgentPane, RunningChip } from '@components/servers/AgentPane';
 import { ServerDialog } from '@components/servers/ServerDialog';
+import { AgentMark } from '@components/layout/AgentMark';
+import { agentName } from '@lib/agents';
 import { answerHostKey, reconnectTab, ServerTerminal } from '@components/servers/ServerTerminal';
 import { disposeTerminal } from '@components/terminal/Terminal';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
-import { cmd } from '@lib/tauri';
+import { cmd, events } from '@lib/tauri';
 import { tabLabel, useServerStore } from '@store/serverStore';
 
 const POLL_MS = 3_000;
@@ -84,6 +87,24 @@ export function ServerModeView() {
 
 	// A renderer reload keeps every PTY running: give each tab its live one back
 	// instead of logging in a second time.
+	// "Claude is running …" on the tab and over its terminal (F45).
+	useEffect(() => {
+		let off: (() => void) | undefined;
+		let gone = false;
+		events
+			.onAgentTerminalRun((e) =>
+				useServerStore.getState().setRunning(e.terminalId, e.running ? e.command : null),
+			)
+			.then((fn) => {
+				if (gone) fn();
+				else off = fn;
+			});
+		return () => {
+			gone = true;
+			off?.();
+		};
+	}, []);
+
 	useEffect(() => {
 		cmd.terminalList().then((list) => {
 			for (const t of list) {
@@ -113,10 +134,12 @@ export function ServerModeView() {
 							</span>
 							{server.environment === 'prod' && <ProdBadge />}
 							<div className="flex-1" />
-							{tab.dead && (
+							{tab.dead ? (
 								<Button size="sm" variant="outline" onClick={() => reconnectTab(tab.key)}>
 									Reconnect
 								</Button>
+							) : (
+								<AgentMenu tab={tab} server={server} />
 							)}
 						</header>
 						<div className="min-h-0 flex-1">
@@ -125,7 +148,13 @@ export function ServerModeView() {
 									The session ended.
 								</div>
 							) : (
-								<ServerTerminal key={tab.key} tab={tab} />
+								<div className="flex h-full min-w-0">
+									<div className="relative min-w-0 flex-1">
+										<ServerTerminal key={tab.key} tab={tab} />
+										<RunningChip tab={tab} />
+									</div>
+									{tab.agent && <AgentPane key={tab.agent.sessionId} agent={tab.agent} />}
+								</div>
 							)}
 						</div>
 					</>
@@ -538,6 +567,7 @@ export function ServerTabs() {
 	const tabs = useServerStore((s) => s.tabs);
 	const active = useServerStore((s) => s.active);
 	const activate = useServerStore((s) => s.activate);
+	const running = useServerStore((s) => s.running);
 	const byId = new Map((book.data?.servers ?? []).map((s) => [s.id, s]));
 	return (
 		<div
@@ -572,6 +602,23 @@ export function ServerTabs() {
 						/>
 						<span className="max-w-48 truncate">{tabLabel(tabs, t, name)}</span>
 						{s?.environment === 'prod' && <ProdBadge />}
+						{t.agent && (
+							<span
+								data-testid="tab-agent"
+								className={`flex h-5 items-center gap-1 rounded-full px-1.5 text-xs ${
+									t.terminalId && running[t.terminalId]
+										? 'bg-status-working/15 text-foreground'
+										: 'bg-secondary text-muted-foreground'
+								}`}
+							>
+								<AgentMark agent={t.agent.agent} className="size-3" />
+								{t.agent.mode === 'own'
+									? `${agentName(t.agent.agent)}'s`
+									: t.terminalId && running[t.terminalId]
+										? 'running'
+										: agentName(t.agent.agent)}
+							</span>
+						)}
 						<IconButton
 							aria-label={`Close ${name}`}
 							onClick={(e) => {

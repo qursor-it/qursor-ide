@@ -12,6 +12,7 @@
 //! `TerminalManager::spawn` and dropped with the PTY.
 
 mod server;
+pub mod terminals;
 mod tools;
 
 pub use server::AgentToolsServer;

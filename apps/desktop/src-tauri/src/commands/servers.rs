@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::{Server, ServerBook, ServerFolder, ServerInput, SshConfigHost};
 use crate::services::servers::{self, secret_id};
 use crate::services::ssh::{self, pty, Auth, Target};
-use crate::services::terminal::TerminalId;
+use crate::services::terminal::{LinkDto, LinkMode, TerminalId};
 use crate::services::vault::{Vault, VaultStatus};
 use crate::state::AppState;
 
@@ -217,4 +217,49 @@ mod tests {
 		assert_eq!(&argv[..5], ["ssh", "-t", "-p", "2222", "deploy@web01"]);
 		assert!(argv[5].starts_with("exec /bin/sh -c 'cd '\\''/srv/my app"), "{argv:?}");
 	}
+}
+
+/// Lend an SSH terminal to an agent session (F45). One session per terminal.
+#[tauri::command]
+pub fn agent_link_terminal(
+	state: State<'_, AppState>,
+	terminal_id: String,
+	session_id: String,
+	mode: LinkMode,
+) -> AppResult<()> {
+	state.terminals.link_agent(&terminal_id, &session_id, mode)
+}
+
+/// Take a terminal back from its agent. The agent's next call on it is refused.
+#[tauri::command]
+pub fn agent_unlink_terminal(state: State<'_, AppState>, terminal_id: String) {
+	state.terminals.unlink_agent(&terminal_id);
+}
+
+#[tauri::command]
+pub fn agent_links(state: State<'_, AppState>) -> Vec<LinkDto> {
+	state.terminals.agent_links()
+}
+
+/// The workspace project a server's agent sessions run in (F45): a folder of
+/// the app's own, one per server, so its sessions have a transcript home, show
+/// in the sidebar and resume like any other. Created on first use.
+#[tauri::command]
+pub fn server_agent_project(
+	state: State<'_, AppState>,
+	server_id: String,
+) -> AppResult<crate::models::Project> {
+	let server = state.db.with(|c| servers::get(c, &server_id))?;
+	let dir = state.data_dir.join("servers").join(&server.id);
+	std::fs::create_dir_all(&dir)?;
+	let project = crate::commands::projects::add_project_in(&state.db, &dir.to_string_lossy())?;
+	let name = format!("{} (server)", server.name);
+	state.db.with(|c| {
+		c.execute(
+			"UPDATE projects SET display_name = ?2 WHERE id = ?1",
+			rusqlite::params![project.id, name],
+		)?;
+		Ok(())
+	})?;
+	Ok(crate::models::Project { display_name: name, ..project })
 }
