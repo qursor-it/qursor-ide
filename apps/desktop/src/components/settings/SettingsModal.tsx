@@ -28,6 +28,7 @@ import {
 import { IntelligenceSection } from '@components/settings/IntelligenceSection';
 import { KeyboardSection } from '@components/settings/KeyboardSection';
 import { ProfilesSection } from '@components/settings/ProfilesSection';
+import { TaskbarWidgetSettings } from '@components/settings/TaskbarWidgetSettings';
 import { desktopNotificationsOf, desktopNotificationsSetting } from '@lib/attention';
 import { formatError } from '@lib/errors';
 import { isWindows } from '@lib/platform';
@@ -57,6 +58,14 @@ import {
 	terminalOptions,
 } from '@lib/monoFont';
 import { cmd } from '@lib/tauri';
+import {
+	DEFAULT_TASKBAR_WIDGET,
+	sameWidget,
+	thresholdError,
+	thresholdSetting,
+} from '@lib/taskbarWidget';
+import { parseThresholds } from '@lib/usage';
+import { useUsageStore } from '@store/usageStore';
 import { THEME_PREFS, themePrefOf } from '@lib/theme';
 import { currentPrefs, type Prefs, usePrefsStore } from '@store/prefsStore';
 import { useUpdater } from '@hooks/useUpdater';
@@ -127,6 +136,9 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 			usageClaudeEndpoint: usageEndpointOf(await cmd.getSetting('usageClaudeEndpoint')),
 			usageTaskbarWidget: usageOnByDefault(await cmd.getSetting('usageTaskbarWidget')),
 			usageStatusLine: usageOnByDefault(await cmd.getSetting('usageStatusLine')),
+			usageWarnPercent: (await cmd.getSetting('usageWarnPercent')) ?? '',
+			usageCriticalPercent: (await cmd.getSetting('usageCriticalPercent')) ?? '',
+			taskbarWidget: await cmd.getTaskbarWidgetConfig(),
 		}),
 		staleTime: Number.POSITIVE_INFINITY,
 		retry: false,
@@ -186,6 +198,9 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 								usageClaudeEndpoint: false,
 								usageTaskbarWidget: true,
 								usageStatusLine: true,
+								usageWarnPercent: '',
+								usageCriticalPercent: '',
+								taskbarWidget: DEFAULT_TASKBAR_WIDGET,
 							}
 						}
 						dirtyRef={dirtyRef}
@@ -211,6 +226,9 @@ interface SettingsFormProps {
 		| 'usageClaudeEndpoint'
 		| 'usageTaskbarWidget'
 		| 'usageStatusLine'
+		| 'usageWarnPercent'
+		| 'usageCriticalPercent'
+		| 'taskbarWidget'
 	>;
 	/** Where the shell reads "is there an edit" from, for its click-outside
 	 *  guard. The form is the only thing that knows. */
@@ -244,7 +262,8 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 		const probe = probes[id];
 		return probe && !probe.status.installed && probe.path === binaryOverride(draft[BINARY_KEY[id]]);
 	});
-	const canSave = dirty.length > 0 && !knownBad && !saving;
+	const thresholdProblem = thresholdError(draft.usageWarnPercent, draft.usageCriticalPercent);
+	const canSave = dirty.length > 0 && !knownBad && !saving && thresholdProblem === null;
 
 	function set<K extends keyof SettingsValues>(key: K, value: SettingsValues[K]) {
 		setFailure(null);
@@ -326,6 +345,30 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 			if (draft.usageStatusLine !== saved.usageStatusLine) {
 				await cmd.setSetting('usageStatusLine', usageOffSetting(draft.usageStatusLine));
 			}
+			// The colour thresholds are read by the taskbar widget in Rust, which
+			// takes them from the rows as they are written; the status bar takes
+			// them from the store, so it recolours without a reload.
+			const warn = thresholdSetting(draft.usageWarnPercent);
+			const critical = thresholdSetting(draft.usageCriticalPercent);
+			if (warn !== thresholdSetting(saved.usageWarnPercent)) {
+				await cmd.setSetting('usageWarnPercent', warn);
+			}
+			if (critical !== thresholdSetting(saved.usageCriticalPercent)) {
+				await cmd.setSetting('usageCriticalPercent', critical);
+			}
+			useUsageStore.getState().setThresholds(parseThresholds(warn, critical));
+			if (!sameWidget(draft.taskbarWidget, saved.taskbarWidget)) {
+				// The widget may have been dragged while this was open: keep where it
+				// is now, unless the position and size were reset here.
+				const { gap, width } = draft.taskbarWidget;
+				const untouched = gap === saved.taskbarWidget.gap && width === saved.taskbarWidget.width;
+				const now = untouched ? await cmd.getTaskbarWidgetConfig() : draft.taskbarWidget;
+				await cmd.setTaskbarWidgetConfig({
+					...draft.taskbarWidget,
+					gap: now.gap,
+					width: now.width,
+				});
+			}
 			queryClient.setQueryData(queryKeys.setting('claudeBinaryPath'), {
 				claudeBinary: paths.claude ?? '',
 				codexBinary: paths.codex ?? '',
@@ -336,6 +379,9 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 				usageClaudeEndpoint: draft.usageClaudeEndpoint,
 				usageTaskbarWidget: draft.usageTaskbarWidget,
 				usageStatusLine: draft.usageStatusLine,
+				usageWarnPercent: draft.usageWarnPercent,
+				usageCriticalPercent: draft.usageCriticalPercent,
+				taskbarWidget: draft.taskbarWidget,
 			});
 			applyPrefs(prefsOf(draft));
 			if (channelChanged && !import.meta.env.DEV) checkNow();
@@ -810,6 +856,50 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 									/>
 								</SettingRow>
 							)}
+							{isWindows() && draft.usageTaskbarWidget && (
+								<TaskbarWidgetSettings
+									value={draft.taskbarWidget}
+									onChange={(v) => set('taskbarWidget', v)}
+								/>
+							)}
+							<SettingRow
+								label="Colour thresholds"
+								description="Percent used from which a bar turns amber, and then red, in the status bar and the taskbar widget. Leave blank for 70 and 90."
+							>
+								<div className="flex items-center gap-1.5">
+									<Input
+										aria-label="Warning threshold"
+										data-testid="settings-usage-warn"
+										className="w-16"
+										type="number"
+										min={1}
+										max={100}
+										placeholder="70"
+										value={draft.usageWarnPercent}
+										onChange={(e) => set('usageWarnPercent', e.target.value)}
+									/>
+									<Input
+										aria-label="Critical threshold"
+										data-testid="settings-usage-critical"
+										className="w-16"
+										type="number"
+										min={1}
+										max={100}
+										placeholder="90"
+										value={draft.usageCriticalPercent}
+										onChange={(e) => set('usageCriticalPercent', e.target.value)}
+									/>
+									<span className="text-muted-foreground text-xs">%</span>
+								</div>
+							</SettingRow>
+							{thresholdProblem && (
+								<p
+									data-testid="settings-usage-thresholds-error"
+									className="py-2 text-destructive text-xs"
+								>
+									{thresholdProblem}
+								</p>
+							)}
 							<SettingRow
 								label="Read Claude limits from Anthropic's usage endpoint"
 								htmlFor="settings-usage-endpoint"
@@ -934,6 +1024,9 @@ function prefsOf(values: SettingsValues): Prefs {
 		usageClaudeEndpoint: _usageEndpoint,
 		usageTaskbarWidget: _usageTaskbar,
 		usageStatusLine: _usageStatusLine,
+		usageWarnPercent: _usageWarn,
+		usageCriticalPercent: _usageCritical,
+		taskbarWidget: _taskbarWidget,
 		...prefs
 	} = values;
 	// Empty means the shipped default (F31); stored trimmed so it stays empty.

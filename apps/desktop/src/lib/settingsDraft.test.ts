@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_TASKBAR_WIDGET } from './taskbarWidget';
 import {
 	binaryOverride,
 	CATCHUP,
@@ -42,6 +43,9 @@ const SAVED: SettingsValues = {
 	usageClaudeEndpoint: false,
 	usageTaskbarWidget: true,
 	usageStatusLine: true,
+	usageWarnPercent: '',
+	usageCriticalPercent: '',
+	taskbarWidget: DEFAULT_TASKBAR_WIDGET,
 };
 
 describe('isSettingsSection', () => {
@@ -118,6 +122,22 @@ describe('dirtySections', () => {
 		expect(usageEndpointSetting(false)).toBeNull();
 	});
 
+	it('marks usage dirty for the thresholds and the widget layout', () => {
+		expect(dirtySections(SAVED, { ...SAVED, usageWarnPercent: '60' })).toEqual(['usage']);
+		const draft = {
+			...SAVED,
+			taskbarWidget: { ...SAVED.taskbarWidget, layout: 'inline' as const },
+		};
+		expect(dirtySections(SAVED, draft)).toEqual(['usage']);
+	});
+
+	it('does not call a blank threshold, or its default typed out, a change only by whitespace', () => {
+		const saved = { ...SAVED, usageWarnPercent: '60' };
+		expect(isDirty(saved, { ...saved, usageWarnPercent: ' 60 ' })).toBe(false);
+		// Blank and an invalid number both write nothing, so they are the same row.
+		expect(isDirty(SAVED, { ...SAVED, usageWarnPercent: 'abc' })).toBe(false);
+	});
+
 	it('reports nothing for an untouched draft', () => {
 		expect(dirtySections(SAVED, { ...SAVED })).toEqual([]);
 		expect(isDirty(SAVED, { ...SAVED })).toBe(false);
@@ -139,6 +159,10 @@ describe('dirtySections', () => {
 			else if (key === 'terminalFontSize') draft.terminalFontSize = 16;
 			else if (key === 'terminalLineHeight') draft.terminalLineHeight = 1.2;
 			else if (key === 'terminalCursor') draft.terminalCursor = 'block';
+			else if (key === 'usageWarnPercent') draft.usageWarnPercent = '60';
+			else if (key === 'usageCriticalPercent') draft.usageCriticalPercent = '85';
+			else if (key === 'taskbarWidget')
+				draft.taskbarWidget = { ...SAVED.taskbarWidget, fontPx: 14 };
 			else draft[key] = !SAVED[key];
 			expect(dirtySections(SAVED, draft)).toEqual([SECTION_FOR[key]]);
 		}

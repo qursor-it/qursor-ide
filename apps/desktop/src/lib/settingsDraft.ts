@@ -1,6 +1,7 @@
 import { type ShortcutAction, SHORTCUT_SPECS, mergeKeymap } from '@lib/keymap';
 import type { Prefs } from '@store/prefsStore';
-import type { UpdateChannel } from '@factorai/types';
+import type { TaskbarWidgetConfig, UpdateChannel } from '@factorai/types';
+import { sameWidget, thresholdSetting } from '@lib/taskbarWidget';
 
 /**
  * The settings modal's draft, and what is different about it (F11).
@@ -99,6 +100,13 @@ export interface SettingsValues extends Prefs {
 	usageClaudeEndpoint: boolean;
 	usageTaskbarWidget: boolean;
 	usageStatusLine: boolean;
+	/** The two colour thresholds, as the text of their fields: blank is the
+	 *  default (70 and 90). SQLite, because the taskbar widget reads them in Rust. */
+	usageWarnPercent: string;
+	usageCriticalPercent: string;
+	/** The widget's layout (Windows). A file Rust owns, edited as one object and
+	 *  saved through its own command. */
+	taskbarWidget: TaskbarWidgetConfig;
 }
 
 /** A stored channel as a channel: anything but `alpha` is stable, the rule
@@ -161,6 +169,9 @@ export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	usageClaudeEndpoint: 'usage',
 	usageTaskbarWidget: 'usage',
 	usageStatusLine: 'usage',
+	usageWarnPercent: 'usage',
+	usageCriticalPercent: 'usage',
+	taskbarWidget: 'usage',
 	terminalFont: 'terminal',
 	terminalFontSize: 'terminal',
 	terminalLineHeight: 'terminal',
@@ -246,6 +257,11 @@ function sameValue(
 	if (key === 'routinesMaxConcurrent') {
 		return CONCURRENT(saved.routinesMaxConcurrent) === CONCURRENT(draft.routinesMaxConcurrent);
 	}
+	// Normalised like the routines' fields: `85 ` and `85` are one setting.
+	if (key === 'usageWarnPercent' || key === 'usageCriticalPercent') {
+		return thresholdSetting(saved[key]) === thresholdSetting(draft[key]);
+	}
+	if (key === 'taskbarWidget') return sameWidget(saved.taskbarWidget, draft.taskbarWidget);
 	// Trimmed like the binary paths: a trailing newline is not an edit.
 	if (key === 'prReviewInstructions') {
 		return saved.prReviewInstructions.trim() === draft.prReviewInstructions.trim();
