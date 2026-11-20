@@ -514,6 +514,10 @@ impl Widget {
 	/// The cursor moved with the button down: follow it once it has gone far
 	/// enough to not be a click.
 	fn drag_to(&mut self) {
+		// Plain hovering ends here, before any text is measured.
+		if self.drag.is_none() {
+			return;
+		}
 		let Some(bounds) = self.bounds() else { return };
 		let Some(drag) = self.drag.as_mut() else { return };
 		let mut now = POINT::default();
