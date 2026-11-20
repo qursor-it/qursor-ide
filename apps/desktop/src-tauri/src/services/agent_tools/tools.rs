@@ -78,15 +78,21 @@ pub struct Canvases {
 	pub linked: Arc<dyn Fn() -> AppResult<Option<String>> + Send + Sync>,
 }
 
+/// Open a new session in this session's project, folder and agent, with the
+/// prompt as its first message. Project, agent and folder are baked into the
+/// closure, like [`Routines`]: the tool has no way to name another.
+pub type StartSession = Arc<dyn Fn(&str) -> AppResult<()> + Send + Sync>;
+
 /// One session's view of Qursor IDE's tools.
 pub struct AgentTools {
 	routines: Routines,
 	canvases: Canvases,
+	start_session: StartSession,
 }
 
 impl AgentTools {
-	pub fn new(routines: Routines, canvases: Canvases) -> Self {
-		Self { routines, canvases }
+	pub fn new(routines: Routines, canvases: Canvases, start_session: StartSession) -> Self {
+		Self { routines, canvases, start_session }
 	}
 
 	/// What this session needs to know that is not a tool.
@@ -126,8 +132,18 @@ impl AgentTools {
 			"read only the nodes you need, find an empty spot for new cards, and send small ",
 			"patches with that revision. The open board reloads by itself.",
 		);
+		const HANDOFF: &str = concat!(
+			"To hand a part of the work to a new session in this project, use `startSession` ",
+			"once the human agrees.",
+		);
 		format!(
-			"This session is running inside Qursor IDE, in the project at {}.\n\n{BODY}\n\n{CANVAS}",
+			"This session is running inside Qursor IDE, in the project at {}.
+
+{BODY}
+
+{CANVAS}
+
+{HANDOFF}",
 			self.routines.project_path
 		)
 	}
@@ -184,6 +200,7 @@ impl AgentTools {
 			"canvasRead" => Ok(self.canvas_read(&args)),
 			"canvasFreeSpot" => Ok(self.canvas_free_spot(&args)),
 			"canvasPatch" => Ok(self.canvas_patch(&args)),
+			"startSession" => Ok(self.start_session(&args)),
 			other => Err(Failure::rpc(METHOD_NOT_FOUND, format!("no such tool: {other}"))),
 		}
 	}
@@ -309,6 +326,23 @@ impl AgentTools {
 				))
 			}
 			Err(e) => tool_error(&format!("{e}")),
+		}
+	}
+
+	/// Hand a part of the work to a new session, fire and forget.
+	fn start_session(&self, args: &Value) -> Value {
+		let prompt = args.get("prompt").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+		if prompt.is_empty() {
+			return tool_error("startSession needs a prompt");
+		}
+		match (self.start_session)(prompt) {
+			Ok(()) => {
+				info!("an agent started a new session");
+				tool_text(
+					"Started a new session with that prompt. It is in the sidebar of this project in Qursor IDE.",
+				)
+			}
+			Err(e) => tool_error(&format!("could not start a new session: {e}")),
 		}
 	}
 
@@ -769,6 +803,31 @@ fn tools_list() -> Value {
 											 Qursor IDE canvas board",
 				},
 			},
+			{
+				"name": "startSession",
+				"description": "Open a new agent session in this same project and folder, \
+								with `prompt` as its first message, to hand off a part of the \
+								work. Ask the human first and call this only after they agree. \
+								Write the prompt for an agent starting cold, with no memory of \
+								this conversation: the goal, the files involved, what is \
+								already decided and how to verify. The new session runs on its \
+								own; you will not see its result. Say what you handed off.",
+				"inputSchema": {
+					"type": "object",
+					"properties": {
+						"prompt": {
+							"type": "string",
+							"description": "The first message of the new session.",
+						},
+					},
+					"required": ["prompt"],
+				},
+				"annotations": { "title": "Start a new session", "readOnlyHint": false },
+				"_meta": {
+					"anthropic/searchHint": "hand off work to a new agent session in this \
+											 Qursor IDE project",
+				},
+			},
 		]
 	})
 }
@@ -793,6 +852,8 @@ mod tests {
 		dir: tempfile::TempDir,
 		/// The canvas this session is linked to.
 		linked: Arc<Mutex<Option<String>>>,
+		/// The prompts the `startSession` closure was handed.
+		started: Arc<Mutex<Vec<String>>>,
 	}
 
 	/// The project every fixture's session runs in.
@@ -892,8 +953,18 @@ mod tests {
 			root: Arc::new(move || Ok(root.clone())),
 			linked: Arc::new(move || Ok(link.lock().clone())),
 		};
-		let tools = AgentTools::new(routine_store(routines.clone(), asked_for.clone()), canvases);
-		Fixture { tools, routines, asked_for, dir, linked }
+		let started: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+		let record = started.clone();
+		let start_session: StartSession = Arc::new(move |prompt| {
+			record.lock().push(prompt.to_string());
+			Ok(())
+		});
+		let tools = AgentTools::new(
+			routine_store(routines.clone(), asked_for.clone()),
+			canvases,
+			start_session,
+		);
+		Fixture { tools, routines, asked_for, dir, linked, started }
 	}
 
 	fn call(tools: &AgentTools, method: &str, params: Value) -> Value {
@@ -937,7 +1008,8 @@ mod tests {
 				"canvasOutline",
 				"canvasRead",
 				"canvasFreeSpot",
-				"canvasPatch"
+				"canvasPatch",
+				"startSession",
 			]
 		);
 		// The one that is absent on purpose (ADR-0028): the editor's delete asks
@@ -961,6 +1033,7 @@ mod tests {
 		assert!(instructions.contains("createRoutine"), "it names the tool to reach for");
 		assert!(instructions.contains("cloud routine"), "it names what it is preferred over");
 		assert!(instructions.contains("canvasPatch"), "it names the canvas tools");
+		assert!(instructions.contains("startSession"), "it names the hand-off tool");
 		// The limit is stated rather than buried, which F22 requires of every
 		// surface that mentions a routine at all.
 		assert!(instructions.contains("only while Qursor IDE is open"), "{instructions}");
@@ -990,12 +1063,44 @@ mod tests {
 		for t in tools {
 			let hint = t["_meta"]["anthropic/searchHint"].as_str().unwrap_or_default();
 			assert!(
-				hint.contains("routine") || hint.contains("canvas"),
+				hint.contains("routine") || hint.contains("canvas") || hint.contains("session"),
 				"{} has no usable search hint",
 				t["name"]
 			);
 			assert!(hint.contains("Qursor IDE"), "{} does not name the app", t["name"]);
 		}
+	}
+
+	#[test]
+	fn startsession_hands_the_prompt_to_this_session_and_says_so() {
+		let f = fixture();
+		// Only `prompt` is read: the closure has no room for another project, folder
+		// or agent, whatever an argument says.
+		let reply = call(
+			&f.tools,
+			"tools/call",
+			json!({ "name": "startSession", "arguments": {
+				"prompt": "Fix the flaky test", "projectId": "other", "cwd": "/elsewhere", "agent": "codex",
+			} }),
+		);
+		let (text, is_error) = tool_result(&reply);
+		assert!(!is_error, "{text}");
+		assert!(text.contains("new session"), "{text}");
+		assert_eq!(*f.started.lock(), ["Fix the flaky test"]);
+	}
+
+	#[test]
+	fn startsession_refuses_an_empty_prompt() {
+		let f = fixture();
+		for arguments in [json!({ "prompt": "  " }), json!({})] {
+			let reply = call(
+				&f.tools,
+				"tools/call",
+				json!({ "name": "startSession", "arguments": arguments }),
+			);
+			assert!(tool_result(&reply).1, "{reply}");
+		}
+		assert!(f.started.lock().is_empty());
 	}
 
 	#[test]

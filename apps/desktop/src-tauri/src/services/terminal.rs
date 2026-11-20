@@ -251,6 +251,17 @@ pub struct SessionWorktreeEvent {
 	pub branch: Option<String>,
 }
 
+/// An agent asking for a new session in its own project (`startSession`).
+/// Project, agent and folder are the caller's own, bound at spawn.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStart {
+	pub project_id: String,
+	pub agent: String,
+	pub prompt: String,
+	pub cwd: String,
+}
+
 /// Where this session's bridge stands (F20).
 ///
 /// **The header shows nothing while this is healthy.** A badge for a working
@@ -796,6 +807,8 @@ pub struct TerminalManager {
 	/// `None` — every test that does not wire it — means on.
 	usage_statusline_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 	on_worktree: WorktreeCb,
+	/// An agent's `startSession`; the renderer opens the session.
+	on_session_start: Arc<dyn Fn(SessionStart) + Send + Sync>,
 	/// What the renderer has on screen, for the bridge's answers (F20).
 	ui: Arc<UiState>,
 	on_ide_open: IdeOpenCb,
@@ -811,7 +824,8 @@ impl TerminalManager {
 		let app_ide = app.clone();
 		let app_ide_status = app.clone();
 		let app_adopted = app.clone();
-		let app_worktree = app;
+		let app_worktree = app.clone();
+		let app_session_start = app;
 		Self {
 			terminals: Arc::new(DashMap::new()),
 			claude_dir,
@@ -849,6 +863,9 @@ impl TerminalManager {
 			on_worktree: Arc::new(move |e| {
 				let _ = app_worktree.emit("session:worktree", e);
 			}),
+			on_session_start: Arc::new(move |e| {
+				let _ = app_session_start.emit("agent-session:start", e);
+			}),
 		}
 	}
 
@@ -877,6 +894,7 @@ impl TerminalManager {
 			usage_sink_dir: None,
 			usage_statusline_enabled: None,
 			on_worktree: Arc::new(|_| {}),
+			on_session_start: Arc::new(|_| {}),
 			ui: Arc::new(UiState::default()),
 			on_ide_open: Arc::new(|_| {}),
 			on_ide_status: Arc::new(|_| {}),
@@ -1332,6 +1350,7 @@ impl TerminalManager {
 		&self,
 		session_id: &str,
 		project_id: &str,
+		agent: &str,
 		cwd: &Path,
 	) -> AppResult<AgentToolsServer> {
 		let store = self.routine_store.clone();
@@ -1376,7 +1395,19 @@ impl TerminalManager {
 				)
 			}),
 		};
-		let tools = AgentTools::new(routines, canvases);
+		let on_session_start = self.on_session_start.clone();
+		let (start_project, start_agent, start_cwd) =
+			(project_id.to_string(), agent.to_string(), cwd.to_string_lossy().into_owned());
+		let start_session: agent_tools::StartSession = Arc::new(move |prompt| {
+			(on_session_start)(SessionStart {
+				project_id: start_project.clone(),
+				agent: start_agent.clone(),
+				prompt: prompt.to_string(),
+				cwd: start_cwd.clone(),
+			});
+			Ok(())
+		});
+		let tools = AgentTools::new(routines, canvases, start_session);
 		AgentToolsServer::start(Arc::new(move |text| tools.handle(text)))
 	}
 
@@ -1760,7 +1791,7 @@ impl TerminalManager {
 		let agent_tools = match req.session_id.as_deref() {
 			None => None,
 			Some(session_id) => {
-				match self.start_agent_tools(session_id, &req.project_id, &cwd_path) {
+				match self.start_agent_tools(session_id, &req.project_id, env_agent.id, &cwd_path) {
 					Ok(server) => Some(server),
 					Err(e) => {
 						warn!(error = %e, "agent tool server did not start; the session runs without it");

@@ -16,5 +16,6 @@ mod tools;
 
 pub use server::AgentToolsServer;
 pub use tools::{
-	AgentTools, Canvases, CreateRoutine, ListRoutines, Routines, UpdateRoutine, SERVER_NAME,
+	AgentTools, Canvases, CreateRoutine, ListRoutines, Routines, StartSession, UpdateRoutine,
+	SERVER_NAME,
 };

@@ -1170,6 +1170,15 @@ export interface RoutineFireEvent {
 	cwd: string;
 }
 
+/** `agent-session:start` — an agent asked for a new session in its own project
+ *  (`startSession`). Project, agent and folder are the caller's own. */
+export interface AgentSessionStartEvent {
+	projectId: string;
+	agent: AgentId;
+	prompt: string;
+	cwd: string;
+}
+
 /** `routines:changed` — a project's routine list is no longer what the renderer
  *  has (F22 slice 3, ADR-0028).
  *

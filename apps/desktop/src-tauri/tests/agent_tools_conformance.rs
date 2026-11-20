@@ -68,7 +68,7 @@ fn harness(db: Db, session_id: &str, project_path: &str) -> AgentToolsServer {
 		root: Arc::new(|| Err(AppError::InvalidInput("no canvases here".into()))),
 		linked: Arc::new(|| Ok(None)),
 	};
-	let tools = AgentTools::new(routines, canvases);
+	let tools = AgentTools::new(routines, canvases, Arc::new(|_| Ok(())));
 	AgentToolsServer::start(Arc::new(move |text| tools.handle(text))).expect("bind")
 }
 
