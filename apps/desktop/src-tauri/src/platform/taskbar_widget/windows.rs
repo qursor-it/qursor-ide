@@ -23,8 +23,8 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Graphics::Gdi::{
 	CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, MapWindowPoints,
-	ReleaseDC, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-	BLENDFUNCTION, DIB_RGB_COLORS,
+	ReleaseDC, ScreenToClient, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO,
+	BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
@@ -33,21 +33,26 @@ use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWI
 use windows_sys::Win32::UI::HiDpi::{
 	GetDpiForWindow, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
 };
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
 	CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowExW, FindWindowW,
-	GetClientRect, GetMessageW, GetParent, GetWindowLongPtrW, GetWindowRect,
-	GetWindowThreadProcessId, IsChild, IsWindowVisible, KillTimer, PeekMessageW, PostQuitMessage,
-	PostThreadMessageW, RegisterClassExW, RegisterWindowMessageW, SetParent, SetTimer,
-	SetWindowLongPtrW, SetWindowPos, TranslateMessage, UpdateLayeredWindow,
-	EVENT_OBJECT_LOCATIONCHANGE, GWL_EXSTYLE, GWL_STYLE, HWND_TOP, MA_NOACTIVATE, MSG,
-	OBJID_WINDOW, PM_NOREMOVE, SWP_NOACTIVATE, SWP_SHOWWINDOW, ULW_ALPHA, WINEVENT_OUTOFCONTEXT,
-	WM_APP, WM_DESTROY, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_TIMER, WM_USER, WNDCLASSEXW, WS_CHILD,
-	WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOPARENTNOTIFY, WS_EX_TOOLWINDOW,
-	WS_POPUP,
+	GetClientRect, GetCursorPos, GetMessageW, GetParent, GetSystemMetrics, GetWindowLongPtrW,
+	GetWindowRect, GetWindowThreadProcessId, IsChild, IsWindowVisible, KillTimer, LoadCursorW,
+	PeekMessageW, PostQuitMessage, PostThreadMessageW, RegisterClassExW, RegisterWindowMessageW,
+	SetCursor, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, TranslateMessage,
+	UpdateLayeredWindow, EVENT_OBJECT_LOCATIONCHANGE, GWL_EXSTYLE, GWL_STYLE, HWND_TOP, IDC_ARROW,
+	IDC_SIZEWE, MA_NOACTIVATE, MSG, OBJID_WINDOW, PM_NOREMOVE, SM_CXDRAG, SM_CYDRAG,
+	SWP_NOACTIVATE, SWP_SHOWWINDOW, ULW_ALPHA, WINEVENT_OUTOFCONTEXT, WM_APP, WM_CAPTURECHANGED,
+	WM_DESTROY, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_SETCURSOR,
+	WM_TIMER, WM_USER, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+	WS_EX_NOPARENTNOTIFY, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
+use super::config::Look;
+use super::geometry::{self, Bounds, Geo, Mode as Gesture, EDGE_PX};
+use super::render::{light_taskbar, min_width};
 use super::tray::TrayFallback;
-use super::{focus_main, render, rows_from, Host, Msg, WidgetRow};
+use super::{click, render, rows_from, Host, Msg, WidgetRow};
 use crate::models::ProviderUsage;
 use crate::services::usage::now_ms;
 use crate::services::usage::store::apply_resets;
@@ -61,8 +66,6 @@ const REPOSITION_MS: u32 = 50;
 /// The check that the widget really is under the taskbar and visible.
 const VERIFY_TIMER: usize = 3;
 const VERIFY_MS: u32 = 2_000;
-/// Logical pixels between the widget and the notification area.
-const GAP: f32 = 8.0;
 /// Set (to anything) to skip embedding and go straight to the tray icon: the
 /// way to see the fallback on a machine where embedding works.
 const FORCE_TRAY_ENV: &str = "FACTORAI_TASKBAR_WIDGET_FORCE_TRAY";
@@ -104,7 +107,11 @@ impl Shared {
 
 /// Start the `taskbar-widget` thread. Waits only for the thread to create its
 /// message queue, which happens before it touches Explorer.
-pub(super) fn spawn(host: Host, initial: Vec<ProviderUsage>) -> Option<(Sender<Msg>, Arc<Shared>)> {
+pub(super) fn spawn(
+	host: Host,
+	initial: Vec<ProviderUsage>,
+	look: Look,
+) -> Option<(Sender<Msg>, Arc<Shared>)> {
 	let (tx, rx) = mpsc::channel();
 	// Rendezvous: the send completes only into a waiting `recv`, so a thread
 	// whose starter already gave up knows it and never embeds.
@@ -122,7 +129,7 @@ pub(super) fn spawn(host: Host, initial: Vec<ProviderUsage>) -> Option<(Sender<M
 		if ready_tx.send(shared.clone()).is_err() {
 			return;
 		}
-		run(host, rx, shared, initial);
+		run(host, rx, shared, initial, look);
 	});
 	if let Err(e) = spawned {
 		warn!(error = %e, "could not start the taskbar widget thread");
@@ -144,7 +151,9 @@ struct Widget {
 	shared: Arc<Shared>,
 	font: Option<Font>,
 	usage: Vec<ProviderUsage>,
+	/// What the system theme says; the config's theme may override it.
 	light: bool,
+	look: Look,
 	mode: Mode,
 	/// Hidden top-level window: owns the timers and hears `TaskbarCreated`,
 	/// which a child of Explorer's (dead) taskbar would not.
@@ -154,12 +163,33 @@ struct Widget {
 	taskbar: HWND,
 	hook: HWINEVENTHOOK,
 	/// What is on screen, so a tick that changes nothing pushes nothing.
-	drawn: Option<(Vec<WidgetRow>, u32, bool)>,
+	drawn: Option<Drawn>,
 	size: (i32, i32),
+	/// The taskbar's DPI as of the last draw.
+	dpi: u32,
+	/// A press on the surface that has not been released yet.
+	drag: Option<Drag>,
 	tray: Option<TrayFallback>,
 	/// The reposition timer is armed: a throttle, so a steady stream of
 	/// location events cannot keep pushing it back.
 	reposition_pending: bool,
+}
+
+/// What a draw depends on: the rows, the DPI, the text colour, the look (with
+/// the gap zeroed, since moving does not redraw) and the taskbar's height.
+type Drawn = (Vec<WidgetRow>, u32, bool, Look, i32);
+
+/// A press on the widget: a click until the cursor passes the system's drag
+/// distance, then a move or a resize.
+struct Drag {
+	mode: Gesture,
+	/// Screen position of the press.
+	cursor: POINT,
+	/// The widget's rendered gap and width, to measure the gesture from.
+	start: Geo,
+	/// The config's, to put back if the gesture is cancelled.
+	config: (f32, f32),
+	moved: bool,
 }
 
 thread_local! {
@@ -179,7 +209,13 @@ fn with_widget(f: impl FnOnce(&mut Widget)) {
 	});
 }
 
-fn run(host: Host, rx: Receiver<Msg>, shared: Arc<Shared>, initial: Vec<ProviderUsage>) {
+fn run(
+	host: Host,
+	rx: Receiver<Msg>,
+	shared: Arc<Shared>,
+	initial: Vec<ProviderUsage>,
+	look: Look,
+) {
 	// Without the listener there are no timers and no `TaskbarCreated`, so no
 	// embedding; the tray, which is the contract, still works.
 	let listener = create_listener().unwrap_or(null_mut());
@@ -190,6 +226,7 @@ fn run(host: Host, rx: Receiver<Msg>, shared: Arc<Shared>, initial: Vec<Provider
 		font: super::load_system_font(),
 		usage: initial,
 		light: light_theme(),
+		look,
 		mode: Mode::Embedded,
 		listener,
 		surface: null_mut(),
@@ -197,6 +234,8 @@ fn run(host: Host, rx: Receiver<Msg>, shared: Arc<Shared>, initial: Vec<Provider
 		hook: null_mut(),
 		drawn: None,
 		size: (0, 0),
+		dpi: 96,
+		drag: None,
 		tray: None,
 		reposition_pending: false,
 	};
@@ -252,6 +291,14 @@ impl Widget {
 			match msg {
 				Msg::Update(usage) => {
 					self.usage = usage;
+					changed = true;
+				}
+				Msg::Thresholds(thresholds) => {
+					self.look.thresholds = thresholds;
+					changed = true;
+				}
+				Msg::Config(config) => {
+					self.look.config = config;
 					changed = true;
 				}
 				Msg::Stop => return false,
@@ -362,7 +409,12 @@ impl Widget {
 
 	fn rows(&self) -> Vec<WidgetRow> {
 		let now = now_ms();
-		rows_from(&apply_resets(self.usage.clone(), now), now)
+		rows_from(&apply_resets(self.usage.clone(), now), now, &self.look.config.agents)
+	}
+
+	/// Whether the text is drawn for a light taskbar.
+	fn light_taskbar(&self) -> bool {
+		light_taskbar(self.look.config.theme, self.light)
 	}
 
 	/// Re-render if anything visible changed, then place the surface.
@@ -370,10 +422,11 @@ impl Widget {
 		let rows = self.rows();
 		match self.mode {
 			Mode::Tray => {
-				let key = (rows, 0, self.light);
+				let light = self.light_taskbar();
+				let key = (rows, 0, light, self.look.clone(), 0);
 				if self.drawn.as_ref() != Some(&key) {
 					if let Some(tray) = &self.tray {
-						tray.show(&key.0, self.font.as_ref(), self.light);
+						tray.show(&key.0, self.font.as_ref(), light, self.look.thresholds);
 					}
 					self.drawn = Some(key);
 				}
@@ -385,9 +438,21 @@ impl Widget {
 					0 => 96,
 					d => d,
 				};
-				let key = (rows, dpi, self.light);
+				self.dpi = dpi;
+				// SAFETY: plain geometry queries on the taskbar.
+				let bar = unsafe { extents(self.taskbar) };
+				// The room the widget has: it is never drawn wider than the taskbar.
+				let mut look = self.look.clone();
+				look.config.width =
+					look.config.width.min(geometry::to_logical(bar.right - bar.left, dpi));
+				let light = self.light_taskbar();
+				let height = bar.bottom - bar.top;
+				let mut keyed = look.clone();
+				keyed.config.gap = 0.0;
+				let key = (rows, dpi, light, keyed, height);
 				if self.drawn.as_ref() != Some(&key) {
-					let pm = render(&key.0, font, dpi as f32 / 96.0, self.light);
+					let max_h = geometry::to_logical(height, dpi);
+					let pm = render(&key.0, font, dpi as f32 / 96.0, light, &look, max_h);
 					// SAFETY: our own layered window.
 					if unsafe { push(self.surface, &pm) } {
 						self.size = (pm.width() as i32, pm.height() as i32);
@@ -399,29 +464,119 @@ impl Widget {
 		}
 	}
 
-	/// Just left of the notification area, vertically centred, in the taskbar's
-	/// client coordinates.
+	/// Just left of the notification area by the configured gap, vertically
+	/// centred, in the taskbar's client coordinates. Never left of the taskbar,
+	/// so a narrower taskbar cannot push the widget off screen.
 	fn place(&self, dpi: u32) {
 		let (w, h) = self.size;
 		// SAFETY: plain geometry queries; out-params are local.
 		unsafe {
-			let mut bar = RECT::default();
-			GetClientRect(self.taskbar, &mut bar);
-			let notify = FindWindowExW(self.taskbar, null_mut(), w!("TrayNotifyWnd"), null());
-			let right = if notify.is_null() {
-				bar.right
-			} else {
-				let mut r = RECT::default();
-				GetWindowRect(notify, &mut r);
-				let mut pts = [POINT { x: r.left, y: r.top }, POINT { x: r.right, y: r.bottom }];
-				MapWindowPoints(null_mut(), self.taskbar, pts.as_mut_ptr(), 2);
-				pts[0].x
-			};
-			let gap = (GAP * dpi as f32 / 96.0).round() as i32;
-			let x = right - w - gap;
+			let bar = extents(self.taskbar);
+			let gap = (self.look.config.gap * dpi as f32 / 96.0).round() as i32;
+			let x = (bar.right - w - gap).max(bar.left);
 			let y = bar.top + (bar.bottom - bar.top - h) / 2;
 			SetWindowPos(self.surface, HWND_TOP, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 		}
+	}
+
+	/// What a drag or a resize may do right now, in logical px.
+	fn bounds(&self) -> Option<Bounds> {
+		let font = self.font.as_ref()?;
+		// SAFETY: plain geometry queries on the taskbar.
+		let bar = unsafe { extents(self.taskbar) };
+		let avail = geometry::to_logical(bar.right - bar.left, self.dpi);
+		Some(Bounds::new(min_width(font, &self.look.config), avail))
+	}
+
+	/// The left button went down on the surface at client `x`.
+	fn press(&mut self, x: i32) {
+		if self.surface.is_null() {
+			return;
+		}
+		let mut cursor = POINT::default();
+		// SAFETY: out-param is local; the capture is released on the button up
+		// or by `WM_CAPTURECHANGED`.
+		unsafe {
+			GetCursorPos(&mut cursor);
+			SetCapture(self.surface);
+		}
+		let edge = (EDGE_PX * self.dpi as f32 / 96.0).round() as i32;
+		let cfg = &self.look.config;
+		self.drag = Some(Drag {
+			mode: geometry::mode_at(x, self.size.0, edge),
+			cursor,
+			start: Geo { gap: cfg.gap, width: geometry::to_logical(self.size.0, self.dpi) },
+			config: (cfg.gap, cfg.width),
+			moved: false,
+		});
+	}
+
+	/// The cursor moved with the button down: follow it once it has gone far
+	/// enough to not be a click.
+	fn drag_to(&mut self) {
+		let Some(bounds) = self.bounds() else { return };
+		let Some(drag) = self.drag.as_mut() else { return };
+		let mut now = POINT::default();
+		// SAFETY: out-param is local; the metrics take plain values.
+		let threshold = unsafe {
+			GetCursorPos(&mut now);
+			GetSystemMetrics(SM_CXDRAG).max(GetSystemMetrics(SM_CYDRAG))
+		};
+		let (dx, dy) = (now.x - drag.cursor.x, now.y - drag.cursor.y);
+		if !drag.moved && !geometry::passed_threshold(dx, dy, threshold) {
+			return;
+		}
+		drag.moved = true;
+		let to = geometry::snap(geometry::apply(
+			drag.mode,
+			drag.start,
+			geometry::to_logical(dx, self.dpi),
+			bounds,
+		));
+		self.look.config.gap = to.gap;
+		self.look.config.width = to.width;
+		self.refresh();
+	}
+
+	/// The button came up: a gesture is saved, a click does what the config says.
+	fn release(&mut self) {
+		let Some(drag) = self.drag.take() else { return };
+		// SAFETY: ends our own capture.
+		unsafe { ReleaseCapture() };
+		if drag.moved {
+			let cfg = &self.look.config;
+			if let Some(store) = &self.host.store {
+				store.set_geometry(cfg.gap, cfg.width);
+			}
+		} else if let Some(app) = &self.host.app {
+			click(app, self.look.config.click);
+		}
+	}
+
+	/// Something took the capture mid-gesture (another window, Alt+Tab): put
+	/// the widget back where it was.
+	fn cancel_drag(&mut self) {
+		let Some(drag) = self.drag.take() else { return };
+		if drag.moved {
+			(self.look.config.gap, self.look.config.width) = drag.config;
+			self.refresh();
+		}
+	}
+
+	/// Whether the cursor is over an edge, or a resize is under way: the
+	/// two-headed arrow.
+	fn wants_resize_cursor(&self) -> bool {
+		if let Some(drag) = &self.drag {
+			return drag.mode != Gesture::Move;
+		}
+		let mut at = POINT::default();
+		// SAFETY: out-param is local; `surface` is ours.
+		unsafe {
+			GetCursorPos(&mut at);
+			ScreenToClient(self.surface, &mut at);
+		}
+		let edge = (EDGE_PX * self.dpi as f32 / 96.0).round() as i32;
+		geometry::mode_at(at.x, self.size.0, edge) != Gesture::Move
 	}
 
 	fn on_timer(&mut self, id: usize) {
@@ -493,6 +648,36 @@ impl Widget {
 
 const CLASS: *const u16 = w!("FactoraiTaskbarWidget");
 
+/// The taskbar's client area, where the widget may sit: `right` is where the
+/// notification area starts (the taskbar's own right edge without one).
+struct Extents {
+	left: i32,
+	right: i32,
+	top: i32,
+	bottom: i32,
+}
+
+/// # Safety
+/// `taskbar` is a window handle; a dead one gives an empty area.
+unsafe fn extents(taskbar: HWND) -> Extents {
+	// SAFETY: plain geometry queries; out-params are local.
+	unsafe {
+		let mut bar = RECT::default();
+		GetClientRect(taskbar, &mut bar);
+		let notify = FindWindowExW(taskbar, null_mut(), w!("TrayNotifyWnd"), null());
+		let right = if notify.is_null() {
+			bar.right
+		} else {
+			let mut r = RECT::default();
+			GetWindowRect(notify, &mut r);
+			let mut pts = [POINT { x: r.left, y: r.top }, POINT { x: r.right, y: r.bottom }];
+			MapWindowPoints(null_mut(), taskbar, pts.as_mut_ptr(), 2);
+			pts[0].x
+		};
+		Extents { left: bar.left, right, top: bar.top, bottom: bar.bottom }
+	}
+}
+
 fn create_listener() -> Option<HWND> {
 	static REGISTERED: OnceLock<bool> = OnceLock::new();
 	// SAFETY: the class struct and names are static; the window is ours.
@@ -536,15 +721,53 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 			with_widget(|w| w.on_timer(wp));
 			return 0;
 		}
-		WM_LBUTTONUP => {
+		WM_LBUTTONDOWN => {
+			let x = (lp & 0xFFFF) as i16 as i32;
 			with_widget(|w| {
 				if hwnd == w.surface {
-					if let Some(app) = &w.host.app {
-						focus_main(app);
-					}
+					w.press(x);
 				}
 			});
 			return 0;
+		}
+		WM_MOUSEMOVE => {
+			with_widget(|w| {
+				if hwnd == w.surface {
+					w.drag_to();
+				}
+			});
+			return 0;
+		}
+		WM_LBUTTONUP => {
+			with_widget(|w| {
+				if hwnd == w.surface {
+					w.release();
+				}
+			});
+			return 0;
+		}
+		WM_CAPTURECHANGED => {
+			with_widget(|w| {
+				if hwnd == w.surface {
+					w.cancel_drag();
+				}
+			});
+			return 0;
+		}
+		WM_SETCURSOR => {
+			let mut resize = None;
+			with_widget(|w| {
+				if hwnd == w.surface {
+					resize = Some(w.wants_resize_cursor());
+				}
+			});
+			if let Some(resize) = resize {
+				// SAFETY: stock cursors take no instance.
+				unsafe {
+					SetCursor(LoadCursorW(null_mut(), if resize { IDC_SIZEWE } else { IDC_ARROW }));
+				}
+				return 1;
+			}
 		}
 		WM_MOUSEACTIVATE => return MA_NOACTIVATE as LRESULT,
 		WM_DESTROY => with_widget(|w| {
@@ -737,7 +960,8 @@ mod tests {
 			.and_then(|s| s.parse().ok())
 			.unwrap_or(5);
 		let initial = vec![usage("claude", 62.0, 31.0), usage("codex", 78.0, 93.0)];
-		let (tx, shared) = spawn(Host::default(), initial.clone()).expect("widget thread");
+		let (tx, shared) =
+			spawn(Host::default(), initial.clone(), Look::default()).expect("widget thread");
 		// SAFETY: a lookup by class name.
 		let taskbar = unsafe { FindWindowW(w!("Shell_TrayWnd"), null()) };
 		assert!(!taskbar.is_null(), "no taskbar on this machine");
@@ -780,8 +1004,9 @@ mod tests {
 			GetDpiForWindow(surface)
 		};
 		let font = crate::platform::taskbar_widget::load_system_font().unwrap();
-		let rows = rows_from(initial, now_ms());
-		let pm = render(&rows, &font, dpi as f32 / 96.0, light_theme());
+		let look = Look::default();
+		let rows = rows_from(initial, now_ms(), &look.config.agents);
+		let pm = render(&rows, &font, dpi as f32 / 96.0, light_theme(), &look, f32::INFINITY);
 		let path = std::path::PathBuf::from(path);
 		pm.save_png(path.with_extension("png")).unwrap();
 		let rect = format!("{} {} {} {} {}", r.left, r.top, r.right, r.bottom, dpi);

@@ -6,20 +6,26 @@
 //! Explorer's once it is reparented — so if Explorer hangs, that thread hangs.
 //! **Nothing here ever waits on it**: `update` and `stop` queue on a channel
 //! and post a thread message, and the widget thread takes no lock that anyone
-//! else waits on.
+//! else waits on (the config lock is held only for a clone or a small write).
 
+pub mod config;
+pub mod geometry;
 pub mod render;
 #[cfg(windows)]
 mod tray;
 #[cfg(windows)]
 mod windows;
 
+use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 use tauri::AppHandle;
 
 use crate::models::ProviderUsage;
+use crate::services::usage::Thresholds;
+use config::{ConfigStore, Look, WidgetConfig};
 
 pub use render::{load_system_font, render, render_icon, rows_from, WidgetRow};
 
@@ -28,6 +34,8 @@ pub use render::{load_system_font, render, render_icon, rows_from, WidgetRow};
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) enum Msg {
 	Update(Vec<ProviderUsage>),
+	Thresholds(Thresholds),
+	Config(WidgetConfig),
 	Stop,
 }
 
@@ -38,6 +46,9 @@ pub(crate) struct Host {
 	// Read only by the Windows widget thread; `start` fills it on every platform.
 	#[cfg_attr(not(windows), allow(dead_code))]
 	pub app: Option<AppHandle>,
+	/// Where a drag or a resize saves the widget's new place.
+	#[cfg_attr(not(windows), allow(dead_code))]
+	pub store: Option<Arc<ConfigStore>>,
 }
 
 /// The running widget. Dropping it stops it.
@@ -49,19 +60,29 @@ pub struct WidgetHandle {
 
 impl WidgetHandle {
 	/// Start the widget thread. `None` off Windows, or if the thread could not start.
-	pub fn start(app: AppHandle, initial: Vec<ProviderUsage>) -> Option<WidgetHandle> {
-		Self::start_with(Host { app: Some(app) }, initial)
+	pub fn start(
+		app: AppHandle,
+		store: Arc<ConfigStore>,
+		initial: Vec<ProviderUsage>,
+		thresholds: Thresholds,
+	) -> Option<WidgetHandle> {
+		let look = Look { config: store.get(), thresholds };
+		Self::start_with(Host { app: Some(app), store: Some(store) }, initial, look)
 	}
 
-	pub(crate) fn start_with(host: Host, initial: Vec<ProviderUsage>) -> Option<WidgetHandle> {
+	pub(crate) fn start_with(
+		host: Host,
+		initial: Vec<ProviderUsage>,
+		look: Look,
+	) -> Option<WidgetHandle> {
 		#[cfg(windows)]
 		{
-			let (tx, shared) = windows::spawn(host, initial)?;
+			let (tx, shared) = windows::spawn(host, initial, look)?;
 			Some(WidgetHandle { tx, shared })
 		}
 		#[cfg(not(windows))]
 		{
-			let _ = (host, initial);
+			let _ = (host, initial, look);
 			None
 		}
 	}
@@ -69,6 +90,18 @@ impl WidgetHandle {
 	/// New numbers. Queues and posts; never waits.
 	pub fn update(&self, usage: Vec<ProviderUsage>) {
 		let _ = self.tx.send(Msg::Update(usage));
+		self.wake();
+	}
+
+	/// New colour thresholds. Queues and posts; never waits.
+	pub fn set_thresholds(&self, thresholds: Thresholds) {
+		let _ = self.tx.send(Msg::Thresholds(thresholds));
+		self.wake();
+	}
+
+	/// New config. Queues and posts; never waits.
+	pub fn set_config(&self, config: WidgetConfig) {
+		let _ = self.tx.send(Msg::Config(config));
 		self.wake();
 	}
 
@@ -107,11 +140,25 @@ pub fn enabled(value: Option<&str>) -> bool {
 
 /// The widget as `AppState` holds it: started at boot, toggled by the setting,
 /// stopped on quit. The lock guards only the handle and is never held across
-/// anything that waits on the widget thread, which never takes it.
-#[derive(Default)]
-pub struct TaskbarWidget(Mutex<Option<WidgetHandle>>);
+/// anything that waits on the widget thread, which never takes it. The config
+/// and thresholds live here, not in the handle, so a change made while the
+/// widget is off is what the next start draws.
+pub struct TaskbarWidget {
+	handle: Mutex<Option<WidgetHandle>>,
+	store: Arc<ConfigStore>,
+	thresholds: Mutex<Thresholds>,
+}
 
 impl TaskbarWidget {
+	/// `config_path` is the `taskbar_widget.json` that holds the user's layout.
+	pub fn new(config_path: PathBuf, thresholds: Thresholds) -> Self {
+		Self {
+			handle: Mutex::new(None),
+			store: Arc::new(ConfigStore::load(config_path)),
+			thresholds: Mutex::new(thresholds),
+		}
+	}
+
 	/// Start or stop to match the setting. `initial` is asked for only on a start.
 	pub fn set_enabled(
 		&self,
@@ -119,9 +166,10 @@ impl TaskbarWidget {
 		on: bool,
 		initial: impl FnOnce() -> Vec<ProviderUsage>,
 	) {
-		let mut slot = self.0.lock();
+		let mut slot = self.handle.lock();
 		if on && slot.is_none() {
-			*slot = WidgetHandle::start(app.clone(), initial());
+			let thresholds = *self.thresholds.lock();
+			*slot = WidgetHandle::start(app.clone(), self.store.clone(), initial(), thresholds);
 		} else if !on {
 			// Dropping the handle stops the widget.
 			slot.take();
@@ -129,18 +177,42 @@ impl TaskbarWidget {
 	}
 
 	pub fn update(&self, usage: Vec<ProviderUsage>) {
-		if let Some(h) = self.0.lock().as_ref() {
+		if let Some(h) = self.handle.lock().as_ref() {
 			h.update(usage);
 		}
 	}
 
+	pub fn set_thresholds(&self, thresholds: Thresholds) {
+		*self.thresholds.lock() = thresholds;
+		if let Some(h) = self.handle.lock().as_ref() {
+			h.set_thresholds(thresholds);
+		}
+	}
+
+	pub fn config(&self) -> WidgetConfig {
+		self.store.get()
+	}
+
+	/// Keep and save the config, and redraw the running widget with it.
+	pub fn set_config(&self, config: WidgetConfig) {
+		let config = self.store.set(config);
+		if let Some(h) = self.handle.lock().as_ref() {
+			h.set_config(config);
+		}
+	}
+
 	pub fn stop(&self) {
-		self.0.lock().take();
+		self.handle.lock().take();
 	}
 }
 
-/// Bring factorai's main window to the front: what a click on the widget or the
-/// tray icon means.
+/// Event the widget emits for a click set to `details`; the status bar opens
+/// its usage popover on it.
+#[cfg(windows)]
+pub(crate) const OPEN_DETAILS_EVENT: &str = "usage:open-details";
+
+/// Bring factorai's main window to the front: what a click on the tray icon
+/// means, and the widget's default click.
 #[cfg(windows)]
 pub(crate) fn focus_main(app: &AppHandle) {
 	use tauri::Manager;
@@ -148,6 +220,21 @@ pub(crate) fn focus_main(app: &AppHandle) {
 		let _ = window.unminimize();
 		let _ = window.show();
 		let _ = window.set_focus();
+	}
+}
+
+/// What a click on the widget does, as the config says.
+#[cfg(windows)]
+pub(crate) fn click(app: &AppHandle, action: config::Click) {
+	use tauri::Emitter;
+	match action {
+		config::Click::None => {}
+		config::Click::Focus => focus_main(app),
+		// A hidden status bar is not listening, so this is then just a focus.
+		config::Click::Details => {
+			focus_main(app);
+			let _ = app.emit(OPEN_DETAILS_EVENT, ());
+		}
 	}
 }
 
@@ -166,11 +253,13 @@ mod tests {
 		let started = Instant::now();
 		for _ in 0..1000 {
 			handle.update(Vec::new());
+			handle.set_config(WidgetConfig::default());
+			handle.set_thresholds(Thresholds::default());
 			handle.stop();
 		}
 		assert!(started.elapsed() < Duration::from_secs(1));
 		#[cfg(not(windows))]
-		assert!(WidgetHandle::start_with(Host::default(), Vec::new()).is_none());
+		assert!(WidgetHandle::start_with(Host::default(), Vec::new(), Look::default()).is_none());
 	}
 
 	#[test]
@@ -178,5 +267,17 @@ mod tests {
 		assert!(enabled(None));
 		assert!(enabled(Some("on")));
 		assert!(!enabled(Some("off")));
+	}
+
+	/// A config set while the widget is off is saved, and read back.
+	#[test]
+	fn config_is_kept_while_off() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let widget =
+			TaskbarWidget::new(dir.path().join("taskbar_widget.json"), Thresholds::default());
+		assert_eq!(widget.config(), WidgetConfig::default());
+		widget.set_config(WidgetConfig { width: 300.0, ..WidgetConfig::default() });
+		assert_eq!(widget.config().width, 300.0);
+		assert!(dir.path().join("taskbar_widget.json").exists());
 	}
 }

@@ -86,6 +86,16 @@ pub fn default_agent(db: &Db) -> &'static str {
 		.unwrap_or_else(crate::agents::default_id)
 }
 
+/// The colour thresholds the two usage settings give. A table we cannot read
+/// is the defaults: the bars still colour.
+pub fn usage_thresholds(db: &Db) -> crate::services::usage::Thresholds {
+	let read = |key| db.with(|conn| get(conn, key)).ok().flatten();
+	crate::services::usage::Thresholds::parse(
+		read(SettingKey::UsageWarnPercent).as_deref(),
+		read(SettingKey::UsageCriticalPercent).as_deref(),
+	)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

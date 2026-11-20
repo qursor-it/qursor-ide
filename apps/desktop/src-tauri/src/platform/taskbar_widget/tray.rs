@@ -13,6 +13,7 @@ use tracing::warn;
 
 use super::render::{countdown, sane, whole_pct};
 use super::{focus_main, render_icon, WidgetRow};
+use crate::services::usage::Thresholds;
 
 const ID: &str = "usage-widget";
 const ICON_PX: u32 = 32;
@@ -48,10 +49,16 @@ impl TrayFallback {
 	}
 
 	/// New numbers or theme. Without a font the app icon stays.
-	pub(super) fn show(&self, rows: &[WidgetRow], font: Option<&Font>, light: bool) {
+	pub(super) fn show(
+		&self,
+		rows: &[WidgetRow],
+		font: Option<&Font>,
+		light: bool,
+		thresholds: Thresholds,
+	) {
 		let text = tooltip(rows);
 		let icon = font.map(|f| {
-			let pm = render_icon(critical(rows), f, ICON_PX, light);
+			let pm = render_icon(critical(rows), f, ICON_PX, light, thresholds);
 			// The tray wants straight alpha; tiny-skia stores premultiplied.
 			let rgba: Vec<u8> = pm
 				.pixels()
@@ -102,7 +109,7 @@ pub(super) fn tooltip(rows: &[WidgetRow]) -> String {
 		|min: Option<i64>| min.map_or(String::new(), |m| format!(" · resets in {}", countdown(m)));
 	rows.iter()
 		.map(|r| {
-			let name = if r.letter == 'C' { "Claude" } else { "Codex" };
+			let name = r.agent.name();
 			format!(
 				"{name} 5h {}{} · wk {}{}",
 				pct(r.five_hour),
@@ -118,10 +125,11 @@ pub(super) fn tooltip(rows: &[WidgetRow]) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::platform::taskbar_widget::config::Agent;
 
-	fn row(letter: char, five: Option<f64>, week: Option<f64>) -> WidgetRow {
+	fn row(agent: Agent, five: Option<f64>, week: Option<f64>) -> WidgetRow {
 		WidgetRow {
-			letter,
+			agent,
 			five_hour: five,
 			weekly: week,
 			five_hour_reset_min: None,
@@ -132,7 +140,8 @@ mod tests {
 
 	#[test]
 	fn tooltip_lists_both_windows_per_agent() {
-		let rows = [row('C', Some(62.0), Some(31.4)), row('X', Some(18.0), Some(16.0))];
+		let rows =
+			[row(Agent::Claude, Some(62.0), Some(31.4)), row(Agent::Codex, Some(18.0), Some(16.0))];
 		assert_eq!(tooltip(&rows), "Claude 5h 62% · wk 31%\nCodex 5h 18% · wk 16%");
 	}
 
@@ -141,7 +150,7 @@ mod tests {
 		let c = WidgetRow {
 			five_hour_reset_min: Some(134),
 			weekly_reset_min: Some(3 * 24 * 60 + 4 * 60),
-			..row('C', Some(62.0), Some(31.4))
+			..row(Agent::Claude, Some(62.0), Some(31.4))
 		};
 		assert_eq!(
 			tooltip(std::slice::from_ref(&c)),
@@ -154,19 +163,23 @@ mod tests {
 
 	#[test]
 	fn tooltip_marks_missing_numbers() {
-		assert_eq!(tooltip(&[row('X', None, Some(5.0))]), "Codex 5h -- · wk 5%");
+		assert_eq!(tooltip(&[row(Agent::Codex, None, Some(5.0))]), "Codex 5h -- · wk 5%");
 		assert_eq!(tooltip(&[]), "No usage data yet");
 		// NaN reads as 0, as the widget's own `sane` has it.
-		assert_eq!(tooltip(&[row('C', Some(f64::NAN), None)]), "Claude 5h 0% · wk --");
+		assert_eq!(tooltip(&[row(Agent::Claude, Some(f64::NAN), None)]), "Claude 5h 0% · wk --");
 		// Floored, like the widget: 89.9 is still amber, so it reads 89%.
-		assert_eq!(tooltip(&[row('C', Some(89.9), Some(69.99))]), "Claude 5h 89% · wk 69%");
+		assert_eq!(
+			tooltip(&[row(Agent::Claude, Some(89.9), Some(69.99))]),
+			"Claude 5h 89% · wk 69%"
+		);
 	}
 
 	#[test]
 	fn critical_is_the_highest_number_anywhere() {
-		let rows = [row('C', Some(62.0), Some(31.0)), row('X', Some(18.0), Some(91.0))];
+		let rows =
+			[row(Agent::Claude, Some(62.0), Some(31.0)), row(Agent::Codex, Some(18.0), Some(91.0))];
 		assert_eq!(critical(&rows), Some(91.0));
-		assert_eq!(critical(&[row('C', None, None)]), None);
-		assert_eq!(critical(&[row('C', Some(f64::NAN), Some(4.0))]), Some(4.0));
+		assert_eq!(critical(&[row(Agent::Claude, None, None)]), None);
+		assert_eq!(critical(&[row(Agent::Claude, Some(f64::NAN), Some(4.0))]), Some(4.0));
 	}
 }

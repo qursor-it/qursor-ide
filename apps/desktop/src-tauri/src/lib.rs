@@ -363,7 +363,10 @@ pub fn run() {
 			}
 			// The taskbar widget (ADR-0086) hears the same changes. `update` only
 			// posts to the widget thread, so a hung Explorer cannot hold a source.
-			let taskbar_widget = Arc::new(platform::taskbar_widget::TaskbarWidget::default());
+			let taskbar_widget = Arc::new(platform::taskbar_widget::TaskbarWidget::new(
+				data_dir.join("taskbar_widget.json"),
+				services::settings::usage_thresholds(&db),
+			));
 			{
 				let widget = taskbar_widget.clone();
 				usage.add_on_change(Arc::new(move |list| widget.update(list)));
@@ -599,6 +602,8 @@ pub fn run() {
 			commands::terminal::app_quit_confirmed,
 			commands::webview::webview_crash_notice,
 			commands::usage::get_usage,
+			commands::usage::get_taskbar_widget_config,
+			commands::usage::set_taskbar_widget_config,
 			commands::usage::session_usage,
 			commands::usage::session_plan,
 		])

@@ -10,6 +10,7 @@ use crate::commands::sessions::transcript_path;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{PlanItem, ProviderUsage, SessionUsage};
+use crate::platform::taskbar_widget::config::WidgetConfig;
 use crate::services::session_plan;
 use crate::services::usage::session_cost;
 use crate::state::AppState;
@@ -19,6 +20,24 @@ use crate::state::AppState;
 #[tauri::command]
 pub fn get_usage(state: State<'_, AppState>) -> AppResult<Vec<ProviderUsage>> {
 	Ok(state.usage.snapshot(crate::services::usage::now_ms()))
+}
+
+/// How the taskbar widget is laid out, or the defaults when nothing was saved.
+#[tauri::command]
+pub fn get_taskbar_widget_config(state: State<'_, AppState>) -> AppResult<WidgetConfig> {
+	Ok(state.taskbar_widget.config())
+}
+
+/// Save the widget's layout and redraw the running widget with it. Values out of
+/// range are brought into it rather than refused: the position and size also
+/// come from dragging, so the file is never the renderer's alone.
+#[tauri::command]
+pub fn set_taskbar_widget_config(
+	state: State<'_, AppState>,
+	config: WidgetConfig,
+) -> AppResult<()> {
+	state.taskbar_widget.set_config(config);
+	Ok(())
 }
 
 /// Tokens and estimated list-price cost of one session, from its transcript.

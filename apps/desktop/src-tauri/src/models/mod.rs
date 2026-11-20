@@ -971,6 +971,11 @@ pub enum SettingKey {
 	/// Claude Code's footer hints for users with no status line of their own.
 	/// Unset → on; `off` → off.
 	UsageStatusLine,
+	/// Percent used from which the usage bars turn amber (status bar and taskbar
+	/// widget). Unset or invalid → 70; see `services::usage::Thresholds`.
+	UsageWarnPercent,
+	/// The same for red. Unset or invalid → 90.
+	UsageCriticalPercent,
 }
 
 impl SettingKey {
@@ -993,6 +998,8 @@ impl SettingKey {
 			SettingKey::UsageClaudeEndpoint => "usage.claude_endpoint",
 			SettingKey::UsageTaskbarWidget => "usage.taskbar_widget",
 			SettingKey::UsageStatusLine => "usage.statusline",
+			SettingKey::UsageWarnPercent => "usage.warn_percent",
+			SettingKey::UsageCriticalPercent => "usage.critical_percent",
 		}
 	}
 }
