@@ -61,16 +61,32 @@ test.describe('usage status bar', () => {
 		// At the minimum window width the content fits as it is.
 		expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 
-		// Squeeze the bar to just past the two provider groups, so the session
-		// text on the right has to give way. Without `min-w-0 overflow-hidden` the
-		// bar's scrollWidth would exceed its clientWidth here.
+		// The provider groups sit centred on the bar, not pushed left by the
+		// session text on the right.
+		const offCentre = () =>
+			bar.evaluate((el) => {
+				const groups = [...el.querySelectorAll('[data-testid^="usage-group-"]')];
+				const first = groups[0].getBoundingClientRect();
+				const last = groups[groups.length - 1].getBoundingClientRect();
+				const box = el.getBoundingClientRect();
+				return Math.abs((first.left + last.right) / 2 - (box.left + box.right) / 2);
+			});
+		expect(await offCentre()).toBeLessThanOrEqual(1);
+
+		// Squeeze the bar to the groups plus 40px a side, so the session text on
+		// the right has to give way. Without `min-w-0 overflow-hidden` the bar's
+		// scrollWidth would exceed its clientWidth here.
 		await bar.evaluate((el) => {
 			const groups = [...el.querySelectorAll('[data-testid^="usage-group-"]')];
-			const last = groups[groups.length - 1].getBoundingClientRect();
-			el.style.width = `${Math.ceil(last.right - el.getBoundingClientRect().left) + 12 + 40}px`;
+			const span =
+				groups[groups.length - 1].getBoundingClientRect().right -
+				groups[0].getBoundingClientRect().left;
+			// 12px padding and a 16px gap on each side of the centre column.
+			el.style.width = `${Math.ceil(span) + 2 * (12 + 16 + 40)}px`;
 		});
 		expect(await bar.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 		expect(await session.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+		expect(await offCentre()).toBeLessThanOrEqual(1);
 		await expect(page.getByTestId('usage-group-codex')).toContainText('92%');
 	});
 

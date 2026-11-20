@@ -167,7 +167,7 @@ still never reads or writes `auth.json` for Codex.
 - Full width, bottom of the window, below the sidebar and the main column
   (`AppShell.tsx` today has no status bar; `specs/04-frontend.md` still lists a
   stale `layout/StatusBar.tsx`, which this work makes real).
-- Left: one group per provider with known data — `Claude 5h ▮▮▮▯ 62% · reset 16:40  week ▮▯▯ 31%`,
+- Centre (centred on the bar, whatever the right side measures): one group per provider with known data — `Claude 5h ▮▮▮▯ 62% · reset 16:40  week ▮▯▯ 31%`,
   then Codex. A provider whose agent is not installed is hidden. A provider
   installed but with no data yet shows `—`.
 - Right: the active session's tokens and estimated cost. Nothing if no session

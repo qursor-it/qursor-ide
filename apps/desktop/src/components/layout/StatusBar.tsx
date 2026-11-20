@@ -24,7 +24,7 @@ import { useUsageStore } from '@store/usageStore';
 import { inkOf, UsageMeter, UsagePopover } from './UsagePopover';
 
 /**
- * The window's bottom edge: plan limits per agent on the left, the session in
+ * The window's bottom edge: plan limits per agent in the centre, the session in
  * front on the right (usage monitor). Full width, below the sidebar and the
  * session column. Hidden entirely when the user turns it off.
  */
@@ -66,22 +66,25 @@ function StatusBarRow() {
 			<PopoverTrigger
 				data-testid="status-bar"
 				title="Plan limits and session usage"
-				className="flex h-6 w-full min-w-0 shrink-0 items-center gap-4 overflow-hidden bg-chrome px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+				className="grid h-6 w-full min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 overflow-hidden bg-chrome px-3 text-left text-muted-foreground text-xs outline-none hover:text-secondary-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
 			>
-				{rows.map((row) => (
-					<ProviderGroup
-						key={row.agent}
-						agent={row.agent}
-						usage={row.usage}
-						clock24={clock24}
-						now={now}
-					/>
-				))}
-				<span className="min-w-0 flex-1" />
+				{/* Equal side columns keep the groups centred on the window whatever
+				    the session text on the right measures. */}
+				<span className="col-start-2 flex items-center gap-4">
+					{rows.map((row) => (
+						<ProviderGroup
+							key={row.agent}
+							agent={row.agent}
+							usage={row.usage}
+							clock24={clock24}
+							now={now}
+						/>
+					))}
+				</span>
 				{sessionUsage && (
 					<span
 						data-testid="status-bar-session"
-						className="min-w-0 truncate whitespace-nowrap tabular-nums"
+						className="col-start-3 min-w-0 truncate whitespace-nowrap text-right tabular-nums"
 					>
 						{formatTokens(sessionUsage.totalTokens)} tok · {formatCost(sessionUsage.costUsd)}
 					</span>
