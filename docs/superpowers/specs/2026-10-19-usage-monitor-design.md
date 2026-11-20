@@ -191,6 +191,8 @@ still never reads or writes `auth.json` for Codex.
 
 ## The taskbar widget (Windows only)
 
+> Place, size, content and thresholds became configurable later: ADR-0113.
+
 Shape: two rows, `C ▮▮▮▯ 62%  w 31%` and `X ▮▯▯▯ 18%  w 16%`, transparent
 background, white or black text following the taskbar theme. Click brings
 factorai's main window to the front. Advice from a design review (Fable):

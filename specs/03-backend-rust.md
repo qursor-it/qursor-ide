@@ -129,8 +129,10 @@ services/
     scope.rs          # resolve_within — the boundary that matters (ADR-0017 § 3)
 platform/
   taskbar_widget/     # the usage widget in the Windows taskbar (ADR-0086):
-                      #   render (pure pixmap), windows (the embed, its own
-                      #   thread), tray (the fallback icon); no-op elsewhere
+                      #   render (pure layout + pixmap), config (the JSON file,
+                      #   ADR-0113), geometry (drag/resize math), windows (the
+                      #   embed, its own thread), tray (the fallback icon);
+                      #   no-op elsewhere
 db/
   mod.rs              # open(), migrate(), Pool wrapper
   migrations/
@@ -1677,6 +1679,8 @@ Keys, as of F11:
 | `projectIntelligence` | `intelligence.enabled` | `IntelligenceService` | `on`, or **unset for off**; any other value is off (F33, ADR-0084). Writing anything but `on` cancels runs in flight |
 | `usageClaudeEndpoint` | `usage.claude_endpoint` | usage poller (`claude_api`) | `on`, or unset for off: the opt-in endpoint (F34, ADR-0086) |
 | `usageTaskbarWidget` | `usage.taskbar_widget` | `TaskbarWidget`, at boot and live from `set_setting` | `off`, or unset for on (Windows only) |
+| `usageWarnPercent` | `usage.warn_percent` | `TaskbarWidget` (live from `set_setting`) and the renderer's `usageStore` | Whole number 1–100, unset for 70; with `usageCriticalPercent`, invalid or not below it reads as 70/90 (ADR-0113) |
+| `usageCriticalPercent` | `usage.critical_percent` | same | Whole number 1–100, unset for 90 |
 | `usageStatusLine` | `usage.statusline` | `TerminalManager` (per Claude spawn) | `off`, or unset for on: the injected status line |
 
 **The serde name and the row key differ on purpose.** The dotted namespace is

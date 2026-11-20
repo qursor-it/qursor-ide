@@ -2470,7 +2470,8 @@ Advanced section.
 [`03-backend-rust.md`](./03-backend-rust.md) § `settings`. The keys: the claude
 and codex binary paths, the default agent, F22's `routines.catchup_hours` and
 `routines.max_concurrent`, F14's `updates.channel` (ADR-0064), F32's `notifications.desktop`, and F34's
-`usage.claude_endpoint`, `usage.taskbar_widget` and `usage.statusline` (ADR-0086).
+`usage.claude_endpoint`, `usage.taskbar_widget`, `usage.statusline` (ADR-0086), `usage.warn_percent` and
+`usage.critical_percent` (ADR-0113).
 
 The override is read by **`find_claude_binary(override)`** rather than
 `TerminalManager`'s existing `binary_override` field. That field is documented for
@@ -8294,7 +8295,7 @@ time has passed reads 0%. Commands `get_usage`, `session_usage`; event
 
 ### Status bar
 
-`StatusBar` (`components/layout/`), 24 px, full width: per installed agent the
+`StatusBar` (`components/layout/`), 24 px, full width: centred on the bar, per installed agent the
 default profile's 5h bar, percentage and countdown to its reset, and weekly bar,
 percentage and countdown; on the right the active session's tokens and `~$` cost. A click opens
 `UsagePopover` with every profile, both windows with exact reset times,
@@ -8310,13 +8311,31 @@ shows no countdown. The widget and the tray tooltip use the same format.
 
 ### Taskbar widget (Windows)
 
-Two rows, `C ▮▮▮▯ 62% 2h 14m  w 31% 3d 4h` and
+By default two rows, `C ▮▮▮▯ 62% 2h 14m  w 31% 3d 4h` and
 `X ▮▯▯▯ 18% 45m  w 16% 6d 23h`, 244×36 logical px at 100%, transparent, white
 or black text following `SystemUsesLightTheme` (re-read every 60 s), 8 px left of
 the notification area on the primary taskbar, re-rendered at the taskbar's DPI.
+
+**Moving and sizing (ADR-0113).** Drag it to move it along the taskbar (never
+out of it); it stays vertically centred and keeps its distance from the
+notification area. Drag its left or right edge (the cursor turns to ↔) to change
+its width: narrower drops the weekly countdown, then the 5h countdown, the
+weekly bar, the weekly percentage and the 5h bar; wider lengthens the bars. A
+press that does not pass the system drag distance is a click.
+
+**Configuration** lives in `<data_dir>/taskbar_widget.json` (`TaskbarWidgetConfig`,
+commands `get_taskbar_widget_config` / `set_taskbar_widget_config`), every field
+defaulting to the widget above: which of the 5h bar, 5h %, 5h countdown, weekly
+bar, weekly %, weekly countdown show; which agents, in which order, each with
+its default or a chosen profile; one row per agent or one row for all; `C`/`X` or
+`Claude`/`Codex`; text size 8–20 px, clamped to the taskbar's height; theme auto,
+light or dark; background opacity; normal, warn and critical colours; and the
+click action (bring factorai forward, also open the status bar's details, or
+nothing).
 The countdowns are the same text colour at 70% of the row's alpha, and tick down
 on the widget's 60 s timer.
-A click brings factorai's window to the front. It exists only while factorai
+A click does what the configuration says (by default, brings factorai's window
+to the front). It exists only while factorai
 runs; it comes back by itself after Explorer restarts (`TaskbarCreated`).
 
 When it cannot sit in the taskbar — no `Shell_TrayWnd`, `SetParent` or the
@@ -8334,13 +8353,18 @@ a reset drops its `· resets in …`) / `Codex 5h 18% · wk 16%` in the tooltip.
   `off` gives back Claude Code's footer hints to a user with no status line of
   their own. Applies to sessions started after the change.
 - **Show usage in the Windows taskbar** — `usage.taskbar_widget`, on; Windows
-  only; applied at once.
+  only; applied at once. While on, the widget's configuration above, with a
+  "Reset position and size" button.
+- **Colour thresholds** — `usage.warn_percent` (70) and
+  `usage.critical_percent` (90), whole numbers 1–100 with amber below red;
+  colour both the status bar and the widget.
 - **Read Claude limits from Anthropic's usage endpoint** — `usage.claude_endpoint`,
   off, with the terms warning.
 
 ### Not built
 
-macOS and Linux taskbar or menu-bar widgets, secondary monitors' taskbars,
+macOS and Linux taskbar or menu-bar widgets, secondary monitors' taskbars, a
+widget floating outside the taskbar, a right-click menu on the widget,
 anything while factorai is closed, notifications or sounds near a limit, and
 daily or per-block cost reports.
 
