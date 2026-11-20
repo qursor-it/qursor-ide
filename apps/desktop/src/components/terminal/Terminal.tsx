@@ -8,7 +8,7 @@ import { createFileLinkProvider } from '@components/terminal/fileLinkProvider';
 import { documentXtermTheme } from '@components/terminal/themes';
 import { activateFileLink, fileLinkContext } from '@components/terminal/fileLinkWiring';
 import { useFileLinks } from '@hooks/useFileLinks';
-import type { RoutineFireEvent } from '@factorai/types';
+import type { AgentSessionStartEvent, RoutineFireEvent } from '@factorai/types';
 import { matchesKeyboardEvent } from '@tanstack/react-hotkeys';
 import { base64ToBytes } from '@lib/base64';
 import {
@@ -1053,6 +1053,21 @@ export function startRoutineSession(fire: RoutineFireEvent): void {
 	);
 	fitToHost(entry);
 	attachPty(entry, fire.sessionId, fire.projectId, fire.cwd, fire.prompt);
+}
+
+/**
+ * Start the session an agent asked for with `startSession` (ADR-0078 path).
+ *
+ * Same headless spawn as {@link startRoutineSession}: the prompt rides in as
+ * `initialPrompt`, so no tab opens and no focus moves. The caller's agent is
+ * set first so `ensureTerminal` launches that one.
+ */
+export function startAgentSession(sessionId: string, e: AgentSessionStartEvent): void {
+	if (useTerminalStore.getState().bySession[sessionId]) return;
+	useTerminalStore.getState().setLaunchAgent(sessionId, e.agent);
+	const entry = getOrCreateTerm(sessionId, getRoutinePane(), () => agentTerminalId(sessionId));
+	fitToHost(entry);
+	attachPty(entry, sessionId, e.projectId, e.cwd, e.prompt);
 }
 
 function ensureTerminal(

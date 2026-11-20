@@ -9,6 +9,7 @@ import { type DiffMode, isDiffMode, parsePosition, useFileViewer } from '@hooks/
 import { useNativeContextMenu } from '@hooks/useNativeContextMenu';
 import { useIntelligenceChanged } from '@hooks/useIntelligenceChanged';
 import { useIntelligenceSaveRecorder } from '@hooks/useIntelligenceSaveRecorder';
+import { useAgentSessionStarts } from '@hooks/useAgentSessionStarts';
 import { useRoutineFires } from '@hooks/useRoutineFires';
 import { useRoutinesChanged } from '@hooks/useRoutinesChanged';
 import { useSessionsSync } from '@hooks/useSessionsSync';
@@ -59,6 +60,9 @@ function RootLayout() {
 	// the same reason: a routine fires for a project no route is showing.
 	useRoutineFires();
 	useRoutinesChanged();
+
+	// `agent-session:start` → open the session an agent started, without focus.
+	useAgentSessionStarts();
 
 	// Project Intelligence (F33): a run finished or a decision was recorded, and
 	// the viewer's Save of a proposed instruction is reported to the backend. Both

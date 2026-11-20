@@ -57,6 +57,7 @@ import type {
 	ReviewSubmission,
 	Routine,
 	RoutineFireEvent,
+	AgentSessionStartEvent,
 	RoutinesChangedEvent,
 	RoutineInput,
 	RunNowResult,
@@ -821,6 +822,10 @@ export const events = {
 	 *  fact rather than racing one. */
 	onRoutineFire: (cb: (p: RoutineFireEvent) => void) =>
 		listen<RoutineFireEvent>('routine:fire', cb),
+	/** An agent called `startSession` over MCP: open that session in the sidebar,
+	 *  headless. Only emitted from a live session, so there is nothing to drain. */
+	onAgentSessionStart: (cb: (p: AgentSessionStartEvent) => void) =>
+		listen<AgentSessionStartEvent>('agent-session:start', cb),
 	/** The file the viewer has open changed on disk (F7). Carries the path; the
 	 *  renderer re-reads it through the same commands a reopen uses. */
 	onFileChanged: (cb: (p: FileChangedEvent) => void) =>
