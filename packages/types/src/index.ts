@@ -410,7 +410,9 @@ export type SettingKey =
 	| 'projectIntelligence'
 	| 'usageClaudeEndpoint'
 	| 'usageTaskbarWidget'
-	| 'usageStatusLine';
+	| 'usageStatusLine'
+	| 'usageWarnPercent'
+	| 'usageCriticalPercent';
 
 /**
  * The update channel an install follows (F14, ADR-0064). Stored under
@@ -1260,9 +1262,48 @@ export interface ProviderUsage {
 	updatedAt: number;
 }
 
+/** Percent used from which a usage bar turns amber and red, in the status bar
+ *  and the taskbar widget. Stored as two settings (`usageWarnPercent`,
+ *  `usageCriticalPercent`); unset or invalid reads as these defaults, and a
+ *  warn at or above the critical is invalid. */
+export interface UsageThresholds {
+	warn: number;
+	critical: number;
+}
+
+/** The taskbar widget's layout, in `<data dir>/taskbar_widget.json` (Windows).
+ *  Mirrors `platform::taskbar_widget::config::WidgetConfig`; every field has a
+ *  default on the Rust side. Lengths are logical pixels. */
+export interface TaskbarWidgetConfig {
+	/** From the widget's right edge to the notification area. */
+	gap: number;
+	width: number;
+	show: {
+		fiveHourBar: boolean;
+		fiveHourPercent: boolean;
+		fiveHourReset: boolean;
+		weeklyBar: boolean;
+		weeklyPercent: boolean;
+		weeklyReset: boolean;
+	};
+	/** In draw order. `profileId: null` is the agent's default profile. */
+	agents: { agent: AgentId; visible: boolean; profileId: string | null }[];
+	layout: 'rows' | 'inline';
+	labels: 'letter' | 'name';
+	fontPx: number;
+	/** Which taskbar the text is drawn for: `light` is dark text. */
+	theme: 'auto' | 'light' | 'dark';
+	/** 0 is none. */
+	backgroundOpacity: number;
+	/** `#RRGGBB`. `normal: null` is the text colour at 70%. */
+	colors: { normal: string | null; warn: string; critical: string };
+	click: 'focus' | 'details' | 'none';
+}
+
 /** Tokens and estimated list-price cost of one session. `costUsd` is null when
  *  a model in the session has no known price. */
-/** One entry of the agent's plan (F40). Mirrors Rust `PlanItem`. */
+/** One entry
+ of the agent's plan (F40). Mirrors Rust `PlanItem`. */
 export interface PlanItem {
 	content: string;
 	/** `pending`, `in_progress` or `completed`, as the agent wrote it. */

@@ -1,4 +1,10 @@
-import type { AgentId, ProviderUsage, UsageSource, UsageWindow } from '@factorai/types';
+import type {
+	AgentId,
+	ProviderUsage,
+	UsageSource,
+	UsageThresholds,
+	UsageWindow,
+} from '@factorai/types';
 import { AGENTS } from '@lib/agents';
 
 /**
@@ -11,10 +17,28 @@ import { AGENTS } from '@lib/agents';
  *  destructive red (`DESIGN.md` § Colors). */
 export type UsageLevel = 'ok' | 'warn' | 'critical';
 
-export function levelOf(percent: number): UsageLevel {
-	if (percent >= 90) return 'critical';
-	if (percent >= 70) return 'warn';
+/** What the bars were before the thresholds were settings. */
+export const DEFAULT_THRESHOLDS: UsageThresholds = { warn: 70, critical: 90 };
+
+export function levelOf(percent: number, thresholds: UsageThresholds): UsageLevel {
+	if (percent >= thresholds.critical) return 'critical';
+	if (percent >= thresholds.warn) return 'warn';
 	return 'ok';
+}
+
+/** The thresholds the two persisted strings give. Mirrors Rust
+ *  `Thresholds::parse`: a value that is not a whole number in 1..=100, or a
+ *  warn that does not sit below the critical, reads as the defaults. */
+export function parseThresholds(warn: string | null, critical: string | null): UsageThresholds {
+	const one = (v: string | null, fallback: number) => {
+		const n = v === null ? Number.NaN : Number(v.trim());
+		return Number.isInteger(n) && n >= 1 && n <= 100 ? n : fallback;
+	};
+	const t = {
+		warn: one(warn, DEFAULT_THRESHOLDS.warn),
+		critical: one(critical, DEFAULT_THRESHOLDS.critical),
+	};
+	return t.warn < t.critical ? t : DEFAULT_THRESHOLDS;
 }
 
 /** `89%`. Floored, so the number never reaches a threshold before the colour

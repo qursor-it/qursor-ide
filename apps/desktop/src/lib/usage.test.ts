@@ -2,12 +2,14 @@ import type { ProviderUsage } from '@factorai/types';
 import { describe, expect, it } from 'vitest';
 import {
 	barRows,
+	DEFAULT_THRESHOLDS,
 	formatCost,
 	formatCountdown,
 	formatPercent,
 	formatTokens,
 	isStale,
 	levelOf,
+	parseThresholds,
 	sourceLabel,
 	windowAt,
 } from './usage';
@@ -30,7 +32,7 @@ function usage(over: Partial<ProviderUsage>): ProviderUsage {
 describe('formatPercent', () => {
 	it('floors, so the label agrees with the colour at the thresholds', () => {
 		expect(formatPercent(89.9)).toBe('89%');
-		expect(levelOf(89.9)).toBe('warn');
+		expect(levelOf(89.9, DEFAULT_THRESHOLDS)).toBe('warn');
 		expect(formatPercent(69.99)).toBe('69%');
 		expect(formatPercent(90)).toBe('90%');
 		expect(formatPercent(0)).toBe('0%');
@@ -44,13 +46,42 @@ describe('formatPercent', () => {
 });
 
 describe('levelOf', () => {
-	it('is neutral below 70, amber from 70, red from 90', () => {
-		expect(levelOf(0)).toBe('ok');
-		expect(levelOf(69.9)).toBe('ok');
-		expect(levelOf(70)).toBe('warn');
-		expect(levelOf(89.999)).toBe('warn');
-		expect(levelOf(90)).toBe('critical');
-		expect(levelOf(100)).toBe('critical');
+	it('is neutral below 70, amber from 70, red from 90 by default', () => {
+		const level = (p: number) => levelOf(p, DEFAULT_THRESHOLDS);
+		expect(level(0)).toBe('ok');
+		expect(level(69.9)).toBe('ok');
+		expect(level(70)).toBe('warn');
+		expect(level(89.999)).toBe('warn');
+		expect(level(90)).toBe('critical');
+		expect(level(100)).toBe('critical');
+	});
+
+	it('moves its bands with the thresholds', () => {
+		const t = { warn: 50, critical: 80 };
+		expect(levelOf(49.9, t)).toBe('ok');
+		expect(levelOf(50, t)).toBe('warn');
+		expect(levelOf(79.9, t)).toBe('warn');
+		expect(levelOf(80, t)).toBe('critical');
+	});
+});
+
+describe('parseThresholds', () => {
+	it('is the defaults when unset', () => {
+		expect(parseThresholds(null, null)).toEqual(DEFAULT_THRESHOLDS);
+	});
+
+	it('reads two whole percentages with warn below critical', () => {
+		expect(parseThresholds('50', '80')).toEqual({ warn: 50, critical: 80 });
+		expect(parseThresholds(' 1 ', '100')).toEqual({ warn: 1, critical: 100 });
+	});
+
+	it('falls back to the defaults for anything else, as the Rust side does', () => {
+		expect(parseThresholds('80', '80')).toEqual(DEFAULT_THRESHOLDS);
+		expect(parseThresholds('95', '90')).toEqual(DEFAULT_THRESHOLDS);
+		expect(parseThresholds('0', '101')).toEqual(DEFAULT_THRESHOLDS);
+		expect(parseThresholds('5.5', '90')).toEqual(DEFAULT_THRESHOLDS);
+		expect(parseThresholds('abc', '95')).toEqual({ warn: 70, critical: 95 });
+		expect(parseThresholds('-5', '50')).toEqual(DEFAULT_THRESHOLDS);
 	});
 });
 

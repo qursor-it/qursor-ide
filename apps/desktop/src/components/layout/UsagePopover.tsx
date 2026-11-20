@@ -1,4 +1,10 @@
-import type { AgentId, ProviderUsage, SessionUsage, UsageWindow } from '@factorai/types';
+import type {
+	AgentId,
+	ProviderUsage,
+	SessionUsage,
+	UsageThresholds,
+	UsageWindow,
+} from '@factorai/types';
 import { agentName } from '@lib/agents';
 import { formatRelative, formatReset } from '@lib/format';
 import {
@@ -12,6 +18,7 @@ import {
 	type UsageLevel,
 	windowAt,
 } from '@lib/usage';
+import { useUsageStore } from '@store/usageStore';
 
 /** The fill for each level. Neutral until it has something to say, then
  *  Usage Amber, then the destructive red (`DESIGN.md` § Colors). */
@@ -28,8 +35,8 @@ const INK: Record<UsageLevel, string> = {
 	critical: 'text-destructive',
 };
 
-export function inkOf(percent: number): string {
-	return INK[levelOf(percent)];
+export function inkOf(percent: number, thresholds: UsageThresholds): string {
+	return INK[levelOf(percent, thresholds)];
 }
 
 /** One window's bar: a hairline-coloured track and a fill to the percent. */
@@ -42,6 +49,7 @@ export function UsageMeter({
 	testId?: string;
 	className?: string;
 }) {
+	const thresholds = useUsageStore((s) => s.thresholds);
 	const width = Math.min(100, Math.max(0, percent));
 	return (
 		<span
@@ -50,7 +58,7 @@ export function UsageMeter({
 		>
 			<span
 				data-testid={testId}
-				className={`absolute inset-y-0 left-0 ${FILL[levelOf(percent)]}`}
+				className={`absolute inset-y-0 left-0 ${FILL[levelOf(percent, thresholds)]}`}
 				style={{ width: `${width}%` }}
 			/>
 		</span>
@@ -152,13 +160,14 @@ function WindowRow({
 	clock24: boolean;
 	now: number;
 }) {
+	const thresholds = useUsageStore((s) => s.thresholds);
 	return (
 		<div className="grid grid-cols-[4.5rem_4rem_2.5rem_1fr] items-center gap-2 text-secondary-foreground">
 			<span className="truncate">{label}</span>
 			{window ? (
 				<>
 					<UsageMeter percent={window.usedPercent} className="w-16" />
-					<span className={`text-right tabular-nums ${inkOf(window.usedPercent)}`}>
+					<span className={`text-right tabular-nums ${inkOf(window.usedPercent, thresholds)}`}>
 						{formatPercent(window.usedPercent)}
 					</span>
 					<span className="text-muted-foreground">

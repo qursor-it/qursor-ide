@@ -46,6 +46,8 @@ function useMinuteClock(): number {
 
 function StatusBarRow() {
 	const usage = useUsageStore((s) => s.usage);
+	const open = useUsageStore((s) => s.detailsOpen);
+	const setOpen = useUsageStore((s) => s.setDetailsOpen);
 	const installed = useInstalledAgents();
 	const sessionId = useAttentionStore((s) => s.activeSessionId);
 	const clock24 = usePrefsStore((s) => s.clock24);
@@ -62,7 +64,7 @@ function StatusBarRow() {
 	const rows = barRows(usage, installed);
 
 	return (
-		<Popover>
+		<Popover open={open} onOpenChange={setOpen}>
 			<PopoverTrigger
 				data-testid="status-bar"
 				title="Plan limits and session usage"
@@ -163,13 +165,14 @@ function WindowCell({
 	/** The exact reset moment, in the words the window needs (clock or day). */
 	resetTitle: (resetsAt: number) => string;
 }) {
+	const thresholds = useUsageStore((s) => s.thresholds);
 	return (
 		<span className="ml-1 flex items-center gap-1.5">
 			<span>{label}</span>
 			{window ? (
 				<>
 					<UsageMeter percent={window.usedPercent} testId={testId} />
-					<span className={`tabular-nums ${inkOf(window.usedPercent)}`}>
+					<span className={`tabular-nums ${inkOf(window.usedPercent, thresholds)}`}>
 						{formatPercent(window.usedPercent)}
 					</span>
 					{window.resetsAt != null && (

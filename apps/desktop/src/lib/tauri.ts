@@ -52,6 +52,7 @@ import type {
 	ProfilesChangedEvent,
 	Project,
 	ProviderUsage,
+	TaskbarWidgetConfig,
 	QuitRequestedEvent,
 	ReviewSubmission,
 	Routine,
@@ -89,6 +90,7 @@ import type {
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { type UnlistenFn, listen as tauriListen } from '@tauri-apps/api/event';
 import { type DragDropEvent, getCurrentWebview } from '@tauri-apps/api/webview';
+import { DEFAULT_TASKBAR_WIDGET } from '@lib/taskbarWidget';
 
 export type { DragDropEvent };
 
@@ -430,6 +432,11 @@ export const cmd = {
 		invoke<ClaudeCliStatus>('validate_agent_binary', { agent, path }),
 	/** The latest known rate-limit windows per profile. */
 	getUsage: () => invoke<ProviderUsage[]>('get_usage'),
+	/** The taskbar widget's layout (Windows); the defaults when never saved. */
+	getTaskbarWidgetConfig: () => invoke<TaskbarWidgetConfig>('get_taskbar_widget_config'),
+	/** Save it and redraw the running widget. Rust brings values into range. */
+	setTaskbarWidgetConfig: (config: TaskbarWidgetConfig) =>
+		invoke<void>('set_taskbar_widget_config', { config }),
 	sessionUsage: (sessionId: string) => invoke<SessionUsage | null>('session_usage', { sessionId }),
 	sessionPlan: (sessionId: string) => invoke<PlanItem[] | null>('session_plan', { sessionId }),
 	/** Every Claude profile, default first (F25). */
@@ -841,6 +848,8 @@ export const events = {
 	/** The usage snapshot changed; the payload is the whole list. */
 	onUsageChanged: (cb: (p: ProviderUsage[]) => void) =>
 		listen<ProviderUsage[]>('usage:changed', cb),
+	/** A click on the taskbar widget asked for the usage details. */
+	onUsageOpenDetails: (cb: () => void) => listen<null>('usage:open-details', () => cb()),
 	/** A session took its agent's id (F30, ADR-0062). */
 	onSessionAdopted: (cb: (p: SessionAdoptedEvent) => void) =>
 		listen<SessionAdoptedEvent>('session:adopted', cb),
@@ -1042,6 +1051,9 @@ interface TestFixture {
 	ghBlobs?: Record<string, string>;
 	/** What `get_usage` answers (usage monitor). Absent means no readings yet. */
 	usage?: ProviderUsage[];
+	/** What `get_taskbar_widget_config` answers; `set_taskbar_widget_config` writes
+	 *  back into it. Absent means the widget's defaults. */
+	taskbarWidget?: TaskbarWidgetConfig;
 	/** `session_plan` keyed by session id. Absent answers null. */
 	sessionPlans?: Record<string, PlanItem[]>;
 	/** `session_usage` keyed by session id. Absent answers null. */
@@ -2018,6 +2030,11 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			return null as unknown as T;
 		case 'get_usage':
 			return (fx?.usage ?? []) as unknown as T;
+		case 'get_taskbar_widget_config':
+			return (fx?.taskbarWidget ?? DEFAULT_TASKBAR_WIDGET) as unknown as T;
+		case 'set_taskbar_widget_config':
+			if (fx) fx.taskbarWidget = args?.config as TaskbarWidgetConfig;
+			return undefined as unknown as T;
 		case 'session_plan':
 			return (fx?.sessionPlans?.[String(args?.sessionId ?? '')] ?? null) as unknown as T;
 		case 'session_usage':
