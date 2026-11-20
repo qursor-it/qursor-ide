@@ -1063,7 +1063,6 @@ export function startRoutineSession(fire: RoutineFireEvent): void {
  * set first so `ensureTerminal` launches that one.
  */
 export function startAgentSession(sessionId: string, e: AgentSessionStartEvent): void {
-	if (useTerminalStore.getState().bySession[sessionId]) return;
 	useTerminalStore.getState().setLaunchAgent(sessionId, e.agent);
 	const entry = getOrCreateTerm(sessionId, getRoutinePane(), () => agentTerminalId(sessionId));
 	fitToHost(entry);
