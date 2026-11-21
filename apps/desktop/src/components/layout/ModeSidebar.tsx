@@ -75,6 +75,7 @@ function GitSlot() {
 	if (!tab) return <PanelEmpty>Open a repository from the tab bar.</PanelEmpty>;
 	return (
 		<GitSidebar
+			key={tab.dir}
 			dir={tab.dir}
 			projectId={tab.projectId}
 			section={section}

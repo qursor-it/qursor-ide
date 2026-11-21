@@ -35,7 +35,7 @@ import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
 import { useQuickAgent } from './useQuickAgent';
 
-export type GitSection = 'history' | 'changes';
+import type { GitSection } from '@store/gitModeStore';
 
 interface GitSidebarProps {
 	dir: string;

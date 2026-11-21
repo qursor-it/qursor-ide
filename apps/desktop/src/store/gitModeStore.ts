@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { GitSection } from '@components/gitmode/GitSidebar';
 
 /** `servers` is the SSH session manager (ADR-0107). */
 export type AppMode = 'sessions' | 'git' | 'canvas' | 'servers';
+
+/** The Git sidebar's two views of a checkout. */
+export type GitSection = 'history' | 'changes';
 
 /** One Git tab: a checkout directory of a project (F35). */
 export interface GitTab {

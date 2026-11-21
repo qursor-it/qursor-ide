@@ -133,6 +133,7 @@ test.describe('unified sidebar', () => {
 
 		await page.getByTestId('sidebar-collapse').click();
 		await expect(page.getByTestId('sidebar')).toHaveCount(0);
+		await expect(page.getByTestId('git-sidebar')).toHaveCount(0);
 		await page.getByRole('button', { name: 'Expand sidebar' }).click();
 
 		await expect(page.getByTestId('git-sidebar')).toBeVisible();
