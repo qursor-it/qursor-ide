@@ -261,7 +261,7 @@ pub fn get_tunnel(conn: &Connection, id: &str) -> AppResult<Tunnel> {
 	.ok_or_else(|| AppError::NotFound(format!("tunnel {id}")))
 }
 
-pub fn save_tunnel(conn: &Connection, t: &Tunnel) -> AppResult<Tunnel> {
+pub(crate) fn validate_tunnel(t: &Tunnel) -> AppResult<()> {
 	let host = t.dest_host.trim();
 	if t.local_port == 0
 		|| t.dest_port == 0
@@ -272,6 +272,12 @@ pub fn save_tunnel(conn: &Connection, t: &Tunnel) -> AppResult<Tunnel> {
 			"a tunnel needs a local port, a destination host and port".into(),
 		));
 	}
+	Ok(())
+}
+
+pub fn save_tunnel(conn: &Connection, t: &Tunnel) -> AppResult<Tunnel> {
+	validate_tunnel(t)?;
+	let host = t.dest_host.trim();
 	let id = if t.id.is_empty() { uuid::Uuid::new_v4().to_string() } else { t.id.clone() };
 	conn.execute(
 		"INSERT INTO server_tunnels (id, server_id, label, local_port, dest_host, dest_port)

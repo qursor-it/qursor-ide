@@ -12,6 +12,7 @@ use serde_json::{json, Map, Value};
 use crate::error::{AppError, AppResult};
 use crate::models::{ProblemKind, Server, ServerFileProblem, ServerInput, ServerSource, Tunnel};
 use crate::services::canvas::slugify;
+use crate::services::ide::scope::resolve_within;
 use crate::services::intelligence::sha256_hex;
 
 const DIR: &str = "servers";
@@ -158,7 +159,8 @@ fn parse(
 		environment: doc.environment,
 		agent_policy: doc.agent_policy,
 		auth: doc.login,
-		key_path: doc.key_path.as_deref().map(expand_home),
+		// Kept as written (`~/…`); the login site expands it.
+		key_path: doc.key_path,
 		persistent: doc.persistent,
 		password: None,
 		private_key: None,
@@ -175,7 +177,11 @@ fn parse(
 		}
 		Some(id) => id.to_string(),
 	};
-	let tunnels = doc
+	let mut seen = HashSet::new();
+	if let Some(t) = doc.tunnels.iter().find(|t| !seen.insert(t.id.as_str())) {
+		return Err(Bad::Broken(format!("two tunnels share the id {}", t.id)));
+	}
+	let tunnels: Vec<Tunnel> = doc
 		.tunnels
 		.into_iter()
 		.map(|t| Tunnel {
@@ -188,6 +194,9 @@ fn parse(
 			running: false,
 		})
 		.collect();
+	for t in &tunnels {
+		crate::services::servers::validate_tunnel(t).map_err(|e| broken(&e))?;
+	}
 	let server = Server {
 		id,
 		name: input.name,
@@ -221,7 +230,8 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 		let path = e.path();
 		let dot = e.file_name().to_string_lossy().starts_with('.');
 		if path.is_dir() {
-			if !dot {
+			// A symlinked folder could lead out of the project.
+			if !dot && !e.file_type().is_ok_and(|t| t.is_symlink()) {
 				walk(&path, out);
 			}
 		} else if !dot && path.extension().is_some_and(|x| x == EXT) {
@@ -251,12 +261,20 @@ pub fn scan(
 			if !seen.insert(canon.clone()) {
 				continue;
 			}
+			let escapes = resolve_within(&p.root.join(DIR), &canon.to_string_lossy()).is_err();
 			let problem = |kind, message: String| ServerFileProblem {
 				project_id: p.id.clone(),
 				rel_path: rel_path.clone(),
 				kind,
 				message,
 			};
+			if escapes {
+				problems.push(problem(
+					ProblemKind::Broken,
+					"the file resolves outside the project's servers folder".into(),
+				));
+				continue;
+			}
 			let bytes = match fs::read(&canon) {
 				Ok(b) => b,
 				Err(e) => {
@@ -350,10 +368,23 @@ pub fn to_json(raw: &Map<String, Value>, s: &Server, tunnels: &[Tunnel]) -> Stri
 	set("login", Some(json!(s.auth)));
 	set("keyPath", s.key_path.as_deref().map(|k| json!(tilde(k))));
 	set("persistent", Some(json!(s.persistent)));
+	let old = raw.get("tunnels").and_then(Value::as_array);
 	let ts = tunnels.iter().map(|t| {
 		let local = split_tunnel_id(&t.id).map_or(t.id.as_str(), |(_, l)| l);
-		json!({ "id": local, "label": t.label, "localPort": t.local_port,
-			"destHost": t.dest_host, "destPort": t.dest_port })
+		let mut o = old
+			.and_then(|a| a.iter().find(|x| x.get("id").and_then(Value::as_str) == Some(local)))
+			.and_then(|x| x.as_object().cloned())
+			.unwrap_or_default();
+		for (k, v) in [
+			("id", json!(local)),
+			("label", json!(t.label)),
+			("localPort", json!(t.local_port)),
+			("destHost", json!(t.dest_host)),
+			("destPort", json!(t.dest_port)),
+		] {
+			o.insert(k.into(), v);
+		}
+		Value::Object(o)
 	});
 	set("tunnels", Some(Value::Array(ts.collect())));
 	// A map of plain values cannot fail to serialise.
@@ -367,6 +398,12 @@ pub fn new_file_path(root: &Path, rel_dir: &str, name: &str) -> AppResult<PathBu
 		return Err(AppError::InvalidInput("the folder must be inside servers/".into()));
 	}
 	let dir = root.join(DIR).join(rel);
+	// Through a symlinked folder the new file would land outside the project.
+	let mut probe = dir.as_path();
+	while !probe.exists() {
+		probe = probe.parent().unwrap_or(root);
+	}
+	resolve_within(&root.join(DIR), &probe.to_string_lossy())?;
 	// `slugify` falls back to "canvas"; a server falls back to "server".
 	let mut base = slugify(name);
 	if base == "canvas" && !name.trim().eq_ignore_ascii_case("canvas") {
@@ -561,6 +598,53 @@ mod tests {
 		srv.key_path = Some(h.join(".ssh").join("id").to_string_lossy().into_owned());
 		assert!(to_json(&Map::new(), &srv, &[]).contains("\"keyPath\": \"~/.ssh/id\""));
 		assert_eq!(expand_home("~/.ssh/id"), h.join(".ssh/id").to_string_lossy());
+	}
+
+	#[test]
+	fn tunnel_unknown_fields_survive() {
+		let body = FULL.replace("\"label\": \"db\"", "\"label\": \"db\", \"x-note\": \"t\"");
+		let d = project(&[("servers/staging.server", &body)]);
+		let s = run(&[sp("P1", &d)]);
+		let f = &s.servers[0];
+		assert!(to_json(&f.raw, &f.server, &f.tunnels).contains("\"x-note\": \"t\""));
+	}
+
+	#[test]
+	fn bad_or_duplicate_tunnels_are_broken() {
+		let t = |a: &str, b: &str| {
+			format!(
+				r#"{{"id":"a","name":"n","host":"h","user":"u","login":"agent","tunnels":[{a},{b}]}}"#
+			)
+		};
+		let ok = r#"{"id":"t1","localPort":1,"destHost":"h","destPort":2}"#;
+		let zero = r#"{"id":"t2","localPort":0,"destHost":"h","destPort":2}"#;
+		let d = project(&[("servers/a.server", &t(ok, zero)), ("servers/b.server", &t(ok, ok))]);
+		let s = run(&[sp("P1", &d)]);
+		assert!(s.servers.is_empty());
+		assert_eq!(s.problems.len(), 2);
+		assert!(s.problems.iter().all(|p| p.kind == ProblemKind::Broken));
+	}
+
+	#[test]
+	fn key_path_keeps_tilde() {
+		let body = FULL.to_string();
+		let d = project(&[("servers/a.server", &body)]);
+		let s = run(&[sp("P1", &d)]);
+		assert_eq!(s.servers[0].server.key_path.as_deref(), Some("~/.ssh/id_ed25519"));
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn symlinks_cannot_escape() {
+		let out = project(&[("x.server", MIN)]);
+		let d = project(&[("servers/real.server", MIN)]);
+		std::os::unix::fs::symlink(out.path(), d.path().join("servers/link")).unwrap();
+		std::os::unix::fs::symlink(out.path().join("x.server"), d.path().join("servers/l.server"))
+			.unwrap();
+		let s = run(&[sp("P1", &d)]);
+		assert_eq!(s.servers.len(), 1);
+		assert_eq!(s.problems.len(), 1);
+		assert!(new_file_path(d.path(), "link", "x").is_err());
 	}
 
 	#[test]
