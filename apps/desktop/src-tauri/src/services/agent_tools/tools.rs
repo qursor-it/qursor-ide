@@ -339,7 +339,7 @@ impl AgentTools {
 			Ok(()) => {
 				info!("an agent started a new session");
 				tool_text(
-					"Started a new session with that prompt. It is in the sidebar of this project in Qursor IDE.",
+					"Asked Qursor IDE to open a new session with that prompt; it appears in this project's sidebar.",
 				)
 			}
 			Err(e) => tool_error(&format!("could not start a new session: {e}")),
@@ -1085,8 +1085,19 @@ mod tests {
 		);
 		let (text, is_error) = tool_result(&reply);
 		assert!(!is_error, "{text}");
-		assert!(text.contains("new session"), "{text}");
+		assert!(text.contains("Asked Qursor IDE"), "{text}");
 		assert_eq!(*f.started.lock(), ["Fix the flaky test"]);
+	}
+
+	#[test]
+	fn startsession_trims_the_prompt_before_the_closure() {
+		let f = fixture();
+		call(
+			&f.tools,
+			"tools/call",
+			json!({ "name": "startSession", "arguments": { "prompt": "  x  " } }),
+		);
+		assert_eq!(*f.started.lock(), ["x"]);
 	}
 
 	#[test]

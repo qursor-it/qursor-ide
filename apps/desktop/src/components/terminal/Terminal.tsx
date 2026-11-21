@@ -1056,7 +1056,7 @@ export function startRoutineSession(fire: RoutineFireEvent): void {
 }
 
 /**
- * Start the session an agent asked for with `startSession` (ADR-0078 path).
+ * Start the session an agent asked for with `startSession` (the headless spawn of ADR-0026, fresh id as ADR-0078).
  *
  * Same headless spawn as {@link startRoutineSession}: the prompt rides in as
  * `initialPrompt`, so no tab opens and no focus moves. The caller's agent is
