@@ -1,11 +1,11 @@
-import type { Project, SidebarRow } from '@factorai/types';
-import { Button } from '@factorai/ui';
+import type { CanvasEntry, Project, SidebarRow } from '@factorai/types';
+import { Button, IconButton } from '@factorai/ui';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useCanvasStore } from '@store/canvasStore';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Shapes } from 'lucide-react';
 import { useState } from 'react';
 import { NewCanvasDialog } from './NewCanvasDialog';
@@ -15,46 +15,96 @@ import { useHeldCanvasPaths } from './useCanvasDoc';
 const flatProjects = (rows: SidebarRow[]): Project[] =>
 	rows.flatMap((r) => (r.kind === 'project' ? [r.project] : r.children.map((c) => c.project)));
 
-/** Each project with its canvases, and the door to a new one (F44). */
+/** Each project that has canvases, and the door to a new one (F44). */
 export function CanvasSidebar() {
+	const queryClient = useQueryClient();
+	const selected = useCanvasStore((s) => s.selected);
+	const select = useCanvasStore((s) => s.select);
 	const sidebarQ = useQuery({ queryKey: queryKeys.sidebar(), queryFn: () => cmd.listSidebar() });
-	const projects = flatProjects(sidebarQ.data ?? []);
+	// A project with no folder on disk has nowhere to keep a canvas.
+	const eligible = flatProjects(sidebarQ.data ?? []).filter((p) => !!p.realPath && !p.missing);
+	const canvasQs = useQueries({
+		queries: eligible.map((p) => ({
+			queryKey: queryKeys.canvases(p.id),
+			queryFn: () => cmd.listCanvases(p.id),
+			refetchInterval: 15_000,
+			refetchOnWindowFocus: true,
+		})),
+	});
+	const [creatingIn, setCreatingIn] = useState<Project[] | null>(null);
+	const create = useMutation({
+		mutationFn: (v: { projectId: string; title: string }) => cmd.createCanvas(v.projectId, v.title),
+		onSuccess: (entry, v) => {
+			void queryClient.invalidateQueries({ queryKey: queryKeys.canvases(v.projectId) });
+			select({ projectId: v.projectId, path: entry.path });
+			setCreatingIn(null);
+		},
+	});
+	const withCanvases = eligible.flatMap((p, i) => {
+		const canvases = canvasQs[i]?.data ?? [];
+		return canvases.length ? [{ project: p, canvases }] : [];
+	});
+	const anyLoading = canvasQs.some((q) => q.data === undefined);
 	return (
 		<nav
 			data-testid="canvas-sidebar"
 			aria-label="Canvases"
 			className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1.5 py-1"
 		>
-			{projects.map((p) => (
-				<ProjectCanvases key={p.id} project={p} />
+			<div className="flex h-7 items-center justify-end">
+				<IconButton
+					aria-label="New canvas"
+					title="New canvas"
+					data-testid="new-canvas-top"
+					disabled={!eligible.length}
+					onClick={() => setCreatingIn(eligible)}
+				>
+					<Plus />
+				</IconButton>
+			</div>
+			{!withCanvases.length && !anyLoading && (
+				<p className="px-2 text-muted-foreground text-sm">
+					No canvases yet. Create one in any project.
+				</p>
+			)}
+			{withCanvases.map(({ project, canvases }) => (
+				<ProjectCanvases
+					key={project.id}
+					project={project}
+					canvases={canvases}
+					onNew={() => setCreatingIn([project])}
+				/>
 			))}
+			<NewCanvasDialog
+				open={creatingIn !== null}
+				projects={creatingIn ?? []}
+				initialProjectId={
+					creatingIn?.find((p) => p.id === selected?.projectId)?.id ?? creatingIn?.[0]?.id ?? null
+				}
+				error={create.error ? formatError(create.error) : null}
+				pending={create.isPending}
+				onCancel={() => {
+					setCreatingIn(null);
+					create.reset();
+				}}
+				onSubmit={(projectId, title) => create.mutate({ projectId, title })}
+			/>
 		</nav>
 	);
 }
 
-function ProjectCanvases({ project }: { project: Project }) {
-	const queryClient = useQueryClient();
+function ProjectCanvases({
+	project,
+	canvases,
+	onNew,
+}: {
+	project: Project;
+	canvases: CanvasEntry[];
+	onNew: () => void;
+}) {
 	const selected = useCanvasStore((s) => s.selected);
 	const select = useCanvasStore((s) => s.select);
-	const [creating, setCreating] = useState(false);
 	const unsaved = useHeldCanvasPaths();
-	// A project with no folder on disk has nowhere to keep a canvas.
-	const hasFolder = !!project.realPath && !project.missing;
-	const canvasesQ = useQuery({
-		queryKey: queryKeys.canvases(project.id),
-		queryFn: () => cmd.listCanvases(project.id),
-		enabled: hasFolder,
-		refetchInterval: 15_000,
-		refetchOnWindowFocus: true,
-	});
-	const create = useMutation({
-		mutationFn: (title: string) => cmd.createCanvas(project.id, title),
-		onSuccess: (entry) => {
-			void queryClient.invalidateQueries({ queryKey: queryKeys.canvases(project.id) });
-			select({ projectId: project.id, path: entry.path });
-			setCreating(false);
-		},
-	});
 
 	return (
 		<section data-testid="canvas-project" data-project={project.id}>
@@ -62,7 +112,7 @@ function ProjectCanvases({ project }: { project: Project }) {
 				<ProjectIcon name={project.displayName} size={18} />
 				<span className="min-w-0 flex-1 truncate font-medium">{project.displayName}</span>
 			</div>
-			{(canvasesQ.data ?? []).map((c) => {
+			{canvases.map((c) => {
 				const isSelected = selected?.path === c.path;
 				return (
 					<Button
@@ -90,27 +140,15 @@ function ProjectCanvases({ project }: { project: Project }) {
 					</Button>
 				);
 			})}
-			{hasFolder && (
-				<Button
-					variant="ghost"
-					data-testid="new-canvas"
-					className="h-7 w-full justify-start gap-1.5 px-2 pl-7 font-normal text-muted-foreground text-sm hover:bg-secondary/60 hover:text-foreground [&_svg]:size-3.5"
-					onClick={() => setCreating(true)}
-				>
-					<Plus />
-					New canvas
-				</Button>
-			)}
-			<NewCanvasDialog
-				projectName={creating ? project.displayName : null}
-				error={create.error ? formatError(create.error) : null}
-				pending={create.isPending}
-				onCancel={() => {
-					setCreating(false);
-					create.reset();
-				}}
-				onSubmit={(title) => create.mutate(title)}
-			/>
+			<Button
+				variant="ghost"
+				data-testid="new-canvas"
+				className="h-7 w-full justify-start gap-1.5 px-2 pl-7 font-normal text-muted-foreground text-sm hover:bg-secondary/60 hover:text-foreground [&_svg]:size-3.5"
+				onClick={onNew}
+			>
+				<Plus />
+				New canvas
+			</Button>
 		</section>
 	);
 }
