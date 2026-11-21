@@ -60,16 +60,17 @@ export function SidebarCollapseButton() {
 	const collapsed = useSidebarStore((s) => s.collapsed);
 	const toggleCollapsed = useSidebarStore((s) => s.toggleCollapsed);
 
-	// **Focus must not be left inside a subtree that just changed shape** (F1,
-	// ADR-0038). Collapsing removes the frame, and focus on a detached node falls
-	// to `<body>`; the expand button in the top bar takes it. Only when focus was
-	// in the frame: a rescue fired unconditionally would pull focus off whatever
-	// the rest of the app had it on.
-	function onClick() {
-		const inHere = document.activeElement?.closest('[data-testid="sidebar"]') != null;
-		const rescue = !collapsed && inHere;
+	// **Focus must not be left on a button that is about to unmount** (F1,
+	// ADR-0038). Collapsing removes the frame and expanding removes the top bar's
+	// button, and focus on a detached node falls to `<body>`. Whichever instance
+	// is left takes it — only when focus was here, so a rescue never pulls it off
+	// whatever the rest of the app had it on.
+	function onClick(e: React.MouseEvent<HTMLButtonElement>) {
+		const here =
+			document.activeElement === e.currentTarget ||
+			document.activeElement?.closest('[data-testid="sidebar"]') != null;
 		toggleCollapsed();
-		if (rescue) {
+		if (here) {
 			requestAnimationFrame(() =>
 				document.querySelector<HTMLElement>('[data-testid="sidebar-collapse"]')?.focus(),
 			);

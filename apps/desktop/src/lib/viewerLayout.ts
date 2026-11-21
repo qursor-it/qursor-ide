@@ -52,14 +52,13 @@ export type ViewerHost = 'column' | 'split';
 
 /** The shell width at which four columns stop fitting. A function of the
  *  panels' current widths, so it moves when they do. */
-export function columnThreshold(sidebarWidth: number, panelWidth: number): number {
-	return sidebarWidth + MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH + panelWidth + COLUMN_GUTTERS;
+export function columnThreshold(panelWidth: number): number {
+	return MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH + panelWidth + COLUMN_GUTTERS;
 }
 
 interface HostInput {
 	/** The shell row's measured width — everything under the top bar. */
 	shellWidth: number;
-	sidebarWidth: number;
 	/** The panel's width **in column mode**, not whichever width is applied
 	 *  right now: the question is whether the column would fit, and in split
 	 *  mode the panel is deliberately wider. */
@@ -77,7 +76,6 @@ interface HostInput {
  */
 export function resolveViewerHost({
 	shellWidth,
-	sidebarWidth,
 	columnPanelWidth,
 	current,
 }: HostInput): ViewerHost {
@@ -85,13 +83,12 @@ export function resolveViewerHost({
 	// would flash the narrow layout on every launch before the observer fires,
 	// so an unmeasured shell keeps whatever is showing.
 	if (!Number.isFinite(shellWidth) || shellWidth <= 0) return current;
-	const threshold = columnThreshold(sidebarWidth, columnPanelWidth);
+	const threshold = columnThreshold(columnPanelWidth);
 	return shellWidth >= threshold + (current === 'column' ? 0 : HOST_DEAD_BAND) ? 'column' : 'split';
 }
 
 interface CeilingInput {
 	shellWidth: number;
-	sidebarWidth: number;
 	/** The viewer's own width, when it has a column of its own. */
 	viewerWidth: number;
 	host: ViewerHost;
@@ -107,15 +104,9 @@ interface CeilingInput {
  * has to be the shell minus everything that is not the panel, or a laptop
  * window ends up with a 600px panel and a 300px session.
  */
-export function maxPanelWidth({
-	shellWidth,
-	sidebarWidth,
-	viewerWidth,
-	host,
-	viewerOpen,
-}: CeilingInput): number {
+export function maxPanelWidth({ shellWidth, viewerWidth, host, viewerOpen }: CeilingInput): number {
 	const viewerColumn = viewerOpen && host === 'column' ? viewerWidth : 0;
-	return shellWidth - sidebarWidth - MIN_SESSION_WIDTH - viewerColumn - COLUMN_GUTTERS;
+	return shellWidth - MIN_SESSION_WIDTH - viewerColumn - COLUMN_GUTTERS;
 }
 
 /** The viewer's width, held between its floor and whatever the shell leaves.
@@ -130,10 +121,6 @@ export function clampViewerWidth(width: number, max: number): number {
  * How wide the viewer's own column may be dragged. Same arithmetic from the
  * other side: the panel is fixed while this one moves.
  */
-export function maxViewerWidth(
-	shellWidth: number,
-	sidebarWidth: number,
-	panelWidth: number,
-): number {
-	return shellWidth - sidebarWidth - MIN_SESSION_WIDTH - panelWidth - COLUMN_GUTTERS;
+export function maxViewerWidth(shellWidth: number, panelWidth: number): number {
+	return shellWidth - MIN_SESSION_WIDTH - panelWidth - COLUMN_GUTTERS;
 }

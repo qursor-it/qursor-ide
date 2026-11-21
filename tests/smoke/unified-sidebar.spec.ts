@@ -75,4 +75,36 @@ test.describe('unified sidebar', () => {
 			expect(box.x + box.width).toBeLessThanOrEqual(1100);
 		}
 	});
+
+	test('@smoke the file tree can still widen at 1100px with the default sidebar', async ({
+		page,
+	}) => {
+		// At 480px the ceiling is under the panel's floor by arithmetic; the default
+		// width is where a stale sidebar term in the ceiling would show.
+		await page.setViewportSize({ width: 1100, height: 800 });
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await openSession(page);
+
+		await page.getByRole('button', { name: 'Toggle file tree' }).click();
+		const panel = page.getByTestId('file-tree-panel');
+		await expect(panel).toBeVisible();
+		const before = (await panel.boundingBox())!.width;
+		const handle = page.getByRole('separator', { name: 'Resize file tree' });
+		await handle.focus();
+		await handle.press('ArrowLeft');
+		await handle.press('ArrowLeft');
+		expect((await panel.boundingBox())!.width).toBeGreaterThan(before);
+	});
+
+	test('@smoke focus follows the toggle in both directions', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		const sidebar = page.getByTestId('sidebar');
+		await sidebar.getByRole('button', { name: 'Collapse sidebar' }).click();
+		await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeFocused();
+
+		await page.getByRole('button', { name: 'Expand sidebar' }).click();
+		await expect(sidebar.getByRole('button', { name: 'Collapse sidebar' })).toBeFocused();
+	});
 });

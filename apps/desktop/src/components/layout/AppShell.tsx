@@ -51,8 +51,6 @@ export function AppShell({ children }: AppShellProps) {
 	// is what "on launch, then every 6 hours" always described.
 	useUpdaterRuntime();
 
-	// The sidebar is outside `row` now, so the viewer rules have no sidebar term.
-	const sidebarWidth = 0;
 	const panelOpen = usePanelStore((s) => s.open);
 	const mode = useGitModeStore((s) => s.mode);
 	useServerEvents();
@@ -78,8 +76,8 @@ export function AppShell({ children }: AppShellProps) {
 	}, [root, setCheckout]);
 
 	// The shell row measures itself, because the host rule is about the room
-	// there actually is (ADR-0037) — the window's own size says nothing once the
-	// sidebar has been dragged to 480.
+	// there actually is (ADR-0037) — the window's own size says nothing. It is
+	// the Sessions body only, to the right of the sidebar frame.
 	const row = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		const el = row.current;
@@ -95,7 +93,6 @@ export function AppShell({ children }: AppShellProps) {
 	const effectivePanelWidth = panelOpen ? panelWidth : 0;
 	const nextHost: ViewerHost = resolveViewerHost({
 		shellWidth,
-		sidebarWidth,
 		columnPanelWidth: effectivePanelWidth,
 		current: host,
 	});
@@ -185,7 +182,7 @@ export function AppShell({ children }: AppShellProps) {
 	// (ADR-0037). At the threshold this resolves to exactly `MIN_VIEWER_WIDTH`.
 	const appliedViewerWidth = clampViewerWidth(
 		viewerWidth,
-		maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
+		maxViewerWidth(shellWidth, effectivePanelWidth),
 	);
 
 	// **A closed panel leaves only one host.** The split lives inside the panel,
@@ -252,18 +249,12 @@ export function AppShell({ children }: AppShellProps) {
 									<PanelResizer
 										size={appliedViewerWidth}
 										onSize={(width) =>
-											setViewerWidth(
-												width,
-												maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
-											)
+											setViewerWidth(width, maxViewerWidth(shellWidth, effectivePanelWidth))
 										}
 										edge="left"
 										label="Resize file viewer"
 										clamp={(width) =>
-											clampViewerWidth(
-												width,
-												maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
-											)
+											clampViewerWidth(width, maxViewerWidth(shellWidth, effectivePanelWidth))
 										}
 									/>
 									<aside
