@@ -3,7 +3,7 @@
  * it, the Sessions body inside it kept mounted across modes.
  */
 import { expect, test } from '@playwright/test';
-import { fixtureOneProjectOneSession, installMockBridge } from './fixtures';
+import { FOO_ID, fixtureOneProjectOneSession, installMockBridge } from './fixtures';
 
 async function openSession(page: import('@playwright/test').Page) {
 	await page.getByTestId('sidebar').getByText('foo').click();
@@ -115,5 +115,27 @@ test.describe('unified sidebar', () => {
 
 		await expect(page.getByTestId('sidebar').getByTestId('canvas-sidebar')).toBeVisible();
 		await expect(page.getByRole('separator', { name: 'Resize sidebar' })).toHaveCount(1);
+	});
+
+	test("@smoke git's tree is in the shared sidebar", async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto(`/#/projects/${FOO_ID}`);
+		await page.getByTestId('mode-git').click();
+
+		await expect(page.getByTestId('sidebar').getByTestId('git-sidebar')).toBeVisible();
+	});
+
+	test('@smoke collapse in Git mode, expand from the top bar', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto(`/#/projects/${FOO_ID}`);
+		await page.getByTestId('mode-git').click();
+		await expect(page.getByTestId('git-sidebar')).toBeVisible();
+
+		await page.getByTestId('sidebar-collapse').click();
+		await expect(page.getByTestId('sidebar')).toHaveCount(0);
+		await page.getByRole('button', { name: 'Expand sidebar' }).click();
+
+		await expect(page.getByTestId('git-sidebar')).toBeVisible();
+		await expect(page.getByTestId('git-mode-view')).toBeVisible();
 	});
 });

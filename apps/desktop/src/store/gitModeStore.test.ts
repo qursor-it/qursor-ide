@@ -71,4 +71,13 @@ describe('gitModeStore', () => {
 		expect(saved.state.preRebase).toBeUndefined();
 		expect(saved.state.origin).toBeUndefined();
 	});
+
+	it('a section is remembered per repository', async () => {
+		const store = await freshStore();
+		store.getState().setSection('/a', 'changes');
+		expect(store.getState().sectionByDir['/a']).toBe('changes');
+		expect(store.getState().sectionByDir['/b'] ?? 'history').toBe('history');
+		const saved = JSON.parse(data.get('factorai.gitmode') ?? '{}');
+		expect(saved.state.sectionByDir).toBeUndefined();
+	});
 });

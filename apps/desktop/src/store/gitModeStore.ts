@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
+import type { GitSection } from '@components/gitmode/GitSidebar';
 
 /** `servers` is the SSH session manager (ADR-0107). */
 export type AppMode = 'sessions' | 'git' | 'canvas' | 'servers';
@@ -33,6 +34,10 @@ interface GitModeState {
 	/** Sessions started from Git mode, for the origin strip. Memory only. */
 	origin: Record<string, { dir: string; title: string } | undefined>;
 	setOrigin: (sessionId: string, origin: { dir: string; title: string }) => void;
+	/** The Local changes / History section per repository; absent is `history`.
+	 *  Memory only. */
+	sectionByDir: Record<string, GitSection | undefined>;
+	setSection: (dir: string, section: GitSection) => void;
 	/** Sidebar nodes flipped from their default open state (F35), by key. */
 	toggled: string[];
 	toggle: (key: string) => void;
@@ -97,6 +102,9 @@ export const useGitModeStore = create<GitModeState>()(
 			origin: {},
 			setOrigin: (sessionId, origin) =>
 				set((s) => ({ origin: { ...s.origin, [sessionId]: origin } })),
+			sectionByDir: {},
+			setSection: (dir, section) =>
+				set((s) => ({ sectionByDir: { ...s.sectionByDir, [dir]: section } })),
 			toggled: [],
 			toggle: (key) =>
 				set((s) => ({

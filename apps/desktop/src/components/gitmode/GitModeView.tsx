@@ -5,12 +5,10 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useQuery } from '@tanstack/react-query';
 import { useGitModeStore } from '@store/gitModeStore';
-import { useState } from 'react';
 import { AgentPopover } from './AgentPopover';
 import { ConflictBanner } from './ConflictBanner';
 import { GitActionBar } from './GitActionBar';
 import { GitHistory } from './GitHistory';
-import { type GitSection, GitSidebar } from './GitSidebar';
 import { LocalChanges } from './LocalChanges';
 
 /** The full-window view of the selected Git tab (specs/05-features.md F35). */
@@ -36,12 +34,11 @@ export function GitModeView() {
 }
 
 function GitTabBody({ projectId, dir }: { projectId: string; dir: string }) {
-	const [section, setSection] = useState<GitSection>('history');
+	const section = useGitModeStore((s) => s.sectionByDir[dir]) ?? 'history';
 	return (
 		// The sidebar on the chrome, everything about the checkout in one card on
 		// it, as the session column is (ADR-0090).
 		<div className="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
-			<GitSidebar dir={dir} projectId={projectId} section={section} onSection={setSection} />
 			<div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
 				<GitActionBar dir={dir} />
 				<AgentPopover dir={dir} projectId={projectId} />

@@ -1,4 +1,6 @@
 import { CanvasSidebar } from '@components/canvas/CanvasSidebar';
+import { GitSidebar } from '@components/gitmode/GitSidebar';
+import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
 import { PanelResizer } from '@components/layout/PanelResizer';
@@ -44,7 +46,12 @@ export function ModeSidebar() {
 						<CanvasSidebar />
 					</div>
 				)}
-				{mode !== 'sessions' && mode !== 'canvas' && <div className="min-h-0 flex-1" />}
+				{mode === 'git' && (
+					<div className="flex min-h-0 flex-1 flex-col">
+						<GitSlot />
+					</div>
+				)}
+				{mode === 'servers' && <div className="min-h-0 flex-1" />}
 				<SidebarFooter />
 			</aside>
 			{/* On the sidebar's right edge, so dragging right widens it. Not rendered
@@ -57,6 +64,22 @@ export function ModeSidebar() {
 				clamp={clampSidebarWidth}
 			/>
 		</>
+	);
+}
+
+/** The active Git tab's tree; its section is kept per repository in the store. */
+function GitSlot() {
+	const tab = useGitModeStore((s) => s.tabs.find((t) => t.dir === s.activeDir));
+	const section = useGitModeStore((s) => (tab ? s.sectionByDir[tab.dir] : undefined)) ?? 'history';
+	const setSection = useGitModeStore((s) => s.setSection);
+	if (!tab) return <PanelEmpty>Open a repository from the tab bar.</PanelEmpty>;
+	return (
+		<GitSidebar
+			dir={tab.dir}
+			projectId={tab.projectId}
+			section={section}
+			onSection={(next) => setSection(tab.dir, next)}
+		/>
 	);
 }
 

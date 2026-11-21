@@ -247,7 +247,7 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 		<nav
 			data-testid="git-sidebar"
 			aria-label="Repository"
-			className="flex w-60 shrink-0 flex-col px-1.5 py-1"
+			className="flex min-h-0 flex-1 flex-col px-1.5 py-1"
 		>
 			<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
 				{nav(
