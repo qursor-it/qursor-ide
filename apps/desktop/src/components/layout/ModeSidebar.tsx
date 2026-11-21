@@ -1,3 +1,4 @@
+import { CanvasSidebar } from '@components/canvas/CanvasSidebar';
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
 import { PanelResizer } from '@components/layout/PanelResizer';
@@ -38,7 +39,12 @@ export function ModeSidebar() {
 				<div className={mode !== 'sessions' ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
 					<Sidebar />
 				</div>
-				{mode !== 'sessions' && <div className="min-h-0 flex-1" />}
+				{mode === 'canvas' && (
+					<div className="flex min-h-0 flex-1 flex-col">
+						<CanvasSidebar />
+					</div>
+				)}
+				{mode !== 'sessions' && mode !== 'canvas' && <div className="min-h-0 flex-1" />}
 				<SidebarFooter />
 			</aside>
 			{/* On the sidebar's right edge, so dragging right widens it. Not rendered

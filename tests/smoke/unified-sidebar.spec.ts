@@ -107,4 +107,13 @@ test.describe('unified sidebar', () => {
 		await page.getByRole('button', { name: 'Expand sidebar' }).click();
 		await expect(sidebar.getByRole('button', { name: 'Collapse sidebar' })).toBeFocused();
 	});
+
+	test('@smoke canvas lists its canvases in the shared sidebar', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+
+		await expect(page.getByTestId('sidebar').getByTestId('canvas-sidebar')).toBeVisible();
+		await expect(page.getByRole('separator', { name: 'Resize sidebar' })).toHaveCount(1);
+	});
 });
