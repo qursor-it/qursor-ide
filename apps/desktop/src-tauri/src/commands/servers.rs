@@ -24,8 +24,13 @@ fn flagged(state: &AppState, s: Server) -> Server {
 
 #[tauri::command]
 pub fn list_servers(state: State<'_, AppState>) -> AppResult<ServerBook> {
-	let (folders, list) = state.db.with(|c| Ok((servers::list_folders(c)?, servers::list(c)?)))?;
-	Ok(ServerBook { folders, servers: list.into_iter().map(|s| flagged(&state, s)).collect() })
+	// `list` scans the project files; the folders and problems come from that scan.
+	let (list, folders) = state.db.with(|c| Ok((servers::list(c)?, servers::list_folders(c)?)))?;
+	Ok(ServerBook {
+		folders,
+		servers: list.into_iter().map(|s| flagged(&state, s)).collect(),
+		problems: servers::problems(),
+	})
 }
 
 #[tauri::command]
@@ -49,8 +54,22 @@ pub fn delete_server(state: State<'_, AppState>, id: String) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn create_server_folder(state: State<'_, AppState>, name: String) -> AppResult<ServerFolder> {
-	state.db.with(|c| servers::create_folder(c, &name))
+pub fn create_server_folder(
+	state: State<'_, AppState>,
+	name: String,
+	project_id: Option<String>,
+) -> AppResult<ServerFolder> {
+	state.db.with(|c| servers::create_folder(c, &name, project_id.as_deref()))
+}
+
+/// Write a fresh id into a duplicate or id-less `.server` file (F51).
+#[tauri::command]
+pub fn fix_server_file(
+	state: State<'_, AppState>,
+	project_id: String,
+	rel_path: String,
+) -> AppResult<()> {
+	state.db.with(|c| servers::fix_file(c, &project_id, &rel_path))
 }
 
 #[tauri::command]

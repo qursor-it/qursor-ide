@@ -1600,6 +1600,9 @@ pub struct ServerInput {
 	pub password: Option<String>,
 	pub private_key: Option<String>,
 	pub passphrase: Option<String>,
+	/// Where it is kept: `None` is this computer, `Some(projectId)` a file in
+	/// that project. `folder_id` must belong to the same home.
+	pub home: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1607,6 +1610,8 @@ pub struct ServerInput {
 pub struct ServerFolder {
 	pub id: String,
 	pub name: String,
+	/// `None` for a folder of this computer's address book.
+	pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1614,6 +1619,8 @@ pub struct ServerFolder {
 pub struct ServerBook {
 	pub folders: Vec<ServerFolder>,
 	pub servers: Vec<Server>,
+	/// `.server` files that are not listed as servers, and why.
+	pub problems: Vec<ServerFileProblem>,
 }
 
 /// One `Host` block of `~/.ssh/config`, offered for import.

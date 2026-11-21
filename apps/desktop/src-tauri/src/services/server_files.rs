@@ -23,6 +23,7 @@ pub struct ScanProject {
 	pub root: PathBuf,
 }
 
+#[derive(Clone)]
 pub struct FileServer {
 	pub project_id: String,
 	/// `servers/clienti/acme.server`, always with `/`.
@@ -35,6 +36,7 @@ pub struct FileServer {
 	pub raw: Map<String, Value>,
 }
 
+#[derive(Clone)]
 pub struct FileFolder {
 	pub id: String,
 	pub project_id: String,
@@ -106,14 +108,6 @@ pub fn parse_folder_id(id: &str) -> Option<(&str, &str)> {
 	id.strip_prefix("p:")?.split_once(':')
 }
 
-pub fn expand_home(p: &str) -> String {
-	let rest = if p == "~" { Some("") } else { p.strip_prefix("~/") };
-	match (rest, dirs::home_dir()) {
-		(Some(rest), Some(h)) => h.join(rest).to_string_lossy().into_owned(),
-		_ => p.to_string(),
-	}
-}
-
 fn tilde(p: &str) -> String {
 	let Some(h) = dirs::home_dir() else { return p.to_string() };
 	match Path::new(p).strip_prefix(&h) {
@@ -165,6 +159,7 @@ fn parse(
 		password: None,
 		private_key: None,
 		passphrase: None,
+		home: None,
 	};
 	crate::services::servers::validate(&input).map_err(|e| match e {
 		AppError::InvalidInput(m) => Bad::Broken(m),
@@ -222,9 +217,10 @@ fn parse(
 	Ok(Parsed { server, tunnels, raw })
 }
 
-/// `.server` files under `dir`, skipping dot-folders. Unreadable folders are
-/// skipped: a half-visible tree must not take the whole scan down.
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+/// `.server` files and sub-folders under `dir`, skipping dot-folders.
+/// Unreadable folders are skipped: a half-visible tree must not take the whole
+/// scan down.
+fn walk(dir: &Path, out: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) {
 	let Ok(rd) = fs::read_dir(dir) else { return };
 	for e in rd.flatten() {
 		let path = e.path();
@@ -232,7 +228,8 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 		if path.is_dir() {
 			// A symlinked folder could lead out of the project.
 			if !dot && !e.file_type().is_ok_and(|t| t.is_symlink()) {
-				walk(&path, out);
+				dirs.push(path.clone());
+				walk(&path, out, dirs);
 			}
 		} else if !dot && path.extension().is_some_and(|x| x == EXT) {
 			out.push(path);
@@ -248,9 +245,21 @@ pub fn scan(
 	let mut seen = HashSet::new();
 	let mut found: Vec<FileServer> = Vec::new();
 	let mut problems = Vec::new();
+	let mut folders: Vec<FileFolder> = Vec::new();
 	for p in projects {
-		let mut files = Vec::new();
-		walk(&p.root.join(DIR), &mut files);
+		let (mut files, mut dirs) = (Vec::new(), Vec::new());
+		walk(&p.root.join(DIR), &mut files, &mut dirs);
+		// Empty folders are listed too: a folder just made must be choosable.
+		let mut names: Vec<String> = dirs
+			.iter()
+			.filter_map(|d| Some(join_slash(d.strip_prefix(p.root.join(DIR)).ok()?)))
+			.collect();
+		names.sort();
+		folders.extend(names.into_iter().map(|name| FileFolder {
+			id: folder_id(&p.id, &name),
+			project_id: p.id.clone(),
+			name,
+		}));
 		let mut files: Vec<(String, PathBuf)> = files
 			.into_iter()
 			.filter_map(|f| Some((join_slash(f.strip_prefix(&p.root).ok()?), f)))
@@ -314,7 +323,6 @@ pub fn scan(
 		}
 	}
 	let mut servers = Vec::new();
-	let mut folders: Vec<FileFolder> = Vec::new();
 	for (i, f) in found.into_iter().enumerate() {
 		let in_db = db_ids.contains(&f.server.id);
 		if in_db || winner[&f.server.id] != i {
@@ -600,7 +608,7 @@ mod tests {
 		let mut srv = s.servers[0].server.clone();
 		srv.key_path = Some(h.join(".ssh").join("id").to_string_lossy().into_owned());
 		assert!(to_json(&Map::new(), &srv, &[]).contains("\"keyPath\": \"~/.ssh/id\""));
-		assert_eq!(expand_home("~/.ssh/id"), h.join(".ssh/id").to_string_lossy());
+		assert_eq!(crate::services::servers::expand_home("~/.ssh/id"), h.join(".ssh/id"));
 	}
 
 	#[test]
