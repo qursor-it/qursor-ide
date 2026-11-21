@@ -1,4 +1,11 @@
-import type { Server, ServerFolder } from '@factorai/types';
+import type {
+	Project,
+	Server,
+	ServerBook,
+	ServerFolder,
+	ServerFileProblem,
+	SidebarRow,
+} from '@factorai/types';
 import {
 	Button,
 	Dialog,
@@ -28,14 +35,16 @@ import {
 	Server as ServerIcon,
 	ShieldAlert,
 	TerminalSquare,
+	TriangleAlert,
 	X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AgentMenu, AgentPane, ConfirmBanner, RunningChip } from '@components/servers/AgentPane';
 import { ServerDialog } from '@components/servers/ServerDialog';
 import { SftpPanel } from '@components/servers/SftpPanel';
 import { TunnelsMenu } from '@components/servers/TunnelsMenu';
 import { AgentMark } from '@components/layout/AgentMark';
+import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { agentName } from '@lib/agents';
 import { answerHostKey, reconnectTab, ServerTerminal } from '@components/servers/ServerTerminal';
 import { disposeTerminal } from '@components/terminal/Terminal';
@@ -103,7 +112,7 @@ export function ServerModeView() {
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 pr-2 pb-2" data-testid="server-mode">
 			<aside className="flex w-64 shrink-0 flex-col bg-chrome">
-				<ServerSidebar servers={servers} folders={book.data?.folders ?? []} />
+				<ServerSidebar book={book.data ?? { folders: [], servers: [], problems: [] }} />
 			</aside>
 			<section
 				className={`flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-background shadow-card ${
@@ -175,7 +184,15 @@ export function ServerModeView() {
 	);
 }
 
-function ServerSidebar({ servers, folders }: { servers: Server[]; folders: ServerFolder[] }) {
+const flatProjects = (rows: SidebarRow[]): Project[] =>
+	rows.flatMap((r) => (r.kind === 'project' ? [r.project] : r.children.map((c) => c.project)));
+
+const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
+const fileName = (relPath: string) => relPath.split('/').pop() ?? relPath;
+
+function ServerSidebar({ book }: { book: ServerBook }) {
+	const { servers, folders, problems } = book;
+	const sidebar = useQuery({ queryKey: queryKeys.sidebar(), queryFn: () => cmd.listSidebar() });
 	const qc = useQueryClient();
 	const open = useServerStore((s) => s.open);
 	const collapsed = useServerStore((s) => s.collapsed);
@@ -200,14 +217,41 @@ function ServerSidebar({ servers, folders }: { servers: Server[]; folders: Serve
 		onSuccess: refresh,
 	});
 
-	const byFolder = useMemo(() => {
-		const m = new Map<string | null, Server[]>();
-		for (const s of servers) {
-			const k = folders.some((f) => f.id === s.folderId) ? s.folderId : null;
-			m.set(k, [...(m.get(k) ?? []), s]);
-		}
-		return m;
-	}, [servers, folders]);
+	const fix = useMutation({
+		mutationFn: (p: ServerFileProblem) => cmd.fixServerFile(p.projectId, p.relPath),
+		onSettled: refresh,
+	});
+
+	const problemRow = (p: ServerFileProblem) => {
+		const label =
+			p.kind === 'duplicate'
+				? 'Make it a separate server'
+				: p.kind === 'noId'
+					? 'Give it an id'
+					: null;
+		return (
+			<div
+				key={p.relPath}
+				data-testid={`server-problem-${fileName(p.relPath)}`}
+				title={p.message}
+				className="flex h-7 items-center gap-2 pl-2 text-sm text-muted-foreground"
+			>
+				<TriangleAlert className="size-3.5 shrink-0" />
+				<span className="min-w-0 flex-1 truncate">{fileName(p.relPath)}</span>
+				{label && (
+					<Button
+						size="sm"
+						variant="ghost"
+						className="h-6 px-2 text-xs"
+						disabled={fix.isPending}
+						onClick={() => fix.mutate(p)}
+					>
+						{label}
+					</Button>
+				)}
+			</div>
+		);
+	};
 
 	const row = (s: Server, indent: boolean) => {
 		const sessions = tabs.filter((t) => t.serverId === s.id).length;
@@ -272,6 +316,64 @@ function ServerSidebar({ servers, folders }: { servers: Server[]; folders: Serve
 		);
 	};
 
+	/** A home's folders, then its loose servers, then its problem files. */
+	const tree = (fs: ServerFolder[], ss: Server[], ps: ServerFileProblem[] = []) => {
+		const inFolder = (f: ServerFolder) => ss.filter((s) => s.folderId === f.id).sort(byName);
+		const loose = ss.filter((s) => !fs.some((f) => f.id === s.folderId)).sort(byName);
+		return (
+			<>
+				{[...fs].sort(byName).map((f) => {
+					const closed = collapsed.includes(f.id);
+					return (
+						<div key={f.id}>
+							<div className="group flex h-7 items-center gap-1.5 rounded-md pr-1 pl-1 text-sm hover:bg-secondary/60">
+								<button
+									type="button"
+									className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+									aria-expanded={!closed}
+									onClick={() => toggleFolder(f.id)}
+								>
+									{closed ? (
+										<ChevronRight className="size-3.5 text-muted-foreground" />
+									) : (
+										<ChevronDown className="size-3.5 text-muted-foreground" />
+									)}
+									<Folder className="size-3.5 text-muted-foreground" />
+									<span className="truncate">{f.name}</span>
+								</button>
+								<span className="text-xs text-muted-foreground tabular-nums">
+									{inFolder(f).length}
+								</span>
+								<DropdownMenu>
+									<DropdownMenuTrigger asChild>
+										<IconButton
+											aria-label={`${f.name} actions`}
+											className="opacity-0 group-hover:opacity-100"
+										>
+											<MoreHorizontal />
+										</IconButton>
+									</DropdownMenuTrigger>
+									<DropdownMenuContent align="end">
+										<DropdownMenuItem onSelect={() => setEditing({ server: null, folderId: f.id })}>
+											New server here…
+										</DropdownMenuItem>
+										<DropdownMenuItem onSelect={() => deleteFolder.mutate(f.id)}>
+											Delete folder (keeps its servers)
+										</DropdownMenuItem>
+									</DropdownMenuContent>
+								</DropdownMenu>
+							</div>
+							{!closed && inFolder(f).map((s) => row(s, true))}
+						</div>
+					);
+				})}
+				{loose.map((s) => row(s, false))}
+				{ps.map(problemRow)}
+			</>
+		);
+	};
+	const projects = flatProjects(sidebar.data ?? []);
+
 	return (
 		<div className="flex min-h-0 flex-1 flex-col px-2">
 			<div className="flex h-9 items-center gap-1 px-1 text-xs font-medium tracking-wider text-muted-foreground uppercase">
@@ -307,52 +409,30 @@ function ServerSidebar({ servers, folders }: { servers: Server[]; folders: Serve
 						/>
 					</form>
 				)}
-				{folders.map((f) => {
-					const closed = collapsed.includes(f.id);
+				<Section title="This computer" testId="local">
+					{tree(
+						folders.filter((f) => f.projectId === null),
+						servers.filter((s) => s.source.kind === 'local'),
+					)}
+				</Section>
+				{projects.map((p) => {
+					const pf = folders.filter((f) => f.projectId === p.id);
+					const ps = servers.filter(
+						(s) => s.source.kind === 'project' && s.source.projectId === p.id,
+					);
+					const pp = problems.filter((x) => x.projectId === p.id);
+					if (!ps.length && !pp.length) return null;
 					return (
-						<div key={f.id}>
-							<div className="group flex h-7 items-center gap-1.5 rounded-md pr-1 pl-1 text-sm hover:bg-secondary/60">
-								<button
-									type="button"
-									className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-									aria-expanded={!closed}
-									onClick={() => toggleFolder(f.id)}
-								>
-									{closed ? (
-										<ChevronRight className="size-3.5 text-muted-foreground" />
-									) : (
-										<ChevronDown className="size-3.5 text-muted-foreground" />
-									)}
-									<Folder className="size-3.5 text-muted-foreground" />
-									<span className="truncate">{f.name}</span>
-								</button>
-								<span className="text-xs text-muted-foreground tabular-nums">
-									{byFolder.get(f.id)?.length ?? 0}
-								</span>
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<IconButton
-											aria-label={`${f.name} actions`}
-											className="opacity-0 group-hover:opacity-100"
-										>
-											<MoreHorizontal />
-										</IconButton>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end">
-										<DropdownMenuItem onSelect={() => setEditing({ server: null, folderId: f.id })}>
-											New server here…
-										</DropdownMenuItem>
-										<DropdownMenuItem onSelect={() => deleteFolder.mutate(f.id)}>
-											Delete folder (keeps its servers)
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
-							</div>
-							{!closed && (byFolder.get(f.id) ?? []).map((s) => row(s, true))}
-						</div>
+						<Section
+							key={p.id}
+							testId={p.id}
+							title={p.displayName}
+							icon={<ProjectIcon name={p.displayName} size={18} />}
+						>
+							{tree(pf, ps, pp)}
+						</Section>
 					);
 				})}
-				{(byFolder.get(null) ?? []).map((s) => row(s, false))}
 			</div>
 			<VaultFooter />
 			<ServerDialog
@@ -361,9 +441,32 @@ function ServerSidebar({ servers, folders }: { servers: Server[]; folders: Serve
 				server={editing?.server ?? null}
 				folderId={editing?.folderId ?? null}
 				folders={folders}
+				projects={projects}
 			/>
 			<DeleteServerDialog server={deleting} onClose={() => setDeleting(null)} />
 		</div>
+	);
+}
+
+function Section({
+	title,
+	testId,
+	icon,
+	children,
+}: {
+	title: string;
+	testId: string;
+	icon?: React.ReactNode;
+	children: React.ReactNode;
+}) {
+	return (
+		<section data-testid="server-section" data-section={testId} className="pb-1">
+			<div className="flex h-7 items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
+				{icon}
+				<span className="min-w-0 flex-1 truncate">{title}</span>
+			</div>
+			{children}
+		</section>
 	);
 }
 

@@ -1,5 +1,6 @@
 import type {
 	AgentPolicy,
+	Project,
 	Server,
 	ServerAuth,
 	ServerEnvironment,
@@ -32,6 +33,9 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 
 const NO_FOLDER = '__none__';
+/** Select value for this computer's own book (a Select item cannot be `''`); a
+ *  project's is its id. The wire's `home` for it is `''`. */
+const THIS_COMPUTER = '__local__';
 
 const AUTH_LABEL: Record<ServerAuth, string> = {
 	password: 'Password',
@@ -54,6 +58,7 @@ interface Draft {
 	username: string;
 	startDir: string;
 	folderId: string;
+	home: string;
 	environment: ServerEnvironment;
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;
@@ -64,14 +69,21 @@ interface Draft {
 	passphrase: string;
 }
 
-function draftFrom(s: Server | null, folderId: string | null): Draft {
+function draftFrom(s: Server | null, folderId: string | null, folders: ServerFolder[]): Draft {
+	const fid = s ? s.folderId : folderId;
+	const home = s
+		? s.source.kind === 'project'
+			? s.source.projectId
+			: THIS_COMPUTER
+		: (folders.find((f) => f.id === fid)?.projectId ?? THIS_COMPUTER);
 	return {
 		name: s?.name ?? '',
 		host: s?.host ?? '',
 		port: String(s?.port ?? 22),
 		username: s?.username ?? '',
 		startDir: s?.startDir ?? '',
-		folderId: s?.folderId ?? folderId ?? NO_FOLDER,
+		folderId: fid ?? NO_FOLDER,
+		home,
 		environment: s?.environment ?? 'dev',
 		agentPolicy: s?.agentPolicy ?? 'free',
 		auth: s?.auth ?? 'agent',
@@ -94,6 +106,7 @@ function toInput(d: Draft, id?: string): ServerInput {
 		username: d.username,
 		startDir: d.startDir || null,
 		folderId: d.folderId === NO_FOLDER ? null : d.folderId,
+		home: d.home === THIS_COMPUTER ? '' : d.home,
 		environment: d.environment,
 		agentPolicy: d.agentPolicy,
 		auth: d.auth,
@@ -115,18 +128,22 @@ export function ServerDialog({
 	onOpenChange,
 	server,
 	folders,
+	projects,
 	folderId = null,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	server: Server | null;
 	folders: ServerFolder[];
+	/** The sidebar's projects; those with a folder on disk can hold servers. */
+	projects: Project[];
 	folderId?: string | null;
 }) {
 	const qc = useQueryClient();
-	const [d, setD] = useState<Draft>(() => draftFrom(server, folderId));
+	const [d, setD] = useState<Draft>(() => draftFrom(server, folderId, folders));
 	useEffect(() => {
-		if (open) setD(draftFrom(server, folderId));
+		if (open) setD(draftFrom(server, folderId, folders));
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- reset on open, not on every poll
 	}, [open, server, folderId]);
 	const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((p) => ({ ...p, [k]: v }));
 
@@ -152,6 +169,8 @@ export function ServerDialog({
 			qc.invalidateQueries({ queryKey: queryKeys.servers() });
 			onOpenChange(false);
 		},
+		// The file moved under the form: show the book as it is now.
+		onError: () => qc.invalidateQueries({ queryKey: queryKeys.servers() }),
 	});
 
 	const field = (label: string, el: React.ReactNode, id: string) => (
@@ -235,6 +254,28 @@ export function ServerDialog({
 						'srv-dir',
 					)}
 					{field(
+						'Save in',
+						<Select
+							value={d.home}
+							onValueChange={(v) => setD((p) => ({ ...p, home: v, folderId: NO_FOLDER }))}
+						>
+							<SelectTrigger id="srv-home" data-testid="server-home">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value={THIS_COMPUTER}>This computer</SelectItem>
+								{projects
+									.filter((p) => !!p.realPath && !p.missing)
+									.map((p) => (
+										<SelectItem key={p.id} value={p.id}>
+											{p.displayName}
+										</SelectItem>
+									))}
+							</SelectContent>
+						</Select>,
+						'srv-home',
+					)}
+					{field(
 						'Folder',
 						<Select value={d.folderId} onValueChange={(v) => set('folderId', v)}>
 							<SelectTrigger id="srv-folder">
@@ -242,11 +283,13 @@ export function ServerDialog({
 							</SelectTrigger>
 							<SelectContent>
 								<SelectItem value={NO_FOLDER}>No folder</SelectItem>
-								{folders.map((f) => (
-									<SelectItem key={f.id} value={f.id}>
-										{f.name}
-									</SelectItem>
-								))}
+								{folders
+									.filter((f) => (f.projectId ?? THIS_COMPUTER) === d.home)
+									.map((f) => (
+										<SelectItem key={f.id} value={f.id}>
+											{f.name}
+										</SelectItem>
+									))}
 							</SelectContent>
 						</Select>,
 						'srv-folder',

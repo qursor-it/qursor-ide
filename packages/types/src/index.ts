@@ -1093,7 +1093,9 @@ export type AppError =
 	/** An SSH server presented a key no known_hosts file has (F45). `message` is
 	 *  the SHA-256 fingerprint the human is asked to confirm before retrying
 	 *  with it. */
-	| { kind: 'HostKey'; message: string };
+	| { kind: 'HostKey'; message: string }
+	/** A file changed on disk since it was last read; nothing was written. */
+	| { kind: 'Conflict'; message: string };
 
 /**
  * A project's scheduled prompt (F22, ADR-0026). Mirrors the Rust `Routine`.
@@ -1994,6 +1996,12 @@ export type ServerEnvironment = 'dev' | 'staging' | 'prod';
 export type AgentPolicy = 'free' | 'confirm' | 'readonly';
 export type ServerAuth = 'password' | 'key' | 'keyFile' | 'agent' | 'system';
 
+/** Where a server is kept: this computer's database, or a `.server` file in a
+ *  project's `servers/` folder. */
+export type ServerSource =
+	| { kind: 'local' }
+	| { kind: 'project'; projectId: string; relPath: string };
+
 /** A saved server. Mirrors the Rust `Server`; carries no secret, only whether
  *  the vault holds one. */
 export interface Server {
@@ -2014,6 +2022,7 @@ export interface Server {
 	hasPrivateKey: boolean;
 	hasPassphrase: boolean;
 	connected: boolean;
+	source: ServerSource;
 }
 
 /** The server form. Secret fields are write-only: `''` clears one, absent
@@ -2026,6 +2035,9 @@ export interface ServerInput {
 	username: string;
 	startDir?: string | null;
 	folderId?: string | null;
+	/** Absent/null keeps the server's current home (a new one goes to this
+	 *  computer); `''` is this computer; a project id is that project. */
+	home?: string | null;
 	environment: ServerEnvironment;
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;
@@ -2039,11 +2051,22 @@ export interface ServerInput {
 export interface ServerFolder {
 	id: string;
 	name: string;
+	/** The project whose `servers/` folder this is; null for this computer's. */
+	projectId: string | null;
+}
+
+/** A `.server` file that is not listed as a server. */
+export interface ServerFileProblem {
+	projectId: string;
+	relPath: string;
+	kind: 'broken' | 'duplicate' | 'noId';
+	message: string;
 }
 
 export interface ServerBook {
 	folders: ServerFolder[];
 	servers: Server[];
+	problems: ServerFileProblem[];
 }
 
 /** One concrete `Host` of `~/.ssh/config`, offered for import. */

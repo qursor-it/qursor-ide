@@ -17,6 +17,8 @@ export function isAppError(e: unknown): e is AppError {
  * into noise.
  */
 export function formatError(e: unknown): string {
+	if (isAppError(e) && e.kind === 'Conflict')
+		return "This server's file changed on disk. Reload and try again.";
 	if (isAppError(e)) return `${e.kind}: ${e.message}`;
 	if (e instanceof Error) return e.message;
 	if (typeof e === 'string') return e;

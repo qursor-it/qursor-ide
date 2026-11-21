@@ -5,7 +5,13 @@
  * this lane holds the surface's rules.
  */
 import { expect, test } from '@playwright/test';
-import { installMockBridge, type TestFixture } from './fixtures';
+import {
+	ALPHA_ID,
+	fixtureTwoProjectsManySessions,
+	installMockBridge,
+	type TestFixture,
+	ZULU_ID,
+} from './fixtures';
 
 type ServerBook = NonNullable<TestFixture['serverBook']>;
 type Server = ServerBook['servers'][number];
@@ -28,12 +34,13 @@ function server(over: Partial<Server>): Server {
 		hasPrivateKey: false,
 		hasPassphrase: false,
 		connected: false,
+		source: { kind: 'local' },
 		...over,
 	};
 }
 
 const book: ServerBook = {
-	folders: [{ id: 'f1', name: 'Clients' }],
+	folders: [{ id: 'f1', name: 'Clients', projectId: null }],
 	servers: [
 		server({}),
 		server({
@@ -44,6 +51,7 @@ const book: ServerBook = {
 			agentPolicy: 'confirm',
 		}),
 	],
+	problems: [],
 };
 
 test.describe('servers', () => {
@@ -110,6 +118,7 @@ test.describe('servers', () => {
 		);
 		const input = (saved?.args as { input: Record<string, unknown> }).input;
 		expect(input).toMatchObject({ name: 'staging', host: 'staging.example.com', username: 'ops' });
+		expect(input.home).toBe('');
 		expect(input).not.toHaveProperty('password');
 		expect(input).not.toHaveProperty('privateKey');
 	});
@@ -291,6 +300,7 @@ test.describe('servers', () => {
 		const persistentBook: ServerBook = {
 			folders: book.folders,
 			servers: [server({ persistent: true }), book.servers[1]],
+			problems: [],
 		};
 		await installMockBridge(page, { serverBook: persistentBook });
 		await page.goto('/');
@@ -307,5 +317,117 @@ test.describe('servers', () => {
 		);
 		expect(ends).toHaveLength(1);
 		expect(ends[0].args).toMatchObject({ serverId: 's1' });
+	});
+
+	// Two projects: zulu holds server files, alpha holds none.
+	const projects = fixtureTwoProjectsManySessions();
+	const inZulu = (over: Partial<Server>) =>
+		server({
+			folderId: null,
+			source: { kind: 'project', projectId: ZULU_ID, relPath: `servers/${over.name}.server` },
+			...over,
+		});
+	const calls = (page: import('@playwright/test').Page, name: string) =>
+		page.evaluate((n) => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === n), name);
+
+	test('@smoke project servers appear under their project', async ({ page }) => {
+		await installMockBridge(page, {
+			...projects,
+			serverBook: {
+				folders: [],
+				servers: [server({ folderId: null }), inZulu({ id: 's9', name: 'shared01' })],
+				problems: [],
+			},
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		const sections = page.getByTestId('server-section');
+		await expect(sections).toHaveCount(2);
+		await expect(sections.nth(0)).toContainText('This computer');
+		await expect(sections.nth(1)).toContainText('zulu');
+		await expect(sections.nth(1).getByTestId('server-row-shared01')).toBeVisible();
+		await expect(sections.nth(0).getByTestId('server-row-web01')).toBeVisible();
+	});
+
+	test('@smoke a project with no server files is not listed', async ({ page }) => {
+		await installMockBridge(page, {
+			...projects,
+			serverBook: { folders: [], servers: [inZulu({ id: 's9', name: 'shared01' })], problems: [] },
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await expect(page.getByTestId('server-section').filter({ hasText: 'zulu' })).toHaveCount(1);
+		await expect(page.getByTestId('server-section').filter({ hasText: 'alpha' })).toHaveCount(0);
+	});
+
+	test('@smoke a duplicate offers to become a separate server', async ({ page }) => {
+		await installMockBridge(page, {
+			...projects,
+			serverBook: {
+				folders: [],
+				servers: [],
+				problems: [
+					{
+						projectId: ZULU_ID,
+						relPath: 'servers/copy.server',
+						kind: 'duplicate',
+						message: 'same id',
+					},
+				],
+			},
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		const row = page.getByTestId('server-problem-copy.server');
+		await expect(row).toHaveAttribute('title', 'same id');
+		await row.getByText('copy.server').dblclick();
+		await row.getByRole('button', { name: 'Make it a separate server' }).click();
+		await expect.poll(async () => (await calls(page, 'fix_server_file')).length).toBe(1);
+		expect((await calls(page, 'fix_server_file'))[0].args).toEqual({
+			projectId: ZULU_ID,
+			relPath: 'servers/copy.server',
+		});
+		expect(await calls(page, 'server_open_shell')).toHaveLength(0);
+	});
+
+	test('@smoke a broken file shows its error and has no action', async ({ page }) => {
+		await installMockBridge(page, {
+			...projects,
+			serverBook: {
+				folders: [],
+				servers: [],
+				problems: [
+					{
+						projectId: ZULU_ID,
+						relPath: 'servers/bad.server',
+						kind: 'broken',
+						message: 'bad toml',
+					},
+				],
+			},
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		const row = page.getByTestId('server-problem-bad.server');
+		await expect(row).toHaveAttribute('title', 'bad toml');
+		await expect(row.getByRole('button')).toHaveCount(0);
+	});
+
+	test('@smoke save in a project sends home', async ({ page }) => {
+		await installMockBridge(page, { ...projects, serverBook: book });
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await page.getByTestId('new-server').click();
+		const d = page.getByTestId('server-dialog');
+		await d.getByTestId('server-home').click();
+		await page.getByRole('option', { name: 'alpha' }).click();
+		await d.getByLabel('Name').fill('shared');
+		await d.getByPlaceholder('web01.example.com').fill('h.example.com');
+		await d.getByLabel('User').fill('ops');
+		await d.getByTestId('server-save').click();
+		await expect(d).toHaveCount(0);
+		const input = ((await calls(page, 'save_server'))[0].args as { input: { home: unknown } })
+			.input;
+		expect(input.home).toBe(ALPHA_ID);
 	});
 });

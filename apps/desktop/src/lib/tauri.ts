@@ -522,7 +522,10 @@ export const cmd = {
 	listServers: () => invoke<ServerBook>('list_servers'),
 	saveServer: (input: ServerInput) => invoke<Server>('save_server', { input }),
 	deleteServer: (id: string) => invoke<void>('delete_server', { id }),
-	createServerFolder: (name: string) => invoke<ServerFolder>('create_server_folder', { name }),
+	createServerFolder: (name: string, projectId?: string) =>
+		invoke<ServerFolder>('create_server_folder', { name, projectId }),
+	fixServerFile: (projectId: string, relPath: string) =>
+		invoke<void>('fix_server_file', { projectId, relPath }),
 	renameServerFolder: (id: string, name: string) =>
 		invoke<void>('rename_server_folder', { id, name }),
 	deleteServerFolder: (id: string) => invoke<void>('delete_server_folder', { id }),
@@ -2478,7 +2481,7 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			mockShellSpawns += 1;
 			return (fx?.shellSpawnId ?? `mock-shell-id-${mockShellSpawns}`) as unknown as T;
 		case 'list_servers':
-			return (fx?.serverBook ?? { folders: [], servers: [] }) as unknown as T;
+			return (fx?.serverBook ?? { folders: [], servers: [], problems: [] }) as unknown as T;
 		case 'ssh_config_hosts':
 			return (fx?.sshConfigHosts ?? []) as unknown as T;
 		case 'vault_status':
@@ -2505,7 +2508,11 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			} as unknown as T;
 		}
 		case 'create_server_folder':
-			return { id: 'mock-folder-id', name: args?.name } as unknown as T;
+			return {
+				id: 'mock-folder-id',
+				name: args?.name,
+				projectId: args?.projectId ?? null,
+			} as unknown as T;
 		case 'server_open_shell':
 			if (fx?.serverHostKey && args?.acceptFingerprint !== fx.serverHostKey) {
 				throw { kind: 'HostKey', message: fx.serverHostKey };
@@ -2544,6 +2551,7 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		case 'delete_server':
 		case 'rename_server_folder':
 		case 'delete_server_folder':
+		case 'fix_server_file':
 		case 'server_disconnect':
 			return undefined as unknown as T;
 		case 'shell_name':
