@@ -9002,7 +9002,7 @@ Sessions.
 
 ## F50 — An agent hands work off to a new session
 
-**Decision.** ADR-0113.
+**Decision.** ADR-0114.
 
 Every agent session Qursor starts (Claude and Codex) has an MCP tool
 `startSession({ prompt })` on the `factorai` server. The agent first asks the

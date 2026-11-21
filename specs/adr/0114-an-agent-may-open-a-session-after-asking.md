@@ -1,4 +1,4 @@
-# ADR-0113 — An agent may open a session, but only after asking the human
+# ADR-0114 — An agent may open a session, but only after asking the human
 
 **Date.** 2026-11-21
 **Status.** Accepted. Arises from F50.

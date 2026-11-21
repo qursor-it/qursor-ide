@@ -113,7 +113,7 @@ services/
     tools.rs          # listRoutines, createRoutine, updateRoutine,
                       #   setRoutineEnabled, and the canvas tools canvasOutline,
                       #   canvasRead, canvasFreeSpot, canvasPatch (F44, ADR-0104)
-                      #   and startSession (F50, ADR-0113)
+                      #   and startSession (F50, ADR-0114)
                       #   — reaching the agent as mcp__factorai__*
   canvas_tools.rs     # pure functions behind the canvas tools: outline, read_part,
                       #   free_spot, apply_ops over the JSON Canvas document
@@ -601,7 +601,7 @@ has loaded the bundle. So it is a *reminder* of a `routine_claims` row: re-emitt
 every tick until the session starts, and readable on demand through
 `routine_pending_fires`. Any future event that asks the renderer to *do* something,
 rather than to render something, inherits the same requirement. The one exception
-is `agent-session:start` (F50, ADR-0113): only a live session can emit it, so the
+is `agent-session:start` (F50, ADR-0114): only a live session can emit it, so the
 window is alive and there is nothing to drain.
 
 PTY output is base64-encoded bytes, not UTF-8 strings — Claude prints ANSI
