@@ -1,7 +1,7 @@
 import type { AppError } from '@factorai/types';
 
 /** The tagged union Tauri commands reject with (see `error.rs`). */
-function isAppError(e: unknown): e is AppError {
+export function isAppError(e: unknown): e is AppError {
 	if (typeof e !== 'object' || e === null) return false;
 	const { kind, message } = e as { kind?: unknown; message?: unknown };
 	return typeof kind === 'string' && typeof message === 'string';

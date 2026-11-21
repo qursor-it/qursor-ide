@@ -54,6 +54,9 @@ import type {
 	SopsStatus,
 	TerminalId,
 	SidebarRow,
+	ServerBook,
+	RemoteListing,
+	Tunnel,
 } from '@factorai/types';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -96,6 +99,17 @@ export interface TestFixture {
 	 *  gets the same PTY, so only a one-pane spec should — what it buys is a
 	 *  known id to fire `terminal:data` at. Unpinned, the mock counts spawns. */
 	shellSpawnId?: TerminalId;
+	/** The address book `list_servers` answers with (F45). */
+	serverBook?: ServerBook;
+	/** When set, `server_open_shell` rejects with this host-key fingerprint until
+	 *  it is called again with it accepted (F45). */
+	serverHostKey?: string;
+	/** `sftp_list` answers by path (F47). */
+	remoteDirs?: Record<string, RemoteListing>;
+	/** `list_tunnels` (F48). */
+	tunnels?: Tunnel[];
+	savePick?: string;
+	filePick?: string;
 	/** Session id `start_session` hands back for a new-session click (F6). The
 	 *  mock falls back to a fixed uuid, so a spec only sets this when it wants
 	 *  to talk about the id. */

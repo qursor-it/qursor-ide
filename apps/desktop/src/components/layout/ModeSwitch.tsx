@@ -3,11 +3,12 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { type AppMode, useGitModeStore } from '@store/gitModeStore';
 import { useAttentionStore } from '@store/attentionStore';
+import { useServerStore } from '@store/serverStore';
 import { useSidebarStore } from '@store/sidebarStore';
 import { useTerminalStore } from '@store/terminalStore';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { AgentMascot } from '@components/brand/AgentMascot';
-import { GitBranch, Shapes } from 'lucide-react';
+import { GitBranch, Server, Shapes } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
 
 /** Conflicts appear when a merge or rebase stops, not per keystroke. */
@@ -48,6 +49,9 @@ export function ModeSwitch() {
 		})),
 		combine: (results) => results.reduce((n, r) => n + (r.data?.conflicted.length ?? 0), 0),
 	});
+
+	// Agent commands on servers waiting for a yes or no (ADR-0110).
+	const confirmsWaiting = useServerStore((s) => s.confirms.length);
 
 	const pick = (next: AppMode) => {
 		if (next === 'git') {
@@ -106,6 +110,7 @@ export function ModeSwitch() {
 			{half('sessions', 'Sessions', needsYou, <AgentMascot />)}
 			{half('git', 'Git', conflicts, <GitBranch />)}
 			{half('canvas', 'Canvas', 0, <Shapes />)}
+			{half('servers', 'Servers', confirmsWaiting, <Server />)}
 		</div>
 	);
 }

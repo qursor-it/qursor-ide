@@ -114,9 +114,13 @@ table that is not built yet. Treat it as the thinnest of the four verbs.
   the app. The site counts page views, cookielessly (ADR-0063); the app counts
   nothing. Credentials stay in `gh`: the app never reads, stores or sends a
   token, and fetches no avatars or other assets from the network (ADR-0077).
-- English only; no localization in v1. Windows is supported through WSL 2
-  (ADR-0044) — the Linux build under WSLg, not a native port.
-- Specifically the official `claude` CLI, not a multi-provider session manager.
+  The one exception is SSH credentials for saved servers — passwords, private
+  keys, passphrases — kept in a local encrypted vault and never shown to an
+  agent (ADR-0106).
+- English only; no localization in v1. Windows is a native x64 target
+  (ADR-0074) beside the WSL 2 path (ADR-0044), which still stands.
+- The official agent CLIs — Claude Code, and Codex behind the same seam
+  (ADR-0060) — not a multi-provider session manager.
   There is a real tension between that and the broader "build software with
   agents" framing; it is named deliberately rather than resolved, and holds until
   revisited on purpose rather than by drift.
@@ -134,13 +138,12 @@ commit graph rail.
 
 Binding, and recorded in `specs/09-branding.md`:
 
-- **The mark and the amber.** The notched dark housing with the amber `F`, built
-  on a 16 × 16 cell grid, with the six ports cutting to transparency. `#FFB020`
-  is the brand amber and the app's accent; the app was moved to match the mark,
-  not the reverse. `assets/brand/factorai-icon.svg` is the master every shipped
-  icon derives from.
-- **Dark-first, and two type sizes.** The dark theme is the product's identity,
-  not a mode. Type has exactly two steps — `text-sm` for anything you read to
+- **The mark and the accent.** The product brand is Qursor IDE (ADR-0075) and
+  the app's single accent is Qursor Blue (ADR-0090): blue means *your move*.
+  The original amber mark, `assets/brand/factorai-icon.svg`, is the upstream
+  master recorded in `specs/09-branding.md`.
+- **Light by default, and two type sizes.** Light (Paper) is the default theme
+  since ADR-0096, with dark and `system` as the other choices. Type has exactly two steps — `text-sm` for anything you read to
   navigate, `text-xs` for metadata, status and section headers — and there is
   deliberately no third.
 - **Density and chrome rules.** 28px menu rows, chrome rows with explicit heights

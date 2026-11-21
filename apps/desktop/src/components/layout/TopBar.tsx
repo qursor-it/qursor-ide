@@ -1,3 +1,4 @@
+import { ServerTabs } from '@components/servers/ServerModeView';
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
 import { CanvasTabs } from '@components/layout/CanvasTabs';
@@ -79,6 +80,7 @@ export function TopBar() {
 				</div>
 				{mode === 'git' && <GitTabs />}
 				{mode === 'canvas' && <CanvasTabs />}
+				{mode === 'servers' && <ServerTabs />}
 			</div>
 		</div>
 	);

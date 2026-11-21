@@ -101,6 +101,15 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	// Canvas mode (F44, ADR-0103): the session a canvas talks to. A plain
 	// `CREATE TABLE`, so not standalone.
 	("9003_canvas_sessions", include_str!("migrations/9003_canvas_sessions.sql")),
+	// Saved SSH servers and their address-book folders (F45, ADR-0105).
+	// Fork-only, like 9001. Secrets are not here: they are in the vault (ADR-0106).
+	("9004_servers", include_str!("migrations/9004_servers.sql")),
+	// The local record of agent commands on servers. Fork-only.
+	("9005_agent_audit", include_str!("migrations/9005_agent_audit.sql")),
+	// Saved local port forwards per server. Fork-only.
+	("9006_server_tunnels", include_str!("migrations/9006_server_tunnels.sql")),
+	// tmux-backed tabs per server. Fork-only.
+	("9007_server_persistent", include_str!("migrations/9007_server_persistent.sql")),
 ];
 
 /// Migrations that need the connection to themselves, with foreign keys off.

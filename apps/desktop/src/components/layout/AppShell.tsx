@@ -7,6 +7,8 @@ import { ImportProjects } from '@components/dialog/ImportProjects';
 import { FileTreePanel } from '@components/files/FileTreePanel';
 import { CanvasModeView } from '@components/canvas/CanvasModeView';
 import { GitModeView } from '@components/gitmode/GitModeView';
+import { ServerModeView } from '@components/servers/ServerModeView';
+import { useServerEvents } from '@hooks/useServerEvents';
 import { GitErrorHost } from '@components/gitmode/GitErrorDialog';
 import { GitConfirmHost } from '@components/gitmode/OpLog';
 import { ShellDock } from '@components/terminal/ShellDock';
@@ -60,8 +62,10 @@ export function AppShell({ children }: AppShellProps) {
 	// it now fits. Same shape as `effectivePanelWidth` two lines down.
 	const sidebarWidth = effectiveSidebarWidth(storedSidebarWidth, sidebarCollapsed);
 	const panelOpen = usePanelStore((s) => s.open);
-	const gitMode = useGitModeStore((s) => s.mode === 'git');
-	const canvasMode = useGitModeStore((s) => s.mode === 'canvas');
+	const mode = useGitModeStore((s) => s.mode);
+	useServerEvents();
+	const gitMode = mode === 'git';
+	const canvasMode = mode === 'canvas';
 	const panelWidth = usePanelStore((s) => s.width);
 	const viewerWidth = usePanelStore((s) => s.viewerWidth);
 	const setViewerWidth = usePanelStore((s) => s.setViewerWidth);
@@ -225,11 +229,11 @@ export function AppShell({ children }: AppShellProps) {
 			    mode too, which is where you switch back (ADR-0093). */}
 			<div className="flex min-h-0 flex-1">
 				<AppRail />
-				{/* Git and Canvas modes hide this body rather than unmounting it: the
-			    terminals in it must keep running (F35, F44). */}
+				{/* Git, Canvas and Servers modes hide this body rather than unmounting
+			    it: the terminals in it must keep running (F35, F44, F45). */}
 				<div
 					ref={row}
-					className={gitMode || canvasMode ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}
+					className={mode !== 'sessions' ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}
 				>
 					{/* The project tree beside the rail (ADR-0100). Collapsed, it is gone
 				    and the rail is all that is left (ADR-0093). */}
@@ -307,6 +311,7 @@ export function AppShell({ children }: AppShellProps) {
 				</div>
 				{gitMode && <GitModeView />}
 				{canvasMode && <CanvasModeView />}
+				{mode === 'servers' && <ServerModeView />}
 			</div>
 			{/* Plan limits and the session's cost (usage monitor): full width, under
 			    every column, so it belongs to the window rather than to a panel.
