@@ -1,6 +1,7 @@
 import type { CanvasEntry, Project, SidebarRow } from '@factorai/types';
 import { Button, IconButton } from '@factorai/ui';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
+import { useActiveProject } from '@hooks/useActiveProject';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
@@ -20,6 +21,8 @@ export function CanvasSidebar() {
 	const queryClient = useQueryClient();
 	const selected = useCanvasStore((s) => s.selected);
 	const select = useCanvasStore((s) => s.select);
+	// The route's project: the session in front, when there is one.
+	const { projectId: routeProjectId } = useActiveProject();
 	const sidebarQ = useQuery({ queryKey: queryKeys.sidebar(), queryFn: () => cmd.listSidebar() });
 	// A project with no folder on disk has nowhere to keep a canvas.
 	const eligible = flatProjects(sidebarQ.data ?? []).filter((p) => !!p.realPath && !p.missing);
@@ -79,7 +82,11 @@ export function CanvasSidebar() {
 				open={creatingIn !== null}
 				projects={creatingIn ?? []}
 				initialProjectId={
-					creatingIn?.find((p) => p.id === selected?.projectId)?.id ?? creatingIn?.[0]?.id ?? null
+					(
+						creatingIn?.find((p) => p.id === selected?.projectId) ??
+						creatingIn?.find((p) => p.id === routeProjectId) ??
+						creatingIn?.[0]
+					)?.id ?? null
 				}
 				error={create.error ? formatError(create.error) : null}
 				pending={create.isPending}

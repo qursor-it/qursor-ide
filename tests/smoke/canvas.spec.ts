@@ -2,6 +2,7 @@ import { type Page, expect, test } from '@playwright/test';
 import {
 	ALPHA_ID,
 	FOO_ID,
+	ZULU_ID,
 	fixtureOneProjectOneSession,
 	fixtureTwoProjectsManySessions,
 	installMockBridge,
@@ -129,6 +130,37 @@ test.describe('canvas mode', () => {
 			projectId: ALPHA_ID,
 			title: 'Plan',
 		});
+	});
+
+	test('@smoke the top + preselects the selected canvas project, else the active session project', async ({
+		page,
+	}) => {
+		const fx = fixtureTwoProjectsManySessions();
+		const entry = (projectId: string, root: string) => ({
+			projectId,
+			path: `${root}/canvas/a.canvas`,
+			relPath: 'canvas/a.canvas',
+			slug: 'a',
+			title: 'A',
+			modifiedMs: 1,
+		});
+		fx.canvasesByProject = {
+			[ZULU_ID]: [entry(ZULU_ID, '/home/alice/code/zulu')],
+			[ALPHA_ID]: [entry(ALPHA_ID, '/home/alice/code/alpha')],
+		};
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		// (b) no canvas selected, a session of alpha in front.
+		await page.getByRole('button', { name: 'Expand alpha' }).click();
+		await page.getByRole('link', { name: /Alpha only task/ }).click();
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('new-canvas-top').click();
+		await expect(page.getByRole('combobox', { name: 'Project' })).toHaveText('alpha');
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		// (a) a canvas of zulu selected wins over the session.
+		await page.locator('[data-project="' + ZULU_ID + '"] [data-testid="canvas-row"]').click();
+		await page.getByTestId('new-canvas-top').click();
+		await expect(page.getByRole('combobox', { name: 'Project' })).toHaveText('zulu');
 	});
 
 	test('@smoke empty state when no canvas exists', async ({ page }) => {
