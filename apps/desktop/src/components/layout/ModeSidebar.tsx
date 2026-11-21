@@ -16,7 +16,7 @@ import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 /**
- * The left column every mode shares (ADR-0100): brand and collapse toggle on
+ * The left column every mode shares (ADR-0115): brand and collapse toggle on
  * top, the mode's own body in the middle, the footer under it. Full height, so
  * the top bar starts at its right edge. Gone while collapsed — the rail is what
  * is left, and the top bar carries the expand button.

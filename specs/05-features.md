@@ -45,15 +45,14 @@ all that differs. Width persists (180–480px). The session count was dropped fr
 competed with the status dot for the end of the row, and it is not what you
 scan a sidebar for.
 
-### Collapsed — the rail
+### Collapsed
 
-**It collapses to a 56px rail rather than to nothing** ([ADR-0038](adr/0038-the-sidebar-collapses-to-a-flat-rail.md)),
-because it is the app's navigation and a navigation column you dismissed is an
-app with no way to change what you are looking at. The toggle sits in the
-sidebar frame's header, beside the brand, in every mode (ADR-0115) — this
-column's state, not window chrome, which is what the file-tree toggle in `TopBar`
-is. While collapsed it moves to the left of the top bar's first row. The two are
-deliberately asymmetric for that reason.
+**Collapsing hides the sidebar frame and leaves the app rail** ([ADR-0038](adr/0038-the-sidebar-collapses-to-a-flat-rail.md),
+amended by ADR-0115), in every mode. The rail is the app's navigation, so a
+collapsed sidebar still leaves a way to change what you are looking at. The
+toggle sits in the frame's header, beside the brand — this column's state, not
+window chrome, which is what the file-tree toggle in `TopBar` is. While collapsed
+it moves to the left of the top bar's first row, and focus follows it.
 
 `collapsed` is a boolean beside `width`, not a width of zero: a width is how
 much sidebar you want and this is whether you want one at all, so **expanding
@@ -62,22 +61,10 @@ and there is no drag-to-collapse — the clamp keeps its 180px floor. The toggle
 is instant, with no width transition: every frame of one is a resize event, and
 a PTY resize per frame is a `SIGWINCH` storm at the agent.
 
-The rail holds, top to bottom: the toggle; a search icon; **one glyph per
-project, groups flattened away**, each its avatar badged with the status dot
-F10 already puts there; and one overflow menu carrying what `h-9` cannot —
-indexing, the updater and the zoom controls.
-
-**The rail routes. It does not expand.** Clicking a glyph goes to that project
-and leaves the sidebar collapsed; the search icon goes to `/search`, which has a
-field of its own and takes the caret on arrival. What a narrow rail cannot show
-— a project's sessions — a **hover card** shows: the same list the expanded row
-draws, from the same component, plus that row's `+`. Right-click gives the same
-project menu minus the reordering, which is off while collapsed along with its
-keyboard path.
-
-**The toggle is therefore the only control that expands the sidebar, and it is
-mouse-only** until roadmap item 5 picks the bindings for it and the file-tree
-toggle together.
+The old project-glyph rail (search icon, a glyph per project, overflow menu,
+hover cards) is gone. **The toggle and the rail's Sessions button are the
+controls that expand the sidebar, and the toggle is mouse-only** until roadmap
+item 5 picks the bindings for it and the file-tree toggle together.
 
 ### Ordering
 
@@ -8421,7 +8408,7 @@ brand moved to the sidebar's header).
   badge, the **`Sessions | Git` switch**, then search, settings and the panel
   toggle on the right. Nothing in it belongs to one project; the switch changes
   the mode of the whole window.
-- **Row 2, the work row** (`h-9`): in Sessions mode, **the session tab strip
+- **Row 2, the work row** (`h-10`): in Sessions mode, **the session tab strip
   exactly as it is today** — tabs of every open project, grouped under each
   project's coloured chip (F16, ADR-0080), dragging, folding and all. It only
   moves down one row. In Git mode the same strip shows **Git tabs** instead,
@@ -8684,8 +8671,7 @@ tab scrolled off the strip, was invisible.
 **Placement (since ADR-0093).** The Inbox is the column beside the app rail,
 its whole height, whenever the rail's Inbox (Sessions) icon is the place picked;
 the project tree is the other list that column can show. Before that it sat at
-the top of the expanded sidebar, under the search box and above `PROJECTS`. Not in the collapsed rail (The Rail Rule: nothing in it is
-read as prose). Capped at 45% of the sidebar's height, scrolling inside itself,
+the top of the expanded sidebar, under the search box and above `PROJECTS`. Not while the sidebar is collapsed (only the app rail is left). Capped at 45% of the sidebar's height, scrolling inside itself,
 so the project tree always keeps room.
 
 **What it lists.** Two sections, each with a count, each absent when empty;
