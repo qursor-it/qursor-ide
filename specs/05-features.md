@@ -8912,7 +8912,11 @@ left; a collision becomes `-2`, `-3`, and a file is never overwritten. Extras ar
 "agent"`; **every field the app does not know is written back unchanged.** A
 project with no folder gets no *New canvas*.
 
-**Layout.** Sidebar: the projects, each with its canvases. Centre card: the
+**Layout.** Sidebar: only the projects with at least one canvas, each with its
+canvases; with none, *No canvases yet. Create one in any project.* A `[+]` at
+the top opens *New canvas* with a project picker, preselecting the selected
+canvas's project, else the active session's, else the first; each project
+section keeps its own *New canvas*. Centre card: the
 board, with a header of project, path, title, save state, the agent-panel toggle
 and close. Right card: the agent panel (below), resizable between 280 and 640 px
 and collapsible; the width and open state are kept.
@@ -9044,7 +9048,41 @@ Killing a tab closes its channel and the server hangs the shell up; quitting the
 app does the same for every tab. Tabs persist without their PTYs and log in
 again when shown; a renderer reload re-adopts live PTYs by client key.
 
-**Commands.** `list_servers`, `save_server`, `delete_server`,
+**Two homes (ADR-0115).** A server is kept *on this computer* (the row above) or
+in a project, as `<project>/servers/<folder…>/<name>.server`: JSON, UTF-8, 2-space
+indent, with `id`, `name`, `host`, `user`, `login` required and `port` 22,
+`environment` `dev`, `agentPolicy` `free`, `persistent` false and `tunnels` []
+by default, validated like a saved server. Unknown fields are kept; `keyPath`
+keeps `~/…` in the file and the UI and is expanded only at login. The file's `id`
+is the server's id (vault, pool, terminals, policy, audit). Host-key
+confirmation applies to file servers unchanged. Secrets stay in each machine's
+vault.
+
+**Scanning.** The projects scanned are the Sessions sidebar's projects with a
+folder on disk that are not missing, rescanned on every `list_servers` (the
+renderer polls every 3 s; no watcher). Empty sub-folders of `servers/` count as
+folders. The scan never writes. Problems (`ServerBook.problems`): `broken`
+(invalid JSON or fields, duplicate tunnel ids, or a path escaping `servers/` by a
+symlink), `duplicate` (same id as another file or a local server; action *Make it
+a separate server*) and `noId` (action *Give it an id*); both actions call
+`fix_server_file(projectId, relPath)`, which writes a fresh id. A server whose
+file vanishes keeps its last valid entry for lookups until restart, never listed.
+
+**Writing.** Writes are conditional on the sha256 last read; a stale one is
+`AppError::Conflict` ("changed on disk"). `ServerInput.home`: absent or null keeps
+the current home (a new server: this computer), `""` is this computer, a project
+id is a file in that project; the dialog always sends it (**Save in**) and
+changing it moves the server, keeping its id and, in a project, its exact file
+name (`-2`, `-3` only on a clash). Only a new file gets a slug (as F44); renaming
+a server does not rename its file.
+
+**Sidebar.** *This computer* first, then one section per project with a
+`.server` file (valid or not), in the Sessions order: folders, then servers by
+name, problem rows with the message. Each project section has *New folder in
+the project* (`create_server_folder(name, projectId?)`); deleting a project
+folder moves its `.server` files up one level, never overwriting.
+
+**Commands.** `list_servers`, `save_server`, `delete_server`, `fix_server_file`,
 `create_server_folder`, `rename_server_folder`, `delete_server_folder`,
 `ssh_config_hosts`, `vault_status`, `vault_unlock`, `vault_lock`,
 `vault_set_master_password`, `server_open_shell`, `server_disconnect`.
@@ -9136,6 +9174,11 @@ alive; each connection through it opens a `direct-tcpip` channel, logging in
 again if the connection had dropped. Stopping it, editing it, deleting the
 server, disconnecting it or quitting the app ends it. A local port already in
 use is refused when the switch is turned on. `system` logins have no tunnels.
+
+**Where they are kept.** A local server's tunnels are rows (`server_tunnels`); a
+project server's are the `tunnels` array of its file (ADR-0115), validated the
+same way, with duplicate tunnel ids making the file broken. Its app-wide tunnel
+id is `<server id>/<tunnel id in the file>`; the file keeps the short id.
 
 **Commands.** `list_tunnels`, `save_tunnel`, `delete_tunnel`, `tunnel_start`,
 `tunnel_stop`. Table `server_tunnels` (migration 9005).
