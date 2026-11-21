@@ -28,11 +28,10 @@ import {
 import { useGitModeStore } from '@store/gitModeStore';
 import { useAddProjectStore } from '@store/addProjectStore';
 import { usePanelStore } from '@store/panelStore';
-import { clampSidebarWidth, effectiveSidebarWidth, useSidebarStore } from '@store/sidebarStore';
 import { tabsFor, type ViewerSubject, useViewerStore, viewerHandoff } from '@store/viewerStore';
+import { ModeSidebar } from './ModeSidebar';
 import { PanelResizer } from './PanelResizer';
 import { RestartConfirm } from './RestartConfirm';
-import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
 import { TopBar } from './TopBar';
 
@@ -52,15 +51,8 @@ export function AppShell({ children }: AppShellProps) {
 	// is what "on launch, then every 6 hours" always described.
 	useUpdaterRuntime();
 
-	const storedSidebarWidth = useSidebarStore((s) => s.width);
-	const sidebarCollapsed = useSidebarStore((s) => s.collapsed);
-	const setSidebarWidth = useSidebarStore((s) => s.setWidth);
-	// **What the layout is told**, which is the rail's 48 while collapsed (F1,
-	// ADR-0038). Every rule below asks how much room the sidebar is taking, and
-	// a collapsed sidebar answering 256 makes the shell believe it has less than
-	// it has — the viewer's column would then refuse to appear at a width where
-	// it now fits. Same shape as `effectivePanelWidth` two lines down.
-	const sidebarWidth = effectiveSidebarWidth(storedSidebarWidth, sidebarCollapsed);
+	// The sidebar is outside `row` now, so the viewer rules have no sidebar term.
+	const sidebarWidth = 0;
 	const panelOpen = usePanelStore((s) => s.open);
 	const mode = useGitModeStore((s) => s.mode);
 	useServerEvents();
@@ -224,94 +216,73 @@ export function AppShell({ children }: AppShellProps) {
 				isMacOS() ? 'rounded-b-xl' : ''
 			}`}
 		>
-			<TopBar />
-			{/* The app rail sits outside both modes' bodies, so it is there in Git
-			    mode too, which is where you switch back (ADR-0093). */}
 			<div className="flex min-h-0 flex-1">
+				{/* The app rail sits outside both modes' bodies, so it is there in Git
+			    mode too, which is where you switch back (ADR-0093). */}
 				<AppRail />
-				{/* Git, Canvas and Servers modes hide this body rather than unmounting
-			    it: the terminals in it must keep running (F35, F44, F45). */}
-				<div
-					ref={row}
-					className={mode !== 'sessions' ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}
-				>
-					{/* The project tree beside the rail (ADR-0100). Collapsed, it is gone
-				    and the rail is all that is left (ADR-0093). */}
-					{!sidebarCollapsed && (
-						<aside
-							data-testid="sidebar"
-							style={{ width: storedSidebarWidth }}
-							className="flex shrink-0 flex-col bg-chrome"
+				{/* The frame every mode shares, full height; the top bar starts at its
+			    right edge. */}
+				<ModeSidebar />
+				<div className="flex min-w-0 flex-1 flex-col">
+					<TopBar />
+					<div className="flex min-h-0 flex-1">
+						{/* Git, Canvas and Servers modes hide this body rather than unmounting
+					    it: the terminals in it must keep running (F35, F44, F45). */}
+						<div
+							ref={row}
+							className={mode !== 'sessions' ? 'hidden' : 'flex min-h-0 min-w-0 flex-1 pr-2 pb-2'}
 						>
-							<Sidebar />
-						</aside>
-					)}
-					{/* Mirror of the file panel's handle: this one is on the sidebar's
-				    right edge, so dragging right widens it.
-
-				    **Not rendered while collapsed** (F1, ADR-0038). The rail is a
-				    fixed width, and a handle that resizes nothing is a handle that
-				    lies. There is no drag-to-collapse either: the clamp keeps its
-				    180px floor, because a width and a collapse are different
-				    questions. */}
-					{!sidebarCollapsed && (
-						<PanelResizer
-							size={storedSidebarWidth}
-							onSize={setSidebarWidth}
-							edge="right"
-							label="Resize sidebar"
-							clamp={clampSidebarWidth}
-						/>
-					)}
-					{/* The route above, the project's shell footer below (F23, ADR-0032).
+							{/* The route above, the project's shell footer below (F23, ADR-0032).
 				    Inside this column and not spanning the window, so the file panel
 				    keeps its full height and the footer is the width of the thing it
 				    belongs to. The dock renders nothing where the route has no
 				    project. */}
-					{/* The work area is a card floating on the chrome (ADR-0090). */}
-					<section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
-						<div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-						<ShellDock />
-					</section>
-					{/* **The viewer's own column** (ADR-0037), between the session and the
+							{/* The work area is a card floating on the chrome (ADR-0090). */}
+							<section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card">
+								<div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+								<ShellDock />
+							</section>
+							{/* **The viewer's own column** (ADR-0037), between the session and the
 				    tree. Only where the shell can hold four columns — under that
 				    width the same pane is rendered by `FileTreePanel`, split under the
 				    tree — and only with a file open, so nothing open gives the
 				    session the width back. */}
-					{showColumn && (
-						<>
-							<PanelResizer
-								size={appliedViewerWidth}
-								onSize={(width) =>
-									setViewerWidth(
-										width,
-										maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
-									)
-								}
-								edge="left"
-								label="Resize file viewer"
-								clamp={(width) =>
-									clampViewerWidth(
-										width,
-										maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
-									)
-								}
-							/>
-							<aside
-								data-testid="viewer-column"
-								style={{ width: appliedViewerWidth }}
-								className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card"
-							>
-								<ViewerPane />
-							</aside>
-						</>
-					)}
-					{/* Renders nothing when collapsed; follows the route's project. */}
-					<FileTreePanel />
+							{showColumn && (
+								<>
+									<PanelResizer
+										size={appliedViewerWidth}
+										onSize={(width) =>
+											setViewerWidth(
+												width,
+												maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
+											)
+										}
+										edge="left"
+										label="Resize file viewer"
+										clamp={(width) =>
+											clampViewerWidth(
+												width,
+												maxViewerWidth(shellWidth, sidebarWidth, effectivePanelWidth),
+											)
+										}
+									/>
+									<aside
+										data-testid="viewer-column"
+										style={{ width: appliedViewerWidth }}
+										className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background shadow-card"
+									>
+										<ViewerPane />
+									</aside>
+								</>
+							)}
+							{/* Renders nothing when collapsed; follows the route's project. */}
+							<FileTreePanel />
+						</div>
+						{gitMode && <GitModeView />}
+						{canvasMode && <CanvasModeView />}
+						{mode === 'servers' && <ServerModeView />}
+					</div>
 				</div>
-				{gitMode && <GitModeView />}
-				{canvasMode && <CanvasModeView />}
-				{mode === 'servers' && <ServerModeView />}
 			</div>
 			{/* Plan limits and the session's cost (usage monitor): full width, under
 			    every column, so it belongs to the window rather than to a panel.

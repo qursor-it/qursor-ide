@@ -1,0 +1,78 @@
+/**
+ * The frame every mode shares: one full-height sidebar with the top bar beside
+ * it, the Sessions body inside it kept mounted across modes.
+ */
+import { expect, test } from '@playwright/test';
+import { fixtureOneProjectOneSession, installMockBridge } from './fixtures';
+
+async function openSession(page: import('@playwright/test').Page) {
+	await page.getByTestId('sidebar').getByText('foo').click();
+	await page.getByText('Refactor the auth middleware').click();
+}
+
+test.describe('unified sidebar', () => {
+	test('@smoke the sidebar runs from the top and the top bar starts at its edge', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await openSession(page);
+
+		const sidebar = (await page.getByTestId('sidebar').boundingBox())!;
+		const palette = (await page.getByTestId('open-palette').boundingBox())!;
+		const chip = (await page.getByTestId('tab-group-chip').first().boundingBox())!;
+		expect(sidebar.y).toBeLessThan(palette.y);
+		expect(palette.x).toBeGreaterThan(sidebar.x + sidebar.width);
+		expect(chip.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
+		await expect(page.getByTestId('sidebar').getByText('Qursor')).toBeVisible();
+	});
+
+	test('@smoke a shell survives a mode round trip', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await openSession(page);
+		await page.getByTestId('shell-footer').getByRole('button', { name: 'Terminal' }).click();
+		await expect(page.getByTestId('shell-pane-host')).toHaveCount(1);
+
+		await page.getByTestId('mode-git').click();
+		await page.getByTestId('mode-sessions').click();
+
+		await expect(page.getByTestId('shell-pane-host')).toHaveCount(1);
+		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
+		expect(calls.filter((c) => c.name === 'shell_spawn')).toHaveLength(1);
+	});
+
+	test('@smoke the sidebar search survives a mode round trip', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		const search = page.getByPlaceholder('Search projects and sessions…');
+		await search.fill('foo');
+
+		await page.getByTestId('mode-git').click();
+		await page.getByTestId('mode-sessions').click();
+
+		await expect(search).toHaveValue('foo');
+	});
+
+	test('@smoke at 1100px with a 480px sidebar the search and tabs are on screen', async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 1100, height: 800 });
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await openSession(page);
+
+		const handle = (await page.getByRole('separator', { name: 'Resize sidebar' }).boundingBox())!;
+		const y = handle.y + handle.height / 2;
+		await page.mouse.move(handle.x + handle.width / 2, y);
+		await page.mouse.down();
+		await page.mouse.move(handle.x + 900, y, { steps: 5 });
+		await page.mouse.up();
+		expect((await page.getByTestId('sidebar').boundingBox())!.width).toBe(480);
+
+		for (const id of ['open-palette', 'tab-group-chip']) {
+			const box = (await page.getByTestId(id).first().boundingBox())!;
+			expect(box.x + box.width).toBeLessThanOrEqual(1100);
+		}
+	});
+});
