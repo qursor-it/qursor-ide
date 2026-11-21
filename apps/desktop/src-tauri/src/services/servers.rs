@@ -8,7 +8,7 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
-use crate::models::{Server, ServerFolder, ServerInput, SshConfigHost, Tunnel};
+use crate::models::{Server, ServerFolder, ServerInput, ServerSource, SshConfigHost, Tunnel};
 use crate::services::vault::Vault;
 
 const ENVIRONMENTS: &[&str] = &["dev", "staging", "prod"];
@@ -42,6 +42,7 @@ fn row_to_server(r: &rusqlite::Row<'_>) -> rusqlite::Result<Server> {
 		has_private_key: false,
 		has_passphrase: false,
 		connected: false,
+		source: ServerSource::Local,
 	})
 }
 
@@ -82,7 +83,7 @@ fn trimmed(v: &Option<String>) -> Option<String> {
 	v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
 
-fn validate(input: &ServerInput) -> AppResult<()> {
+pub(crate) fn validate(input: &ServerInput) -> AppResult<()> {
 	let bad = |m: &str| Err(AppError::InvalidInput(m.to_string()));
 	if input.name.trim().is_empty() {
 		return bad("a server needs a name");

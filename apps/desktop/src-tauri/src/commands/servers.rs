@@ -227,6 +227,7 @@ mod tests {
 			has_private_key: false,
 			has_passphrase: false,
 			connected: false,
+			source: crate::models::ServerSource::Local,
 		};
 		let argv = system_argv(&s);
 		assert_eq!(&argv[..5], ["ssh", "-t", "-p", "2222", "deploy@web01"]);

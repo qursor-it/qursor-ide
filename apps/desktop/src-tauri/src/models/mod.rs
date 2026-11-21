@@ -1549,6 +1549,34 @@ pub struct Server {
 	pub has_passphrase: bool,
 	/// A live connection is open to it right now.
 	pub connected: bool,
+	/// Where it lives: the local address book or a project's `.server` file.
+	pub source: ServerSource,
+}
+
+/// Where a server is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum ServerSource {
+	Local,
+	Project { project_id: String, rel_path: String },
+}
+
+/// Why a `.server` file is not listed as a server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProblemKind {
+	Broken,
+	Duplicate,
+	NoId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerFileProblem {
+	pub project_id: String,
+	pub rel_path: String,
+	pub kind: ProblemKind,
+	pub message: String,
 }
 
 /// What the server form sends. Secret fields are write-only: `Some("")` clears
