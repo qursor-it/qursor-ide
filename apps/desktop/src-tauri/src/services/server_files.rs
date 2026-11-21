@@ -399,11 +399,14 @@ pub fn new_file_path(root: &Path, rel_dir: &str, name: &str) -> AppResult<PathBu
 	}
 	let dir = root.join(DIR).join(rel);
 	// Through a symlinked folder the new file would land outside the project.
-	let mut probe = dir.as_path();
-	while !probe.exists() {
-		probe = probe.parent().unwrap_or(root);
+	// No `servers/` yet: the components are all Normal, so it stays under root.
+	if root.join(DIR).exists() {
+		let mut probe = dir.as_path();
+		while !probe.exists() {
+			probe = probe.parent().unwrap_or(root);
+		}
+		resolve_within(&root.join(DIR), &probe.to_string_lossy())?;
 	}
-	resolve_within(&root.join(DIR), &probe.to_string_lossy())?;
 	// `slugify` falls back to "canvas"; a server falls back to "server".
 	let mut base = slugify(name);
 	if base == "canvas" && !name.trim().eq_ignore_ascii_case("canvas") {
@@ -645,6 +648,21 @@ mod tests {
 		assert_eq!(s.servers.len(), 1);
 		assert_eq!(s.problems.len(), 1);
 		assert!(new_file_path(d.path(), "link", "x").is_err());
+	}
+
+	#[test]
+	fn new_file_path_without_servers_dir() {
+		let d = tempfile::tempdir().unwrap();
+		assert!(new_file_path(d.path(), "", "Web").unwrap().ends_with("servers/web.server"));
+		assert!(new_file_path(d.path(), "a/b", "Web").unwrap().ends_with("servers/a/b/web.server"));
+	}
+
+	#[test]
+	fn new_file_path_refuses_escapes() {
+		let d = project(&[("servers/web.server", MIN)]);
+		assert!(new_file_path(d.path(), "../x", "Web").is_err());
+		let abs = d.path().to_string_lossy().into_owned();
+		assert!(new_file_path(d.path(), &abs, "Web").is_err());
 	}
 
 	#[test]
