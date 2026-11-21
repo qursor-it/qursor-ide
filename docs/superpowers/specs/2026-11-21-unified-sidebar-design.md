@@ -102,8 +102,8 @@ over the work area; the brand moves to the top of the sidebar.
   so both rows start at the sidebar's edge. The palette button stays centred in
   row 1, the file-panel toggle at its right.
 - **Collapsed**: only `AppRail` remains; the top bar rows extend to the rail.
-  The rail's Sessions button still expands the sidebar; a collapsed sidebar can
-  be reopened from any mode (the expand button sits at the left of the top
+  Clicking the rail icon of the mode you are in expands it (switching to another
+  mode never changes the collapsed state); a collapsed sidebar can be reopened from any mode (the expand button sits at the left of the top
   bar's first row while collapsed).
 - **Width maths**: the viewer-column maximum (`maxViewerWidth`) currently
   measures the Sessions row including the sidebar; once the sidebar leaves that

@@ -33,7 +33,8 @@ export const DEFAULT_VIEWER_WIDTH = 460;
  */
 export const MIN_SESSION_WIDTH = 400;
 
-/** Three `PanelResizer` strips at `w-1` sit between the four columns. Counted
+/** Two `PanelResizer` strips sit between the measured row's session, viewer and
+ *  tree columns (the sidebar's strip is outside it). Counted
  *  rather than ignored: at the threshold, 12px is the difference between the
  *  layout flipping and the session sitting 12px under its floor. */
 export const COLUMN_GUTTERS = 12;

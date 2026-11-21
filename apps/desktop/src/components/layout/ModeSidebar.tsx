@@ -29,13 +29,16 @@ export function ModeSidebar() {
 	if (collapsed) return null;
 
 	return (
-		<>
+		<div className="flex shrink-0 pb-2">
 			<aside data-testid="sidebar" style={{ width }} className="flex shrink-0 flex-col bg-chrome">
-				<header className="flex h-10.5 shrink-0 items-center gap-2 pr-2 pl-3">
-					<Brand />
-					<DevBadge />
-					<span className="flex-1" />
-					<SidebarCollapseButton />
+				<header className="flex h-10.5 min-w-0 shrink-0 items-center gap-2 overflow-hidden pr-2 pl-3">
+					<span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+						<Brand />
+						<DevBadge />
+					</span>
+					<span className="shrink-0">
+						<SidebarCollapseButton />
+					</span>
 				</header>
 				{/* Kept mounted and hidden in the other modes: the project tree holds
 				    the search term and the open groups. */}
@@ -68,7 +71,7 @@ export function ModeSidebar() {
 				label="Resize sidebar"
 				clamp={clampSidebarWidth}
 			/>
-		</>
+		</div>
 	);
 }
 

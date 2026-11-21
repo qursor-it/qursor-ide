@@ -62,8 +62,9 @@ is instant, with no width transition: every frame of one is a resize event, and
 a PTY resize per frame is a `SIGWINCH` storm at the agent.
 
 The old project-glyph rail (search icon, a glyph per project, overflow menu,
-hover cards) is gone. **The toggle and the rail's Sessions button are the
-controls that expand the sidebar, and the toggle is mouse-only** until roadmap
+hover cards) is gone. **The toggle and the rail's icon for the mode you are
+in are the controls that expand the sidebar (switching to another mode leaves
+it collapsed), and the toggle is mouse-only** until roadmap
 item 5 picks the bindings for it and the file-tree toggle together.
 
 ### Ordering

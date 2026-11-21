@@ -87,7 +87,7 @@ exactly as it works in the list.
 - _Amended by [ADR-0115](0115-one-sidebar-for-every-mode-full-height.md), 2026-11-21: the sidebar is
   now outside the measured row, so nothing subtracts its width and
   `effectiveSidebarWidth` is gone. The rail is 56px, and collapse works in every
-  mode. The rest of this ADR stands._
+  mode, and the toggle now moves to the top bar's first row while collapsed. The rest of this ADR stands._
 - **Every consumer of the sidebar's width must ask `effectiveSidebarWidth`.**
   There were three — `resolveViewerHost` and `maxViewerWidth` in `AppShell`, and
   `maxPanelWidth` in `FileTreePanel` — and a collapsed sidebar reporting its

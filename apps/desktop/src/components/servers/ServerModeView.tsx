@@ -476,21 +476,22 @@ export function VaultFooter() {
 	// the way forward is a master password.
 	const needsSetup = s?.mode === 'keychain' && !!s.keychainError;
 	const locked = (s?.locked ?? false) && !needsSetup;
+	const vaultText = needsSetup
+		? 'No OS keychain'
+		: locked
+			? 'Vault locked'
+			: s?.mode === 'masterPassword'
+				? 'Vault unlocked'
+				: 'Vault (OS keychain)';
 	return (
 		<div className="flex min-w-0 shrink items-center gap-1.5 text-xs text-muted-foreground">
 			{locked ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
 			<span
 				className="flex-1 truncate"
-				title={s?.keychainError ?? undefined}
+				title={s?.keychainError ?? vaultText}
 				data-testid="vault-state"
 			>
-				{needsSetup
-					? 'No OS keychain'
-					: locked
-						? 'Vault locked'
-						: s?.mode === 'masterPassword'
-							? 'Vault unlocked'
-							: 'Vault (OS keychain)'}
+				{vaultText}
 			</span>
 			{needsSetup ? (
 				<Button
@@ -513,7 +514,7 @@ export function VaultFooter() {
 			) : (
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<IconButton aria-label="Vault actions">
+						<IconButton aria-label="Vault actions" title="Vault actions">
 							<MoreHorizontal />
 						</IconButton>
 					</DropdownMenuTrigger>

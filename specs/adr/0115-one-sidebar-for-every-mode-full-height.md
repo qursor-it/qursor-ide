@@ -24,6 +24,8 @@ top bar's two rows also spanned the whole window above the rail and the sidebar
 3. **Collapse is available in every mode.** Collapsed, only the app rail remains
    and the frame is not rendered, so its resizer is gone too (ADR-0038). The
    toggle moves to the left of the top bar's first row while collapsed.
+   Clicking the rail icon of the mode you are in expands it; switching to
+   another mode never changes the collapsed state.
 4. **The rail is 56px** (ADR-0093). DESIGN.md said 48px, the width of the old
    collapsed project rail; that rail is gone, so the Rail Rule now speaks of the
    app rail.

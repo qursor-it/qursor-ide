@@ -151,4 +151,29 @@ test.describe('unified sidebar', () => {
 		await expect(sidebar.getByTestId('sidebar-footer').getByTestId('vault-state')).toBeVisible();
 		expect((await sidebar.boundingBox())!.width).toBe(sessionsWidth);
 	});
+
+	test('@smoke the sidebar footer and the shell footer share a bottom edge', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await openSession(page);
+		await expect(page.getByTestId('shell-footer')).toBeVisible();
+
+		const side = (await page.getByTestId('sidebar-footer').boundingBox())!;
+		const shell = (await page.getByTestId('shell-footer').boundingBox())!;
+		expect(Math.abs(side.y + side.height - (shell.y + shell.height))).toBeLessThanOrEqual(1);
+	});
+
+	test('@smoke a collapsed sidebar expands on the icon of the mode you are in only', async ({
+		page,
+	}) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await page.getByTestId('sidebar-collapse').click();
+		await expect(page.getByTestId('sidebar')).toHaveCount(0);
+
+		await page.getByTestId('mode-canvas').click();
+		await expect(page.getByTestId('sidebar')).toHaveCount(0);
+		await page.getByTestId('mode-canvas').click();
+		await expect(page.getByTestId('sidebar')).toBeVisible();
+	});
 });
