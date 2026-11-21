@@ -430,4 +430,21 @@ test.describe('servers', () => {
 			.input;
 		expect(input.home).toBe(ALPHA_ID);
 	});
+
+	test('@smoke a folder can be made inside a project section', async ({ page }) => {
+		await installMockBridge(page, {
+			...projects,
+			serverBook: { folders: [], servers: [inZulu({ id: 's9', name: 'shared01' })], problems: [] },
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await page.getByRole('button', { name: 'New folder in zulu' }).click();
+		await page.getByPlaceholder('Folder name').fill('prod');
+		await page.keyboard.press('Enter');
+		await expect.poll(async () => (await calls(page, 'create_server_folder')).length).toBe(1);
+		expect((await calls(page, 'create_server_folder'))[0].args).toEqual({
+			name: 'prod',
+			projectId: ZULU_ID,
+		});
+	});
 });

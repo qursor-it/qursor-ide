@@ -202,11 +202,14 @@ function ServerSidebar({ book }: { book: ServerBook }) {
 		null,
 	);
 	const [deleting, setDeleting] = useState<Server | null>(null);
-	const [newFolder, setNewFolder] = useState<string | null>(null);
+	const [newFolder, setNewFolder] = useState<{ projectId: string | null; name: string } | null>(
+		null,
+	);
 	const refresh = () => qc.invalidateQueries({ queryKey: queryKeys.servers() });
 
 	const createFolder = useMutation({
-		mutationFn: (name: string) => cmd.createServerFolder(name),
+		mutationFn: (f: { projectId: string | null; name: string }) =>
+			cmd.createServerFolder(f.name, f.projectId ?? undefined),
 		onSuccess: () => {
 			setNewFolder(null);
 			refresh();
@@ -374,11 +377,36 @@ function ServerSidebar({ book }: { book: ServerBook }) {
 	};
 	const projects = flatProjects(sidebar.data ?? []);
 
+	/** The name field of a new folder, in the home it was asked for. */
+	const folderForm = (projectId: string | null) =>
+		newFolder && newFolder.projectId === projectId ? (
+			<form
+				className="px-1 pb-1"
+				onSubmit={(e) => {
+					e.preventDefault();
+					if (newFolder.name.trim()) createFolder.mutate(newFolder);
+				}}
+			>
+				<Input
+					autoFocus
+					placeholder="Folder name"
+					className="h-7"
+					value={newFolder.name}
+					onChange={(e) => setNewFolder({ projectId, name: e.target.value })}
+					onBlur={() => !newFolder.name.trim() && setNewFolder(null)}
+				/>
+			</form>
+		) : null;
+
 	return (
 		<div className="flex min-h-0 flex-1 flex-col px-2">
 			<div className="flex h-9 items-center gap-1 px-1 text-xs font-medium tracking-wider text-muted-foreground uppercase">
 				<span className="flex-1">Servers</span>
-				<IconButton aria-label="New folder" title="New folder" onClick={() => setNewFolder('')}>
+				<IconButton
+					aria-label="New folder"
+					title="New folder"
+					onClick={() => setNewFolder({ projectId: null, name: '' })}
+				>
 					<FolderPlus />
 				</IconButton>
 				<IconButton
@@ -391,24 +419,7 @@ function ServerSidebar({ book }: { book: ServerBook }) {
 				</IconButton>
 			</div>
 			<div className="min-h-0 flex-1 overflow-y-auto" data-testid="server-book">
-				{newFolder !== null && (
-					<form
-						className="px-1 pb-1"
-						onSubmit={(e) => {
-							e.preventDefault();
-							if (newFolder.trim()) createFolder.mutate(newFolder);
-						}}
-					>
-						<Input
-							autoFocus
-							placeholder="Folder name"
-							className="h-7"
-							value={newFolder}
-							onChange={(e) => setNewFolder(e.target.value)}
-							onBlur={() => !newFolder.trim() && setNewFolder(null)}
-						/>
-					</form>
-				)}
+				{folderForm(null)}
 				<Section title="This computer" testId="local">
 					{tree(
 						folders.filter((f) => f.projectId === null),
@@ -428,7 +439,17 @@ function ServerSidebar({ book }: { book: ServerBook }) {
 							testId={p.id}
 							title={p.displayName}
 							icon={<ProjectIcon name={p.displayName} size={18} />}
+							action={
+								<IconButton
+									aria-label={`New folder in ${p.displayName}`}
+									title="New folder"
+									onClick={() => setNewFolder({ projectId: p.id, name: '' })}
+								>
+									<FolderPlus />
+								</IconButton>
+							}
 						>
+							{folderForm(p.id)}
 							{tree(pf, ps, pp)}
 						</Section>
 					);
@@ -452,11 +473,13 @@ function Section({
 	title,
 	testId,
 	icon,
+	action,
 	children,
 }: {
 	title: string;
 	testId: string;
 	icon?: React.ReactNode;
+	action?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	return (
@@ -464,6 +487,7 @@ function Section({
 			<div className="flex h-7 items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
 				{icon}
 				<span className="min-w-0 flex-1 truncate">{title}</span>
+				{action}
 			</div>
 			{children}
 		</section>

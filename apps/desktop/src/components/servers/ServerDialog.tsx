@@ -27,7 +27,7 @@ import {
 	Textarea,
 } from '@factorai/ui';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
@@ -141,9 +141,11 @@ export function ServerDialog({
 }) {
 	const qc = useQueryClient();
 	const [d, setD] = useState<Draft>(() => draftFrom(server, folderId, folders));
+	// Read at open only: the book polls, and a reset then would eat what was typed.
+	const foldersRef = useRef(folders);
+	foldersRef.current = folders;
 	useEffect(() => {
-		if (open) setD(draftFrom(server, folderId, folders));
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- reset on open, not on every poll
+		if (open) setD(draftFrom(server, folderId, foldersRef.current));
 	}, [open, server, folderId]);
 	const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((p) => ({ ...p, [k]: v }));
 
