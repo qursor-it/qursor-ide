@@ -3125,6 +3125,7 @@ mod tests {
 				root: Arc::new(|| Err(AppError::InvalidInput("no canvases".into()))),
 				linked: Arc::new(|| Ok(None)),
 			},
+			Arc::new(|_: &str| Ok(())),
 		)
 		.with_terminals(Arc::new(mgr.session_terminals("sess")));
 
