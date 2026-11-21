@@ -9000,6 +9000,166 @@ Sessions.
 
 **Not in it (yet).** The pen (ink nodes) arrives in a later slice.
 
+## F45 — Servers: an SSH session manager
+
+**Decisions.** ADR-0105 (one `russh` connection per server), ADR-0106 (the
+vault), ADR-0107 (a tab per SSH session), ADR-0108 (Production Rose).
+
+**What it is.** A third window mode, **Servers**, beside Sessions and Git. Its
+sidebar is an address book: folders, servers, a connection dot, the `PROD` word
+on production servers, the vault's state at the foot. Its top bar has **one tab
+per SSH session**; opening a server twice is two tabs (`web01 · 1`, `web01 ·
+2`). A tab's card is the SSH terminal, with the footer shells' pooled xterm,
+base64 stream and kill-on-quit.
+
+**A server** is a row (`servers`, migration 9003): name, host, port, user,
+optional start folder, folder in the book, environment (`dev` | `staging` |
+`prod`), agent policy (F46), login (`password` | `key` | `keyFile` | `agent` |
+`system`) and, for `keyFile`, a path. No secret is in the row.
+
+**Logins.**
+- `password`, `key` (a private key kept in the vault, with its passphrase),
+  `keyFile` (a key the user already has; not copied), `agent` (`SSH_AUTH_SOCK`;
+  on Windows the OpenSSH agent pipe, then Pageant) go through the library: one
+  connection per server, each tab a channel on it.
+- `system` runs the user's own `ssh -t` in a PTY, for what only OpenSSH
+  understands (`ProxyJump`, `Match`); each tab is a fresh login.
+- `keyboard-interactive` is answered with the saved password for its first
+  round only; a second factor is never answered.
+
+**Host keys.** The user's `~/.ssh/known_hosts` is read and never written. An
+unknown key is refused with `AppError::HostKey(fingerprint)`; the renderer shows
+the fingerprint and retries with it only when the human trusts it, and the key
+is then written to the app's own `known_hosts`. A changed key — including a key
+of another type for a pinned host — is refused with no override.
+
+**The vault** (`secrets.vault` in the data directory): AES-256-GCM per entry
+with the id as associated data, under a random key in the OS keychain, or under
+an Argon2id key from a master password that locks the vault at every start.
+With no keychain (headless Linux) the footer offers a master password and
+nothing is stored unprotected. No command returns a secret.
+
+**Lifetime.** The last tab of a server closing ends its login within 20s.
+Killing a tab closes its channel and the server hangs the shell up; quitting the
+app does the same for every tab. Tabs persist without their PTYs and log in
+again when shown; a renderer reload re-adopts live PTYs by client key.
+
+**Commands.** `list_servers`, `save_server`, `delete_server`,
+`create_server_folder`, `rename_server_folder`, `delete_server_folder`,
+`ssh_config_hosts`, `vault_status`, `vault_unlock`, `vault_lock`,
+`vault_set_master_password`, `server_open_shell`, `server_disconnect`.
+
+A tab whose login fails is dead at once, showing why, with **Reconnect**.
+
+**Not yet.** Tunnels, tmux persistence, `Include` in `~/.ssh/config`, host
+certificates.
+
+## F46 — Agents in SSH terminals
+
+**Decisions.** ADR-0109 (markers, the human's turn), ADR-0110 (per-server
+policy).
+
+**Lending a terminal.** An SSH tab's **Agent** menu starts a Claude or Codex
+session for the server — in the server's own project, a folder of the app's
+under `servers/<id>`, so the session is in the Sessions sidebar and resumes
+like any other — and lends it a terminal:
+- **shares this terminal**: the human's own shell; both type into it, and the
+  agent's terminal is drawn beside it in the same tab;
+- **its own SSH tab**: a new SSH session of the same server, marked as the
+  agent's.
+A terminal is lent to one session at a time. "Take this terminal back" ends the
+loan; the session keeps running.
+
+**Tools** (on the session's MCP server, ADR-0029): `terminals_list`,
+`terminal_run` (output, exit code, directory afterwards; timeout 1–600s, default
+60), `terminal_read` (screen and state), `terminal_send_keys` (named keys such
+as `<ctrl-c>`, never a password). States: ready, running your command, in a
+full-screen program, waiting for a password, still running an earlier command.
+
+**While an agent runs** a command, its tab chip says so and a chip over the
+terminal offers Ctrl+C. Typing in a shared terminal hands the turn back to the
+human; the agent's result says the human typed, and the human's Ctrl+C ends the
+agent's wait at once as an interrupt.
+
+**What an agent may type** (ADR-0112): no control characters but newline and
+tab; never onto a half-typed human line (printable input since the last Enter,
+Ctrl+C or Ctrl+U); and every check is repeated after a confirmation. A shell
+that lost the marker functions gets one fresh bootstrap and one retry, and the
+command never runs without its start marker. In a persistent tab (F49) the
+output is read back from tmux's history.
+
+**Policy** per server: free, confirm (a banner with Refuse / Edit / Run, a badge
+on the Servers rail icon and a toast when the terminal is not on screen; no
+answer in ten minutes refuses), read-only (only reading commands run).
+Decisions go to `agent_audit` (migration 9004).
+
+**Commands.** `agent_link_terminal`, `agent_unlink_terminal`, `agent_links`,
+`server_agent_project`, `agent_terminal_answer`, `agent_audit`. **Events.**
+`agent-terminal:run`, `agent-terminal:confirm`.
+
+## F47 — Files on a server, over SFTP
+
+**Decisions.** ADR-0105 (the SFTP channel rides the server's one connection).
+
+**The Files panel.** **Files** in an SSH tab's header (library logins only; a
+`system` login has no connection of ours) opens the server's files beside the
+terminal, starting at the server's start folder. Double-click enters a folder or
+downloads a file; the path field takes any remote path. Per entry: Download…,
+Rename…, Delete… (a confirmation, files and empty folders only, never
+recursive). Header: parent folder, Upload a file here (never over an existing
+name), New folder, Refresh. A listing stops at 2000 entries and says so.
+
+**Agent file tools** (on the session's MCP server, beside F46's): `file_read`,
+`file_edit` (exact `old_string`, unique unless `replace_all`), `file_write`. A
+relative path resolves against the terminal's directory. Each passes the
+server's policy (a read is judged as `cat <path>`). A write or edit refuses
+unless this session read the file and it is unchanged since (size and mtime) —
+a human edited it, or it was never read; a new file needs no read. Writes are
+atomic (a temporary name renamed over the target with `mv -f`) and keep the
+file's mode. Text only, up to 5 MB.
+
+**Commands.** `sftp_list`, `sftp_download`, `sftp_upload`, `sftp_mkdir`,
+`sftp_rename`, `sftp_remove`.
+
+**Not yet.** Opening a remote file in the viewer and saving it back; recursive
+transfers.
+
+## F48 — Tunnels: local port forwards
+
+**What it is.** The `ssh -L` a human would type, saved per server and run as a
+switch from the SSH tab's **Tunnels** menu: `127.0.0.1:<local port>` on this
+computer reaches `<host>:<port>` as the server sees it (`localhost:5432` is the
+server's own Postgres). The listener binds loopback only.
+
+A running tunnel rides the server's one connection (ADR-0105) and keeps it
+alive; each connection through it opens a `direct-tcpip` channel, logging in
+again if the connection had dropped. Stopping it, editing it, deleting the
+server, disconnecting it or quitting the app ends it. A local port already in
+use is refused when the switch is turned on. `system` logins have no tunnels.
+
+**Commands.** `list_tunnels`, `save_tunnel`, `delete_tunnel`, `tunnel_start`,
+`tunnel_stop`. Table `server_tunnels` (migration 9005).
+
+**Not yet.** Remote forwards (`-R`), dynamic SOCKS (`-D`), starting tunnels
+with the app.
+
+## F49 — Persistent tabs (tmux)
+
+**Decision.** ADR-0111.
+
+A server's form has **Sessions: Keep running in tmux when the connection drops
+or the app quits** (library logins only). Its tabs open in
+`tmux new-session -A -s qursor-<tab>` when the server has tmux, otherwise a
+plain login shell. Quitting, Disconnect or a dropped connection leave the tmux
+session; the tab reattaches on its next login, with its scrollback and state.
+Closing the tab (× or middle click), or deleting the server, kills its session.
+
+Agents (F46) work in persistent tabs: the bootstrap enables tmux passthrough
+for the pane and wraps the markers, and the "is it at rest" check asks tmux
+(`#{alternate_on} #{pane_current_command}`) over an exec channel.
+
+**Commands.** `server_end_tab`. Column `servers.persistent` (migration 9006).
+
 ## F50 — An agent hands work off to a new session
 
 **Decision.** ADR-0114.

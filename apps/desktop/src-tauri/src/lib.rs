@@ -292,6 +292,51 @@ pub fn run() {
 						})
 					},
 				});
+			let mut terminals = terminals;
+			let tunnels = Arc::new(services::ssh::tunnel::Tunnels::default());
+			let vault =
+				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
+			let ssh = Arc::new(services::ssh::pool::Pool::new(
+				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
+			));
+			// Files on servers for agents (F47), on the same pooled logins as the tabs.
+			{
+				let (db, vault) = (db.clone(), vault.clone());
+				terminals.set_remote_files(Arc::new(services::ssh::sftp::RemoteFiles::new(
+					ssh.clone(),
+					Arc::new(move |id| {
+						let server = db.with(|c| services::servers::get(c, id))?;
+						commands::servers::target_for(&server, &vault)
+					}),
+				)));
+			}
+			let confirmations = Arc::new(services::agent_policy::Confirmations::default());
+			// Agents using SSH terminals (F46): announce their commands, and name
+			// a server in `terminals_list` the way the address book does.
+			{
+				let app = app.handle().clone();
+				let run_app = app.clone();
+				terminals.set_agent_run_cb(Arc::new(move |e| {
+					let _ = run_app.emit("agent-terminal:run", e);
+				}));
+				// What an agent may do on each server (ADR-0110), decided per
+				// command from the address book, asked of the human when the
+				// policy says so, and written to the local audit log.
+				let policy_db = db.clone();
+				let policy_app = app.clone();
+				let asks = confirmations.clone();
+				terminals.set_agent_policy(Arc::new(move |req| {
+					services::agent_policy::decide(&policy_db, &asks, req, |ev| {
+						let _ = policy_app.emit("agent-terminal:confirm", ev);
+					})
+				}));
+				let db = db.clone();
+				terminals.set_server_label(Arc::new(move |id| {
+					db.with(|c| services::servers::get(c, id))
+						.map(|s| format!("{} ({}@{})", s.name, s.username, s.host))
+						.unwrap_or_else(|_| id.to_string())
+				}));
+			}
 			let live = terminals.clone();
 			let reap = terminals.clone();
 			// Project Intelligence (F33). Asks the terminals which sessions are
@@ -376,6 +421,17 @@ pub fn run() {
 
 			let usage_db = db.clone();
 			let usage_poll_store = usage.clone();
+			{
+				// The last tab on a server closing ends its login (ADR-0105).
+				let (ssh, terminals, tunnels) = (ssh.clone(), terminals.clone(), tunnels.clone());
+				std::thread::Builder::new()
+					.name("ssh-reaper".into())
+					.spawn(move || loop {
+						std::thread::sleep(std::time::Duration::from_secs(20));
+						ssh.reap(|id| terminals.has_ssh_for(id) || tunnels.uses(id));
+					})
+					.expect("spawn ssh reaper");
+			}
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),
@@ -393,6 +449,10 @@ pub fn run() {
 				intelligence,
 				usage: usage.clone(),
 				taskbar_widget: taskbar_widget.clone(),
+				vault,
+				ssh,
+				confirmations,
+				tunnels,
 			});
 			// On unless the setting says `off`; a no-op off Windows.
 			taskbar_widget.set_enabled(
@@ -486,6 +546,37 @@ pub fn run() {
 			}
 		})
 		.invoke_handler(tauri::generate_handler![
+			commands::servers::list_servers,
+			commands::servers::save_server,
+			commands::servers::delete_server,
+			commands::servers::create_server_folder,
+			commands::servers::rename_server_folder,
+			commands::servers::delete_server_folder,
+			commands::servers::ssh_config_hosts,
+			commands::servers::vault_status,
+			commands::servers::vault_unlock,
+			commands::servers::vault_lock,
+			commands::servers::vault_set_master_password,
+			commands::servers::server_open_shell,
+			commands::servers::server_disconnect,
+			commands::servers::agent_link_terminal,
+			commands::servers::agent_unlink_terminal,
+			commands::servers::agent_links,
+			commands::servers::server_agent_project,
+			commands::servers::agent_terminal_answer,
+			commands::servers::agent_audit,
+			commands::servers::sftp_list,
+			commands::servers::sftp_download,
+			commands::servers::sftp_upload,
+			commands::servers::sftp_mkdir,
+			commands::servers::sftp_rename,
+			commands::servers::sftp_remove,
+			commands::servers::list_tunnels,
+			commands::servers::save_tunnel,
+			commands::servers::delete_tunnel,
+			commands::servers::tunnel_start,
+			commands::servers::tunnel_stop,
+			commands::servers::server_end_tab,
 			commands::profiles::list_profiles,
 			commands::profiles::create_profile,
 			commands::profiles::rename_profile,

@@ -151,6 +151,7 @@ pub fn app_quit_confirmed(app: AppHandle) -> AppResult<()> {
 	if let Some(state) = app.try_state::<AppState>() {
 		state.intelligence.cancel_all();
 		state.terminals.kill_all();
+		state.ssh.disconnect_all();
 		state.taskbar_widget.stop();
 	}
 	app.exit(0);

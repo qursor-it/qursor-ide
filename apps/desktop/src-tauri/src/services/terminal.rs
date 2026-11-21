@@ -59,7 +59,13 @@ use crate::services::ide::ui_state::UiState;
 use crate::services::osc_title::TitleScanner;
 use crate::services::usage::statusline;
 
+mod agent_use;
+pub use agent_use::{AgentLink, AgentRunEvent, LinkDto, LinkMode, PolicyCb, PolicyRequest};
+
 pub type TerminalId = String;
+
+/// A server's display name, from the address book (F46).
+pub type ServerLabelCb = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 /// What a PTY *is*, which is not the same question as what it is doing.
 ///
@@ -85,6 +91,11 @@ pub enum TerminalKind {
 	/// with the project, the app, its own `exit`, a `×`, or its cwd going
 	/// missing (ADR-0032).
 	Shell,
+	/// A shell on an SSH server (F45): a channel on the server's connection,
+	/// not a local process. Like [`Self::Shell`] it has no session id and sits
+	/// outside the work count; unlike it, it belongs to no project, so neither a
+	/// project's kill sweep nor the missing-cwd reap ever touches it.
+	Ssh,
 }
 
 /// What a session is doing, derived from Claude's own terminal title — see
@@ -638,19 +649,35 @@ struct PtyRequest {
 	agent: Option<&'static AgentDescriptor>,
 }
 
+/// What [`TerminalManager::attach`] registers: a live PTY and everything the
+/// handle keeps alongside it.
+struct Attach {
+	req: PtyRequest,
+	master: Box<dyn MasterPty + Send>,
+	child: Box<dyn Child + Send + Sync>,
+	#[cfg(windows)]
+	process_job: Option<WinProcessJob>,
+	store_dir: PathBuf,
+	cwd: PathBuf,
+	ide: IdeSlot,
+	agent_tools: Option<AgentToolsServer>,
+}
+
 impl TerminalHandle {
 	fn kill_process_tree(&self) {
 		#[cfg(windows)]
-		if let Err(error) = self.process_job.terminate() {
-			warn!(pid = self.process_job.root_pid, error = %error, "Job Object termination failed; falling back to taskkill");
-			if let Err(kill_error) = kill_process_tree(self.process_job.root_pid) {
-				warn!(pid = self.process_job.root_pid, error = %kill_error, "taskkill could not terminate the terminal process tree");
-				if let Err(root_error) = self.killer.lock().kill() {
-					warn!(pid = self.process_job.root_pid, error = %root_error, "child killer could not terminate the terminal root process");
+		if let Some(job) = &self.process_job {
+			if let Err(error) = job.terminate() {
+				warn!(pid = job.root_pid, error = %error, "Job Object termination failed; falling back to taskkill");
+				if let Err(kill_error) = kill_process_tree(job.root_pid) {
+					warn!(pid = job.root_pid, error = %kill_error, "taskkill could not terminate the terminal process tree");
+					if let Err(root_error) = self.killer.lock().kill() {
+						warn!(pid = job.root_pid, error = %root_error, "child killer could not terminate the terminal root process");
+					}
 				}
 			}
+			return;
 		}
-		#[cfg(not(windows))]
 		let _ = self.killer.lock().kill();
 	}
 
@@ -711,8 +738,9 @@ struct TerminalHandle {
 	killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
 	/// On Windows, a kill-on-close Job Object owns the PTY root and every
 	/// descendant, including processes that were created just before attach.
+	/// `None` for a remote shell (F45): no local process tree exists to own.
 	#[cfg(windows)]
-	process_job: WinProcessJob,
+	process_job: Option<WinProcessJob>,
 	status: Mutex<TerminalStatus>,
 	/// The topic of the agent's last title (F32), for the desktop notification.
 	/// `None` until a Claude title arrives; Codex never sets it.
@@ -740,6 +768,20 @@ struct TerminalHandle {
 	/// the child's argv, and its `Drop` is the teardown.
 	#[allow(dead_code)]
 	agent_tools: Option<AgentToolsServer>,
+	/// What an agent reads from an SSH terminal (F46): markers, screen, cwd.
+	/// `None` for every other kind.
+	capture: Option<Arc<agent_use::CaptureCell>>,
+	/// The last keystroke the *human* sent, ms; agent writes do not count.
+	last_human_input: AtomicI64,
+	/// The last Ctrl+C the human sent, ms (F46).
+	last_human_interrupt: AtomicI64,
+	/// The human has typed at the prompt without Enter, Ctrl+C or Ctrl+U since:
+	/// an agent must not append its command to their half-typed line.
+	human_line_dirty: AtomicBool,
+	/// The agent session this terminal is lent to, if any (F46).
+	link: Mutex<Option<AgentLink>>,
+	/// An agent command is in flight here.
+	agent_running: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -814,6 +856,15 @@ pub struct TerminalManager {
 	on_ide_open: IdeOpenCb,
 	on_ide_status: IdeStatusCb,
 	on_adopted: AdoptedCb,
+	/// Asked before an agent command runs on a server (F46, ADR-0110).
+	agent_policy: Option<PolicyCb>,
+	on_agent_run: Arc<dyn Fn(AgentRunEvent) + Send + Sync>,
+	/// A server's display name for `terminals_list`, from the address book.
+	server_label: Option<ServerLabelCb>,
+	/// Files on the servers agents use, over SFTP (F47).
+	remote_files: Option<Arc<crate::services::ssh::sftp::RemoteFiles>>,
+	/// The tmux session of each persistent SSH tab (F49), by terminal id.
+	tmux: Arc<DashMap<TerminalId, String>>,
 }
 
 impl TerminalManager {
@@ -866,6 +917,11 @@ impl TerminalManager {
 			on_session_start: Arc::new(move |e| {
 				let _ = app_session_start.emit("agent-session:start", e);
 			}),
+			agent_policy: None,
+			on_agent_run: Arc::new(|_| {}),
+			server_label: None,
+			remote_files: None,
+			tmux: Arc::new(DashMap::new()),
 		}
 	}
 
@@ -899,7 +955,20 @@ impl TerminalManager {
 			on_ide_open: Arc::new(|_| {}),
 			on_ide_status: Arc::new(|_| {}),
 			on_adopted: Arc::new(|_| {}),
+			agent_policy: None,
+			on_agent_run: Arc::new(|_| {}),
+			server_label: None,
+			remote_files: None,
+			tmux: Arc::new(DashMap::new()),
 		}
+	}
+
+	pub fn set_server_label(&mut self, cb: ServerLabelCb) {
+		self.server_label = Some(cb);
+	}
+
+	fn server_label(&self, server_id: &str) -> String {
+		self.server_label.as_ref().map_or_else(|| server_id.to_string(), |f| f(server_id))
 	}
 
 	/// Watch adoptions. For tests only — production wires this to a Tauri
@@ -1407,7 +1476,8 @@ impl TerminalManager {
 			});
 			Ok(())
 		});
-		let tools = AgentTools::new(routines, canvases, start_session);
+		let tools = AgentTools::new(routines, canvases, start_session)
+			.with_terminals(Arc::new(self.session_terminals(session_id)));
 		AgentToolsServer::start(Arc::new(move |text| tools.handle(text)))
 	}
 
@@ -1738,7 +1808,6 @@ impl TerminalManager {
 		req: PtyRequest,
 		argv_override: Option<Vec<String>>,
 	) -> AppResult<TerminalId> {
-		let kind = req.kind;
 		// A shell has no agent of its own; its footer follows the project's
 		// Claude identity (F25), which is what the config directory below is for.
 		let env_agent = req.agent.unwrap_or_else(claude_desc);
@@ -1957,8 +2026,8 @@ impl TerminalManager {
 		let mut child = spawned;
 		#[cfg(not(windows))]
 		let child = spawned;
-		// Clone a killer now, before the child is moved into the waiter thread.
-		// See `TerminalHandle::killer` for why the child isn't shared.
+		// The cleanup below needs a killer before `attach` clones the one it keeps.
+		#[cfg(windows)]
 		let killer = child.clone_killer();
 		#[cfg(windows)]
 		let process_job = {
@@ -1990,17 +2059,47 @@ impl TerminalManager {
 			}
 		};
 		drop(pair.slave); // close slave end in the parent so EOF works
-		let mut pty_writer = pair
-			.master
-			.take_writer()
-			.map_err(|e| AppError::Process(format!("take_writer: {e}")))?;
-		let reader = pair
-			.master
+		info!(argv = ?argv, cwd = ?cwd_path, "spawning terminal");
+		self.attach(Attach {
+			req,
+			master: pair.master,
+			child,
+			#[cfg(windows)]
+			process_job: Some(process_job),
+			store_dir: claude_dir,
+			cwd: cwd_path,
+			ide,
+			agent_tools,
+		})
+	}
+
+	/// Register a live PTY and start its writer, reader and waiter threads.
+	///
+	/// The half of a spawn that does not care where the PTY came from: a local
+	/// process from [`Self::spawn_inner`], or a remote shell on an SSH channel
+	/// (F45), which arrives as the same `MasterPty` / `Child` pair.
+	fn attach(&self, a: Attach) -> AppResult<TerminalId> {
+		let Attach {
+			req,
+			master,
+			child,
+			#[cfg(windows)]
+			process_job,
+			store_dir,
+			cwd: cwd_path,
+			ide,
+			agent_tools,
+		} = a;
+		let kind = req.kind;
+		let killer = child.clone_killer();
+		let mut pty_writer =
+			master.take_writer().map_err(|e| AppError::Process(format!("take_writer: {e}")))?;
+		let reader = master
 			.try_clone_reader()
 			.map_err(|e| AppError::Process(format!("clone_reader: {e}")))?;
 
 		let id = Uuid::new_v4().to_string();
-		info!(%id, argv = ?argv, cwd = ?cwd_path, "spawned terminal");
+		info!(%id, cwd = ?cwd_path, "spawned terminal");
 
 		// Ends when the handle (the only sender) is dropped, or when a write
 		// fails because the child is gone and the PTY closed.
@@ -2025,9 +2124,9 @@ impl TerminalManager {
 			agent: req.agent,
 			adopted: Mutex::new(None),
 			thread_prefix: Mutex::new(None),
-			store_dir: claude_dir.clone(),
+			store_dir,
 			last_probe: Mutex::new(None),
-			master: Mutex::new(pair.master),
+			master: Mutex::new(master),
 			writer,
 			killer: Mutex::new(killer),
 			#[cfg(windows)]
@@ -2055,6 +2154,13 @@ impl TerminalManager {
 			cwd: cwd_path.clone(),
 			ide,
 			agent_tools,
+			capture: (kind == TerminalKind::Ssh)
+				.then(|| Arc::new(agent_use::CaptureCell::new(req.cols, req.rows))),
+			last_human_input: AtomicI64::new(0),
+			last_human_interrupt: AtomicI64::new(0),
+			human_line_dirty: AtomicBool::new(false),
+			link: Mutex::new(None),
+			agent_running: AtomicBool::new(false),
 		});
 
 		self.terminals.insert(id.clone(), handle.clone());
@@ -2114,6 +2220,95 @@ impl TerminalManager {
 		Ok(id)
 	}
 
+	/// Register a remote shell (F45) as a terminal.
+	///
+	/// `server_id` stands where a project id would, so `list` can hand a pane
+	/// back to its server after a renderer reload. `label` is what `list`
+	/// reports as the cwd: the remote folder, which is not a local path.
+	pub fn attach_ssh(
+		&self,
+		server_id: &str,
+		client_key: String,
+		label: &str,
+		master: Box<dyn MasterPty + Send>,
+		child: Box<dyn Child + Send + Sync>,
+	) -> AppResult<TerminalId> {
+		let size = master.get_size().map_err(|e| AppError::Process(e.to_string()))?;
+		self.attach(Attach {
+			req: PtyRequest {
+				session_id: None,
+				client_key: Some(client_key),
+				project_id: server_id.to_string(),
+				cwd: None,
+				cols: size.cols,
+				rows: size.rows,
+				initial_prompt: None,
+				kind: TerminalKind::Ssh,
+				agent: None,
+			},
+			master,
+			child,
+			#[cfg(windows)]
+			process_job: None,
+			store_dir: self.claude_dir.clone(),
+			cwd: PathBuf::from(label),
+			ide: IdeSlot::None,
+			agent_tools: None,
+		})
+	}
+
+	/// Record that an SSH tab lives in a tmux session (F49), so an agent asks
+	/// tmux whether its pane is at rest instead of reading tmux's own screen.
+	pub fn set_tmux(&self, terminal_id: &str, session: String) {
+		self.tmux.insert(terminal_id.to_string(), session);
+	}
+
+	/// Whether any SSH tab of `server_id` is still open.
+	pub fn has_ssh_for(&self, server_id: &str) -> bool {
+		self.terminals
+			.iter()
+			.any(|e| e.value().kind == TerminalKind::Ssh && e.value().project_id == server_id)
+	}
+
+	/// Kill every SSH tab of one server: it was deleted or disconnected.
+	pub fn kill_ssh_for(&self, server_id: &str) {
+		let ids: Vec<TerminalId> = self
+			.terminals
+			.iter()
+			.filter(|e| e.value().kind == TerminalKind::Ssh && e.value().project_id == server_id)
+			.map(|e| e.key().clone())
+			.collect();
+		for id in &ids {
+			let _ = self.kill(id);
+		}
+	}
+
+	/// A server tab on the system `ssh` client (F45, ADR-0105): a local process
+	/// in a PTY, for the servers whose config only OpenSSH understands.
+	pub fn spawn_ssh_command(
+		&self,
+		server_id: &str,
+		client_key: String,
+		argv: Vec<String>,
+		cols: u16,
+		rows: u16,
+	) -> AppResult<TerminalId> {
+		self.spawn_inner(
+			PtyRequest {
+				session_id: None,
+				client_key: Some(client_key),
+				project_id: server_id.to_string(),
+				cwd: None,
+				cols,
+				rows,
+				initial_prompt: None,
+				kind: TerminalKind::Ssh,
+				agent: None,
+			},
+			Some(argv),
+		)
+	}
+
 	pub fn write(&self, id: &str, data: &[u8]) -> AppResult<()> {
 		let handle =
 			self.terminals.get(id).ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
@@ -2122,6 +2317,19 @@ impl TerminalManager {
 			.send(data.to_vec())
 			.map_err(|_| AppError::Io(format!("terminal {id} no longer accepts input")))?;
 		handle.last_activity.store(now_ms(), Ordering::Relaxed);
+		// `write` is the human's path; an agent writes through its own (F46).
+		handle.last_human_input.store(now_ms(), Ordering::Relaxed);
+		if data.contains(&0x03) {
+			handle.last_human_interrupt.store(now_ms(), Ordering::Relaxed);
+		}
+		// Enter, Ctrl+C or Ctrl+U leaves the prompt clean; anything printable
+		// after them leaves a half-typed line an agent must not extend.
+		let last_clear = data.iter().rposition(|b| matches!(b, b'\r' | b'\n' | 0x03 | 0x15));
+		let typed_after =
+			data[last_clear.map_or(0, |i| i + 1)..].iter().any(|b| *b >= 0x20 && *b != 0x7f);
+		if last_clear.is_some() || typed_after {
+			handle.human_line_dirty.store(typed_after, Ordering::Relaxed);
+		}
 		Ok(())
 	}
 
@@ -2138,6 +2346,9 @@ impl TerminalManager {
 				pixel_height: 0,
 			})
 			.map_err(|e| AppError::Process(format!("resize: {e}")))?;
+		if let Some(cap) = &handle.capture {
+			cap.resize(cols.max(20), rows.max(5));
+		}
 		Ok(())
 	}
 
@@ -2343,6 +2554,9 @@ fn spawn_reader(
 								}
 							}
 							_ => {}
+						}
+						if let Some(cap) = &handle_r.capture {
+							cap.feed(&tmp[..n]);
 						}
 						buf_r.lock().extend_from_slice(&tmp[..n]);
 					}
@@ -2685,6 +2899,478 @@ mod tests {
 		let path = claude::transcript_path(claude_dir, Path::new(folder), session_id);
 		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 		std::fs::write(&path, "{}\n").unwrap();
+	}
+
+	#[cfg(unix)]
+	/// An SSH tab is a terminal like any other (F45): its bytes reach the same
+	/// data events, it sits outside the work count, and killing it hangs the
+	/// remote shell up and reports the exit.
+	#[cfg(unix)]
+	#[test]
+	fn an_ssh_tab_streams_through_the_manager_and_kill_hangs_it_up() {
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 80, 24, None, None).await.expect("shell");
+			// The connection must outlive this block: the channel rides on it.
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 80, 24)
+		});
+		let (mgr, data, exit) = make_manager();
+		let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "~", master, child).expect("attach");
+		assert!(mgr.has_ssh_for("server-1"));
+		assert_eq!(mgr.working_count(), 0, "an SSH tab is not work in progress");
+		mgr.write(&id, b"echo SSH_$((40+2))\n").expect("write");
+		let seen = (0..100).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			let out: String = data
+				.lock()
+				.unwrap()
+				.iter()
+				.filter(|e| e.id == id)
+				.map(|e| {
+					String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default())
+						.into_owned()
+				})
+				.collect();
+			out.contains("SSH_42")
+		});
+		assert!(seen, "the remote shell's output reached the data events");
+		// A foreground command running on the server when the tab is killed.
+		mgr.write(&id, b"sleep 4242\n").expect("write");
+		std::thread::sleep(Duration::from_millis(400));
+		let running = || {
+			std::process::Command::new("pgrep")
+				.args(["-f", "sleep 4242"])
+				.output()
+				.is_ok_and(|o| o.status.success())
+		};
+		assert!(running(), "the remote command started");
+		mgr.kill(&id).expect("kill");
+		let exited = (0..100).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			exit.lock().unwrap().iter().any(|e| e.id == id && e.killed)
+		});
+		assert!(exited, "killing the tab closed the channel and reported the exit");
+		assert!(!mgr.has_ssh_for("server-1"));
+		let gone = (0..60).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			!running()
+		});
+		assert!(gone, "kill-on-quit reaches the server: no orphan left behind (ADR-0005)");
+	}
+
+	/// The F46 path against a real sshd: an agent session runs commands in a
+	/// lent SSH terminal and gets real output, exit codes and the shell's
+	/// directory; the human's own `cd` is visible to it; a human keystroke holds
+	/// it back; a password prompt stops it.
+	#[cfg(unix)]
+	#[test]
+	fn an_agent_runs_commands_in_a_lent_ssh_terminal() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			// `sh`, not the user's login shell, so the test does not depend on rc files.
+			let ch = conn.channel_open_session().await.expect("channel");
+			ch.request_pty(true, "xterm-256color", 100, 30, 0, 0, &[]).await.expect("pty");
+			ch.exec(true, "exec env PS1='$ ' sh -i").await.expect("exec");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "~", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(500));
+		let agent = mgr.session_terminals("session-A");
+		assert!(agent.run(&id, "echo hi", 10).is_err(), "not lent yet");
+
+		mgr.link_agent(&id, "session-A", LinkMode::Shared).expect("link");
+		assert!(
+			mgr.link_agent(&id, "session-B", LinkMode::Shared).is_err(),
+			"one agent per terminal"
+		);
+		let r = agent.run(&id, "cd /tmp && echo \"hello $((6*7))\"", 15).expect("run");
+		assert_eq!(r["exit_code"], 0, "{r}");
+		assert_eq!(r["output"], "hello 42", "{r}");
+		assert_eq!(r["cwd"], "/tmp", "{r}");
+		let r = agent.run(&id, "false", 15).expect("run");
+		assert_eq!(r["exit_code"], 1, "{r}");
+
+		// The human moves the shared shell; the agent sees where it is now.
+		mgr.write(&id, b"cd /\n").expect("human types");
+		assert!(agent.run(&id, "pwd", 5).is_err(), "the human just typed: the agent waits");
+		std::thread::sleep(Duration::from_millis(1700));
+		let r = agent.run(&id, "pwd", 15).expect("run");
+		assert_eq!(r["output"], "/", "{r}");
+
+		// A password prompt stops the agent, and its keys are refused there.
+		let r = agent.run(&id, "printf 'Password: '; read secret", 15).expect("run");
+		assert_eq!(r["status"], "waiting for a password", "{r}");
+		assert!(agent.send_keys(&id, &["hunter2".into()]).is_err());
+		let listed = agent.list();
+		assert!(
+			listed["terminals"][0]["state"].as_str().unwrap_or_default().contains("password"),
+			"{listed}"
+		);
+		assert!(
+			mgr.session_terminals("session-B").read(&id).is_err(),
+			"another session cannot read it"
+		);
+	}
+
+	/// The same markers through the user's real login shell (bash with
+	/// readline and its rc files), the way an SSH tab opens it.
+	#[cfg(unix)]
+	#[test]
+	fn agent_markers_work_in_a_login_shell() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "s", LinkMode::Own).expect("link");
+		let agent = mgr.session_terminals("s");
+		let r =
+			agent.run(&id, "for i in 1 2 3; do echo line$i; done # a comment", 15).expect("run");
+		assert_eq!(r["output"], "line1\nline2\nline3", "{r}");
+		assert_eq!(r["cwd"], "/tmp", "{r}");
+		let r = agent.run(&id, "cat <<EOF\nheredoc ok\nEOF", 15).expect("run");
+		assert_eq!(r["output"], "heredoc ok", "{r}");
+	}
+
+	/// The MCP frames a session's agent sends, answered by the same tool server
+	/// it is given at spawn: `tools/list` offers the terminal tools, and a
+	/// `tools/call` of `terminal_run` reaches the real remote shell.
+	#[cfg(unix)]
+	#[test]
+	fn the_terminal_tools_answer_over_mcp() {
+		use crate::services::agent_tools::{AgentTools, Routines};
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+		let none = Arc::new(|_: &str| Ok(Vec::new()));
+		let tools = AgentTools::new(
+			Routines {
+				project_id: "p".into(),
+				project_path: "/local/p".into(),
+				list: none,
+				create: Arc::new(|_| Err(AppError::InvalidInput("no".into()))),
+				update: Arc::new(|_, _| Err(AppError::InvalidInput("no".into()))),
+			},
+			crate::services::agent_tools::Canvases {
+				root: Arc::new(|| Err(AppError::InvalidInput("no canvases".into()))),
+				linked: Arc::new(|| Ok(None)),
+			},
+		)
+		.with_terminals(Arc::new(mgr.session_terminals("sess")));
+
+		let listed =
+			tools.handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).expect("reply");
+		assert!(listed.contains("\"terminal_run\""), "{listed}");
+		let call = serde_json::json!({
+			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": { "name": "terminal_run", "arguments": { "terminal": id, "command": "echo mcp-$((1+1))" } },
+		});
+		let reply = tools.handle(&call.to_string()).expect("reply");
+		let v: serde_json::Value = serde_json::from_str(&reply).expect("json");
+		let text = v["result"]["content"][0]["text"].as_str().unwrap_or_default();
+		let out: serde_json::Value = serde_json::from_str(text).expect("tool json");
+		assert_eq!(out["output"], "mcp-2", "{reply}");
+		assert_eq!(out["exit_code"], 0, "{reply}");
+		assert_ne!(v["result"]["isError"], true, "{reply}");
+	}
+
+	/// A manager with one SSH terminal on a loopback sshd, in a login shell at
+	/// `/tmp`, lent to session `sess`. The sshd guard must outlive the test.
+	#[cfg(unix)]
+	fn lent_terminal(
+		configure: impl FnOnce(&mut TerminalManager),
+	) -> (crate::services::ssh::test_sshd::Sshd, TerminalManager, TerminalId) {
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mut mgr, _data, _exit) = make_manager();
+		configure(&mut mgr);
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+		(d, mgr, id)
+	}
+
+	/// The server policy sits between the agent and the terminal (ADR-0110): a
+	/// refusal types nothing, and an edit by the human is what runs.
+	#[cfg(unix)]
+	#[test]
+	fn the_policy_refuses_or_edits_before_anything_is_typed() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		let (_d, mgr, id) = lent_terminal(|m| {
+			m.set_agent_policy(Arc::new(|req| {
+				if req.command.starts_with("rm") {
+					Err("refused by the human".into())
+				} else if req.command == "echo original" {
+					Ok(Some("echo edited".into()))
+				} else {
+					Ok(None)
+				}
+			}))
+		});
+		let agent = mgr.session_terminals("sess");
+		let err = agent.run(&id, "rm -rf /tmp/qursor-nothing", 10).expect_err("refused");
+		assert!(err.contains("refused"), "{err}");
+		let screen =
+			agent.read(&id).expect("read")["screen"].as_str().unwrap_or_default().to_string();
+		assert!(!screen.contains("rm -rf"), "a refused command is never typed: {screen}");
+		let r = agent.run(&id, "echo original", 15).expect("run");
+		assert_eq!(r["output"], "edited", "{r}");
+		assert_eq!(r["edited_by_human"], "echo edited", "{r}");
+	}
+
+	/// File tools on a lent terminal's server (F47): a relative path resolves
+	/// against the terminal's directory, an edit replaces exactly what it names,
+	/// and the policy sees each read and write.
+	#[cfg(unix)]
+	#[test]
+	fn an_agent_reads_and_edits_files_on_the_terminals_server() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{pool::Pool, sftp::RemoteFiles, Auth, KnownHosts, Target};
+		let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+		let log = seen.clone();
+		let (d, mut mgr, id) = lent_terminal(move |m| {
+			m.set_agent_policy(Arc::new(move |req| {
+				log.lock().push(req.command.clone());
+				Ok(None)
+			}))
+		});
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
+		mgr.set_remote_files(Arc::new(RemoteFiles::new(
+			Arc::new(Pool::new(known)),
+			Arc::new(move |_| {
+				Ok(Target {
+					host: "127.0.0.1".into(),
+					port,
+					user: user.clone(),
+					auth: Auth::KeyFile { path: key.clone(), passphrase: None },
+				})
+			}),
+		)));
+		let work = d.dir.path().join("site");
+		std::fs::create_dir_all(&work).expect("dir");
+		std::fs::write(work.join("index.html"), "<h1>old</h1>\n").expect("seed");
+		let agent = mgr.session_terminals("sess");
+		agent.run(&id, &format!("cd {}", work.display()), 15).expect("cd");
+
+		let r = agent.file_read(&id, "index.html").expect("read");
+		assert_eq!(r["content"], "<h1>old</h1>\n", "{r}");
+		agent.file_edit(&id, "index.html", "old", "new", false).expect("edit");
+		assert_eq!(
+			std::fs::read_to_string(work.join("index.html")).expect("disk"),
+			"<h1>new</h1>\n"
+		);
+		agent.file_write(&id, "robots.txt", "User-agent: *\n").expect("write");
+		assert_eq!(
+			std::fs::read_to_string(work.join("robots.txt")).expect("disk"),
+			"User-agent: *\n"
+		);
+		let asked = seen.lock().clone();
+		assert!(
+			asked.iter().any(|c| c.starts_with("cat ") && c.ends_with("/site/index.html")),
+			"{asked:?}"
+		);
+		assert!(asked.iter().any(|c| c.starts_with("edit ")), "{asked:?}");
+		assert!(asked.iter().any(|c| c.starts_with("write ")), "{asked:?}");
+	}
+
+	/// A persistent tab (F49): the shell lives in tmux, survives its channel
+	/// closing, and the agent's markers still reach it through tmux.
+	#[cfg(unix)]
+	#[test]
+	fn a_persistent_tab_survives_its_channel_and_keeps_agent_markers() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let name = format!("qursor-test{}", std::process::id());
+		let conn = tauri::async_runtime::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			Arc::new(ssh::connect(&t, &known, Some(fp)).await.expect("connect"))
+		});
+		let open = |mgr: &TerminalManager| {
+			let ch = tauri::async_runtime::block_on(ssh::open_shell(
+				&conn,
+				100,
+				30,
+				Some("/tmp"),
+				Some(&name),
+			))
+			.expect("shell");
+			let (m, c) = ssh::pty::bridge(ch, 100, 30);
+			let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", m, c).expect("attach");
+			mgr.set_tmux(&id, name.clone());
+			std::thread::sleep(Duration::from_millis(1200));
+			mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+			id
+		};
+		let (mut mgr, _data, exit) = make_manager();
+		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
+		mgr.set_remote_files(Arc::new(crate::services::ssh::sftp::RemoteFiles::new(
+			Arc::new(crate::services::ssh::pool::Pool::new(known.clone())),
+			Arc::new(move |_| {
+				Ok(Target {
+					host: "127.0.0.1".into(),
+					port,
+					user: user.clone(),
+					auth: Auth::KeyFile { path: key.clone(), passphrase: None },
+				})
+			}),
+		)));
+		let id = open(&mgr);
+		let agent = mgr.session_terminals("sess");
+		let r = agent.run(&id, "export QURSOR_KEPT=42; echo set", 20).expect("run in tmux");
+		assert_eq!(r["output"], "set", "{r}");
+		// tmux knows a program is running in the pane; the agent waits.
+		mgr.write(&id, b"sleep 30\n").expect("human starts something");
+		std::thread::sleep(Duration::from_millis(1700));
+		let busy = agent.run(&id, "echo no", 5).expect_err("busy");
+		assert!(busy.contains("sleep"), "{busy}");
+		mgr.write(&id, b"\x03").expect("human interrupts");
+		std::thread::sleep(Duration::from_millis(1700));
+		mgr.kill(&id).expect("close the channel");
+		let gone = (0..60).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			exit.lock().unwrap().iter().any(|e| e.id == id)
+		});
+		assert!(gone);
+
+		let id2 = open(&mgr);
+		let r = agent.run(&id2, "echo kept=$QURSOR_KEPT", 20).expect("run after reattach");
+		assert_eq!(r["output"], "kept=42", "the shell's state outlived its channel: {r}");
+		mgr.kill(&id2).expect("close");
+		let _ = std::process::Command::new("tmux").args(["kill-session", "-t", &name]).status();
+	}
+
+	/// The turn rules from the review of F46: no hidden second line, no
+	/// appending to the human's half-typed line, and the human's Ctrl+C ends
+	/// the agent's wait at once.
+	#[cfg(unix)]
+	#[test]
+	fn the_agent_never_types_over_the_human() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		let (_d, mgr, id) = lent_terminal(|_| {});
+		let agent = mgr.session_terminals("sess");
+		let e = agent.run(&id, "ls\rrm -rf /tmp/qursor-never", 5).expect_err("refused");
+		assert!(e.contains("control character"), "{e}");
+
+		mgr.write(&id, b"echo half-typ").expect("human types");
+		std::thread::sleep(Duration::from_millis(1700));
+		let e = agent.run(&id, "echo agent", 5).expect_err("half-typed line");
+		assert!(e.contains("half-typed"), "{e}");
+		mgr.write(&id, b"\x15").expect("human clears the line");
+		std::thread::sleep(Duration::from_millis(1700));
+		let r = agent.run(&id, "echo agent", 10).expect("run");
+		assert_eq!(r["output"], "agent", "{r}");
+
+		let mgr2 = mgr.clone();
+		let id2 = id.clone();
+		let interrupter = std::thread::spawn(move || {
+			std::thread::sleep(Duration::from_millis(1500));
+			mgr2.write(&id2, b"\x03").expect("human interrupts");
+		});
+		let t0 = std::time::Instant::now();
+		let r = agent.run(&id, "sleep 30", 60).expect("run");
+		interrupter.join().expect("join");
+		assert!(t0.elapsed() < Duration::from_secs(10), "the wait ended with the human's Ctrl+C");
+		assert!(r["status"].as_str().unwrap_or_default().contains("interrupted"), "{r}");
 	}
 
 	#[cfg(unix)]

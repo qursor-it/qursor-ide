@@ -309,7 +309,7 @@ export interface SessionAdoptedEvent {
  * project, and `bySession` — keyed by session id, meaning "the agent" — would
  * otherwise have filed one over the agent it happened to be drawn under.
  */
-export type TerminalKind = 'agent' | 'shell';
+export type TerminalKind = 'agent' | 'shell' | 'ssh';
 
 export interface TerminalStatusDto {
 	id: TerminalId;
@@ -1089,7 +1089,11 @@ export type AppError =
 	/** A Project Intelligence command refused (F33, ADR-0084). `message` is
 	 *  `<code>: <detail>` with `code` one of {@link IntelligenceErrorCode}; use
 	 *  `intelligenceErrorCode` to split it. */
-	| { kind: 'Intelligence'; message: string };
+	| { kind: 'Intelligence'; message: string }
+	/** An SSH server presented a key no known_hosts file has (F45). `message` is
+	 *  the SHA-256 fingerprint the human is asked to confirm before retrying
+	 *  with it. */
+	| { kind: 'HostKey'; message: string };
 
 /**
  * A project's scheduled prompt (F22, ADR-0026). Mirrors the Rust `Routine`.
@@ -1981,4 +1985,137 @@ export interface CanvasOrigin {
 /** `canvas:changed` */
 export interface CanvasChangedEvent {
 	path: string;
+}
+
+// ── Servers (F45, ADR-0105, ADR-0106) ──────────────────────────────────────
+
+export type ServerEnvironment = 'dev' | 'staging' | 'prod';
+/** What an agent may do in this server's terminals (F46). */
+export type AgentPolicy = 'free' | 'confirm' | 'readonly';
+export type ServerAuth = 'password' | 'key' | 'keyFile' | 'agent' | 'system';
+
+/** A saved server. Mirrors the Rust `Server`; carries no secret, only whether
+ *  the vault holds one. */
+export interface Server {
+	id: string;
+	name: string;
+	host: string;
+	port: number;
+	username: string;
+	startDir: string | null;
+	folderId: string | null;
+	environment: ServerEnvironment;
+	agentPolicy: AgentPolicy;
+	auth: ServerAuth;
+	keyPath: string | null;
+	/** Tabs live in tmux sessions on the server, when it has tmux (F49). */
+	persistent: boolean;
+	hasPassword: boolean;
+	hasPrivateKey: boolean;
+	hasPassphrase: boolean;
+	connected: boolean;
+}
+
+/** The server form. Secret fields are write-only: `''` clears one, absent
+ *  leaves it as it is. */
+export interface ServerInput {
+	id?: string;
+	name: string;
+	host: string;
+	port: number;
+	username: string;
+	startDir?: string | null;
+	folderId?: string | null;
+	environment: ServerEnvironment;
+	agentPolicy: AgentPolicy;
+	auth: ServerAuth;
+	keyPath?: string | null;
+	persistent?: boolean;
+	password?: string;
+	privateKey?: string;
+	passphrase?: string;
+}
+
+export interface ServerFolder {
+	id: string;
+	name: string;
+}
+
+export interface ServerBook {
+	folders: ServerFolder[];
+	servers: Server[];
+}
+
+/** One concrete `Host` of `~/.ssh/config`, offered for import. */
+export interface SshConfigHost {
+	alias: string;
+	host: string;
+	port: number;
+	username: string | null;
+	identityFile: string | null;
+	/** Uses `ProxyJump`/`ProxyCommand`: import it with `system` auth. */
+	needsSystemSsh: boolean;
+}
+
+export interface VaultStatus {
+	mode: 'keychain' | 'masterPassword';
+	locked: boolean;
+	keychainError: string | null;
+}
+
+/** How a terminal is lent to an agent session (F46). */
+export type LinkMode = 'shared' | 'own';
+
+/** An agent started or finished a command in a lent terminal (F46). */
+export interface AgentRunEvent {
+	terminalId: string;
+	sessionId: string;
+	command: string;
+	running: boolean;
+}
+
+/** An agent command waiting for the human (F46, ADR-0110). */
+export interface ConfirmEvent {
+	id: string;
+	serverId: string;
+	serverName: string;
+	terminalId: string;
+	sessionId: string;
+	command: string;
+	/** Keys to press rather than a command line. */
+	keys: boolean;
+	/** A command line the human may edit before it runs; file operations and
+	 *  keys are run or refused as they are. */
+	editable: boolean;
+	production: boolean;
+}
+
+/** One entry of a server directory, over SFTP (F47). */
+export interface RemoteEntry {
+	name: string;
+	isDir: boolean;
+	isSymlink: boolean;
+	size: number;
+	/** Seconds since the epoch. */
+	mtime: number | null;
+}
+
+export interface RemoteListing {
+	/** The directory, canonical. */
+	path: string;
+	entries: RemoteEntry[];
+	truncated: boolean;
+}
+
+/** A saved local port forward on a server (F48). */
+export interface Tunnel {
+	/** Empty when saving a new one. */
+	id: string;
+	serverId: string;
+	label: string;
+	localPort: number;
+	destHost: string;
+	destPort: number;
+	/** Listening right now. */
+	running: boolean;
 }

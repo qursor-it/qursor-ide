@@ -67,6 +67,17 @@ import type {
 	SessionSummary,
 	SessionUsage,
 	SessionWorktreeEvent,
+	AgentRunEvent,
+	RemoteListing,
+	Tunnel,
+	ConfirmEvent,
+	LinkMode,
+	Server,
+	ServerBook,
+	ServerFolder,
+	ServerInput,
+	SshConfigHost,
+	VaultStatus,
 	SessionsChangedEvent,
 	SettingKey,
 	ShellSpawnOpts,
@@ -507,6 +518,70 @@ export const cmd = {
 	 *  `terminalSpawn` because a shell runs no transcript probe, stands up no
 	 *  IDE bridge and no tool server, and starts no routine. */
 	shellSpawn: (opts: ShellSpawnOpts) => invoke<TerminalId>('shell_spawn', { opts }),
+	// ── Servers (F45) ──
+	listServers: () => invoke<ServerBook>('list_servers'),
+	saveServer: (input: ServerInput) => invoke<Server>('save_server', { input }),
+	deleteServer: (id: string) => invoke<void>('delete_server', { id }),
+	createServerFolder: (name: string) => invoke<ServerFolder>('create_server_folder', { name }),
+	renameServerFolder: (id: string, name: string) =>
+		invoke<void>('rename_server_folder', { id, name }),
+	deleteServerFolder: (id: string) => invoke<void>('delete_server_folder', { id }),
+	sshConfigHosts: () => invoke<SshConfigHost[]>('ssh_config_hosts'),
+	vaultStatus: () => invoke<VaultStatus>('vault_status'),
+	vaultUnlock: (password: string) => invoke<VaultStatus>('vault_unlock', { password }),
+	vaultLock: () => invoke<VaultStatus>('vault_lock'),
+	vaultSetMasterPassword: (password: string | null) =>
+		invoke<VaultStatus>('vault_set_master_password', { password }),
+	/** Open a shell tab on a server. An unknown host key rejects with
+	 *  `{ kind: 'HostKey', message: fingerprint }`; call again with it once the
+	 *  human has confirmed. */
+	serverOpenShell: (
+		serverId: string,
+		clientKey: string,
+		cols: number,
+		rows: number,
+		acceptFingerprint?: string,
+	) =>
+		invoke<TerminalId>('server_open_shell', {
+			serverId,
+			clientKey,
+			cols,
+			rows,
+			acceptFingerprint,
+		}),
+	serverDisconnect: (serverId: string) => invoke<void>('server_disconnect', { serverId }),
+	/** End a persistent tab's tmux session: the human closed the tab (F49). */
+	serverEndTab: (serverId: string, clientKey: string) =>
+		invoke<void>('server_end_tab', { serverId, clientKey }),
+	/** Lend an SSH terminal to an agent session (F46). */
+	agentLinkTerminal: (terminalId: TerminalId, sessionId: string, mode: LinkMode) =>
+		invoke<void>('agent_link_terminal', { terminalId, sessionId, mode }),
+	agentUnlinkTerminal: (terminalId: TerminalId) =>
+		invoke<void>('agent_unlink_terminal', { terminalId }),
+	/** Answer an agent command waiting for confirmation (ADR-0110). A `command`
+	 *  runs the edited line instead. */
+	agentTerminalAnswer: (id: string, run: boolean, command?: string) =>
+		invoke<void>('agent_terminal_answer', { id, run, command }),
+	// ── Tunnels (F48) ──
+	listTunnels: (serverId: string) => invoke<Tunnel[]>('list_tunnels', { serverId }),
+	saveTunnel: (tunnel: Tunnel) => invoke<Tunnel>('save_tunnel', { tunnel }),
+	deleteTunnel: (id: string) => invoke<void>('delete_tunnel', { id }),
+	tunnelStart: (id: string) => invoke<void>('tunnel_start', { id }),
+	tunnelStop: (id: string) => invoke<void>('tunnel_stop', { id }),
+	// ── SFTP (F47) ──
+	sftpList: (serverId: string, path: string) =>
+		invoke<RemoteListing>('sftp_list', { serverId, path }),
+	sftpDownload: (serverId: string, remote: string, local: string) =>
+		invoke<void>('sftp_download', { serverId, remote, local }),
+	sftpUpload: (serverId: string, local: string, remoteDir: string) =>
+		invoke<string>('sftp_upload', { serverId, local, remoteDir }),
+	sftpMkdir: (serverId: string, path: string) => invoke<void>('sftp_mkdir', { serverId, path }),
+	sftpRename: (serverId: string, from: string, to: string) =>
+		invoke<void>('sftp_rename', { serverId, from, to }),
+	sftpRemove: (serverId: string, path: string, isDir: boolean) =>
+		invoke<void>('sftp_remove', { serverId, path, isDir }),
+	/** The project a server's agent sessions run in, created on first use (F46). */
+	serverAgentProject: (serverId: string) => invoke<Project>('server_agent_project', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by
 	 *  `Remove project` and by nothing about a session — closing one says
 	 *  nothing about the shells under it. The agent is killed by `terminalKill`
@@ -746,6 +821,27 @@ export async function copyImageFile(path: string): Promise<void> {
  * than no-op. There the fixture's `folderPick` stands in, since a native dialog
  * is otherwise unreachable from a test.
  */
+/** A file to upload (F47). */
+export async function pickFile(title: string): Promise<string | null> {
+	if (!isTauri()) {
+		recordMockCall('dialog.open');
+		return testFixture()?.filePick ?? null;
+	}
+	const { open } = await import('@tauri-apps/plugin-dialog');
+	const picked = await open({ directory: false, multiple: false, title });
+	return typeof picked === 'string' ? picked : null;
+}
+
+/** Where to save a download (F47). */
+export async function pickSavePath(title: string, defaultPath: string): Promise<string | null> {
+	if (!isTauri()) {
+		recordMockCall('dialog.save');
+		return testFixture()?.savePick ?? null;
+	}
+	const { save } = await import('@tauri-apps/plugin-dialog');
+	return (await save({ title, defaultPath })) ?? null;
+}
+
 export async function pickFolder(title = 'Add project folder'): Promise<string | null> {
 	if (!isTauri()) {
 		recordMockCall('dialog.open');
@@ -800,6 +896,12 @@ export const events = {
 		listen<TerminalStatusEvent>('terminal:status', cb),
 	onTerminalExit: (cb: (p: TerminalExitEvent) => void) =>
 		listen<TerminalExitEvent>('terminal:exit', cb),
+	/** An agent started or finished a command in a lent SSH terminal (F46). */
+	onAgentTerminalRun: (cb: (p: AgentRunEvent) => void) =>
+		listen<AgentRunEvent>('agent-terminal:run', cb),
+	/** An agent command waits for the human's yes or no (ADR-0110). */
+	onAgentTerminalConfirm: (cb: (p: ConfirmEvent) => void) =>
+		listen<ConfirmEvent>('agent-terminal:confirm', cb),
 	onQuitRequested: (cb: (p: QuitRequestedEvent) => void) =>
 		listen<QuitRequestedEvent>('app:quit-requested', cb),
 	/** The window came to the front. Tauri's own event, not ours — it is what
@@ -931,6 +1033,16 @@ interface TestFixture {
 	/** The id `shell_spawn` hands back in the browser lane (F23). Distinct from
 	 *  `terminalSpawnId` so a test can tell a shell's PTY from its agent's. */
 	shellSpawnId?: TerminalId;
+	/** The address book `list_servers` answers with (F45). */
+	serverBook?: ServerBook;
+	serverHostKey?: string;
+	sshConfigHosts?: SshConfigHost[];
+	/** What `sftp_list` answers, by path (F47). */
+	remoteDirs?: Record<string, RemoteListing>;
+	tunnels?: Tunnel[];
+	filePick?: string;
+	savePick?: string;
+	vaultStatus?: VaultStatus;
 	/** Session id `start_session` hands back for a new-session click. */
 	newSessionId?: string;
 	searchHits?: SearchHit[];
@@ -2365,6 +2477,75 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			// them into one if the mock handed both the same name.
 			mockShellSpawns += 1;
 			return (fx?.shellSpawnId ?? `mock-shell-id-${mockShellSpawns}`) as unknown as T;
+		case 'list_servers':
+			return (fx?.serverBook ?? { folders: [], servers: [] }) as unknown as T;
+		case 'ssh_config_hosts':
+			return (fx?.sshConfigHosts ?? []) as unknown as T;
+		case 'vault_status':
+		case 'vault_unlock':
+		case 'vault_lock':
+		case 'vault_set_master_password':
+			return (fx?.vaultStatus ?? {
+				mode: 'keychain',
+				locked: false,
+				keychainError: null,
+			}) as unknown as T;
+		case 'save_server': {
+			const input = args?.input as ServerInput;
+			return {
+				hasPassword: !!input.password,
+				hasPrivateKey: !!input.privateKey,
+				hasPassphrase: !!input.passphrase,
+				connected: false,
+				startDir: null,
+				folderId: null,
+				keyPath: null,
+				...input,
+				id: input.id ?? 'mock-server-id',
+			} as unknown as T;
+		}
+		case 'create_server_folder':
+			return { id: 'mock-folder-id', name: args?.name } as unknown as T;
+		case 'server_open_shell':
+			if (fx?.serverHostKey && args?.acceptFingerprint !== fx.serverHostKey) {
+				throw { kind: 'HostKey', message: fx.serverHostKey };
+			}
+			mockShellSpawns += 1;
+			return `mock-ssh-id-${mockShellSpawns}` as unknown as T;
+		case 'server_agent_project':
+			return {
+				id: `server-project-${args?.serverId}`,
+				realPath: `/data/servers/${args?.serverId}`,
+				displayName: 'server',
+				missing: false,
+			} as unknown as T;
+		case 'sftp_list': {
+			const path = (args?.path as string) || '~';
+			return (fx?.remoteDirs?.[path] ?? { path, entries: [], truncated: false }) as unknown as T;
+		}
+		case 'list_tunnels':
+			return (fx?.tunnels ?? []) as unknown as T;
+		case 'save_tunnel':
+			return { ...(args?.tunnel as Tunnel), id: 'mock-tunnel-id' } as unknown as T;
+		case 'server_end_tab':
+		case 'delete_tunnel':
+		case 'tunnel_start':
+		case 'tunnel_stop':
+			return undefined as unknown as T;
+		case 'sftp_upload':
+			return `${args?.remoteDir}/uploaded` as unknown as T;
+		case 'sftp_download':
+		case 'sftp_mkdir':
+		case 'sftp_rename':
+		case 'sftp_remove':
+		case 'agent_terminal_answer':
+		case 'agent_link_terminal':
+		case 'agent_unlink_terminal':
+		case 'delete_server':
+		case 'rename_server_folder':
+		case 'delete_server_folder':
+		case 'server_disconnect':
+			return undefined as unknown as T;
 		case 'shell_name':
 			return 'zsh' as unknown as T;
 		case 'terminal_write':

@@ -88,11 +88,18 @@ pub struct AgentTools {
 	routines: Routines,
 	canvases: Canvases,
 	start_session: StartSession,
+	/// The terminals the human lent this session (ADR-0111). `None` only in tests.
+	terminals: Option<Arc<dyn super::terminals::TerminalUse>>,
 }
 
 impl AgentTools {
 	pub fn new(routines: Routines, canvases: Canvases, start_session: StartSession) -> Self {
-		Self { routines, canvases, start_session }
+		Self { routines, canvases, start_session, terminals: None }
+	}
+
+	pub fn with_terminals(mut self, t: Arc<dyn super::terminals::TerminalUse>) -> Self {
+		self.terminals = Some(t);
+		self
 	}
 
 	/// What this session needs to know that is not a tool.
@@ -143,8 +150,11 @@ impl AgentTools {
 
 {CANVAS}
 
-{HANDOFF}",
-			self.routines.project_path
+{HANDOFF}
+
+{}",
+			self.routines.project_path,
+			super::terminals::INSTRUCTIONS
 		)
 	}
 
@@ -201,6 +211,10 @@ impl AgentTools {
 			"canvasFreeSpot" => Ok(self.canvas_free_spot(&args)),
 			"canvasPatch" => Ok(self.canvas_patch(&args)),
 			"startSession" => Ok(self.start_session(&args)),
+			t if super::terminals::is_terminal_tool(t) => match &self.terminals {
+				Some(backend) => Ok(super::terminals::call(backend.as_ref(), t, &args)),
+				None => Ok(tool_error("no terminals can be lent to this session")),
+			},
 			other => Err(Failure::rpc(METHOD_NOT_FOUND, format!("no such tool: {other}"))),
 		}
 	}
@@ -554,6 +568,14 @@ fn stamp(ms: i64) -> String {
 ///   `isConcurrencySafe()`. Nothing here sets `destructiveHint`, because nothing
 ///   here destroys anything — that is what leaving `deleteRoutine` out bought.
 fn tools_list() -> Value {
+	let mut v = routine_tools();
+	if let Some(list) = v.get_mut("tools").and_then(Value::as_array_mut) {
+		list.extend(super::terminals::definitions());
+	}
+	v
+}
+
+fn routine_tools() -> Value {
 	json!({
 		"tools": [
 			{
@@ -1010,6 +1032,15 @@ mod tests {
 				"canvasFreeSpot",
 				"canvasPatch",
 				"startSession",
+				// F46: the SSH terminals a human lends the session.
+				"terminals_list",
+				"terminal_run",
+				"terminal_read",
+				"terminal_send_keys",
+				// F47: files on those terminals' servers.
+				"file_read",
+				"file_edit",
+				"file_write",
 			]
 		);
 		// The one that is absent on purpose (ADR-0028): the editor's delete asks
@@ -1062,11 +1093,19 @@ mod tests {
 
 		for t in tools {
 			let hint = t["_meta"]["anthropic/searchHint"].as_str().unwrap_or_default();
-			assert!(
-				hint.contains("routine") || hint.contains("canvas") || hint.contains("session"),
-				"{} has no usable search hint",
-				t["name"]
-			);
+			let n = t["name"].as_str().unwrap_or_default();
+			let topic = if n.starts_with("terminal") {
+				"terminal"
+			} else if n.starts_with("canvas") {
+				"canvas"
+			} else if n.starts_with("file") {
+				"file"
+			} else if n == "startSession" {
+				"session"
+			} else {
+				"routine"
+			};
+			assert!(hint.contains(topic), "{} has no usable search hint", t["name"]);
 			assert!(hint.contains("Qursor IDE"), "{} does not name the app", t["name"]);
 		}
 	}
@@ -1124,12 +1163,25 @@ mod tests {
 		for t in reply["result"]["tools"].as_array().unwrap() {
 			let name = t["name"].as_str().unwrap();
 			let read_only = t["annotations"]["readOnlyHint"] == json!(true);
-			let reads = ["listRoutines", "canvasOutline", "canvasRead", "canvasFreeSpot"];
+			let reads = [
+				"listRoutines",
+				"canvasOutline",
+				"canvasRead",
+				"canvasFreeSpot",
+				"terminals_list",
+				"terminal_read",
+				"file_read",
+			];
 			assert_eq!(read_only, reads.contains(&name), "{name}");
 			assert!(t["annotations"]["title"].is_string(), "{name} has no title");
-			// Nothing here destroys anything — which is what leaving
-			// `deleteRoutine` out bought (ADR-0028).
-			assert_ne!(t["annotations"]["destructiveHint"], json!(true), "{name}");
+			// No routine tool destroys anything — which is what leaving
+			// `deleteRoutine` out bought (ADR-0028). A remote command may, and says so.
+			let destructive = t["annotations"]["destructiveHint"] == json!(true);
+			assert_eq!(
+				destructive,
+				matches!(name, "terminal_run" | "terminal_send_keys" | "file_edit" | "file_write"),
+				"{name}"
+			);
 		}
 	}
 

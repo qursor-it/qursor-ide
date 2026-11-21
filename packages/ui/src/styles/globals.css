@@ -154,6 +154,7 @@
 	--color-ring: var(--ring);
 	--color-dev: var(--dev);
 	--color-usage-warn: var(--usage-warn);
+	--color-production: var(--production);
 	--color-terminal: var(--terminal);
 	--color-git-added: var(--git-added);
 	--color-git-modified: var(--git-modified);
@@ -243,6 +244,12 @@
 	   `--git-modified`, though the hue is near: that one is content, this is a
 	   signal, and they must be able to move apart. */
 	--usage-warn: oklch(78% 0.15 75);
+
+	/* Production Rose: this server is production (F45, ADR-0108). Its one job:
+	   the marker on a production server's row, tab and card. A hue nothing else
+	   in the palette uses, so it is never read as a status, a destruction or a
+	   plan limit. */
+	--production: oklch(70% 0.17 350);
 
 	/* The terminal's own ground and text: the agent's PTY, a shell, and the
 	   transcript that stands in for a PTY. A step deeper than `--background` in
@@ -336,6 +343,7 @@
 	--dev: oklch(49.1% 0.121 297);
 	/* Amber on a 98% ground needs a darker, oranger step, the way the accent does. */
 	--usage-warn: oklch(55% 0.13 70);
+	--production: oklch(52% 0.19 350);
 	/* White paper, a step above the 98% chrome — the light theme's well goes up,
 	   not down, the way `--card` does. */
 	--terminal: oklch(99.6% 0.003 80);
