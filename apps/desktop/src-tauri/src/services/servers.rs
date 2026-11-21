@@ -322,6 +322,19 @@ fn write_back(f: &FileServer, s: &Server, tunnels: &[Tunnel]) -> AppResult<()> {
 	write_file(&f.abs_path, &files::to_json(&f.raw, s, tunnels))
 }
 
+/// A free path in `dir` for a moved file: its own name, `-2`, `-3`… only when
+/// taken. `dir` comes from `project_dir`, which checked containment.
+fn free_path(dir: &Path, file: &Path) -> AppResult<PathBuf> {
+	let stem = file.file_stem().unwrap_or_default().to_string_lossy();
+	(1..=1000)
+		.map(|n| match n {
+			1 => dir.join(format!("{stem}.server")),
+			n => dir.join(format!("{stem}-{n}.server")),
+		})
+		.find(|p| !p.exists())
+		.ok_or_else(|| AppError::InvalidInput(format!("no free file name for {stem}")))
+}
+
 /// A new file for `s` in `project_id`, in the folder it names.
 fn create_file(
 	conn: &Connection,
@@ -343,12 +356,6 @@ pub fn save(
 	now_ms: i64,
 ) -> AppResult<Server> {
 	validate(input)?;
-	let home = trimmed(&input.home);
-	let folder_home =
-		trimmed(&input.folder_id).map(|f| files::parse_folder_id(&f).map(|(p, _)| p.to_string()));
-	if folder_home.is_some_and(|fh| fh != home) {
-		return Err(AppError::InvalidInput("the folder belongs to another place".into()));
-	}
 	// Where it lives now: `None` new, `Some(None)` a row, `Some(Some(f))` a file.
 	let current = match &input.id {
 		None => None,
@@ -358,6 +365,20 @@ pub fn save(
 				.ok_or_else(|| AppError::NotFound(format!("server {id}")))?,
 		)),
 	};
+	// `None` keeps the current home, `Some("")` is this computer.
+	let home = match input.home.as_deref().map(str::trim) {
+		None => match &current {
+			Some(Some(f)) => Some(f.project_id.clone()),
+			_ => None,
+		},
+		Some("") => None,
+		Some(p) => Some(p.to_string()),
+	};
+	let folder_home =
+		trimmed(&input.folder_id).map(|f| files::parse_folder_id(&f).map(|(p, _)| p.to_string()));
+	if folder_home.is_some_and(|fh| fh != home) {
+		return Err(AppError::InvalidInput("the folder belongs to another place".into()));
+	}
 	// Secrets first: a vault that refuses (locked, no keychain) must not leave a
 	// row behind that promises a password it does not have.
 	let id = input.id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -407,8 +428,7 @@ pub fn save(
 			} else {
 				// Another folder: the file moves, keeping its name where free.
 				check(&f)?;
-				let stem = f.abs_path.file_stem().unwrap_or_default().to_string_lossy();
-				let to = files::new_file_path(&project_root(conn, &h)?, dir, &stem)?;
+				let to = free_path(&project_dir(conn, &h, dir)?, &f.abs_path)?;
 				write_new(&to, files::to_json(&f.raw, &s, &f.tunnels).as_bytes())?;
 				fs::remove_file(&f.abs_path)?;
 			}
@@ -430,7 +450,8 @@ pub fn save(
 		}
 		(Some(Some(f)), Some(h)) => {
 			check(&f)?;
-			create_file(conn, &h, &s, &f.raw, &f.tunnels)?;
+			let to = free_path(&project_dir(conn, &h, folder_rel(&s.folder_id))?, &f.abs_path)?;
+			write_new(&to, files::to_json(&f.raw, &s, &f.tunnels).as_bytes())?;
 			fs::remove_file(&f.abs_path)?;
 		}
 	}
@@ -462,12 +483,11 @@ fn folder_name(name: &str) -> AppResult<&str> {
 
 /// `<root>/servers/<rel>` of a project, refused unless it stays inside
 /// `servers/`. A project folder is one directory level: no `/`, no dot-name.
-fn project_dir(conn: &Connection, project_id: &str, rel: &str) -> AppResult<(PathBuf, PathBuf)> {
+fn project_dir(conn: &Connection, project_id: &str, rel: &str) -> AppResult<PathBuf> {
 	let root = project_root(conn, project_id)?;
 	// `new_file_path` refuses `..`, absolute paths and symlinks out of servers/.
 	let probe = files::new_file_path(&root, rel, "x")?;
-	let dir = probe.parent().unwrap_or(&root).to_path_buf();
-	Ok((root, dir))
+	Ok(probe.parent().unwrap_or(&root).to_path_buf())
 }
 
 fn one_level(name: &str) -> AppResult<()> {
@@ -485,7 +505,7 @@ pub fn create_folder(
 	let name = folder_name(name)?;
 	if let Some(p) = project_id {
 		one_level(name)?;
-		let (_, dir) = project_dir(conn, p, name)?;
+		let dir = project_dir(conn, p, name)?;
 		fs::create_dir_all(dir.parent().unwrap_or(&dir))?;
 		fs::create_dir(&dir)?;
 		rescan(conn)?;
@@ -506,8 +526,8 @@ pub fn rename_folder(conn: &Connection, id: &str, name: &str) -> AppResult<()> {
 		one_level(name)?;
 		let to_rel =
 			rel.rsplit_once('/').map_or(name.to_string(), |(up, _)| format!("{up}/{name}"));
-		let (_, from) = project_dir(conn, p, rel)?;
-		let (_, to) = project_dir(conn, p, &to_rel)?;
+		let from = project_dir(conn, p, rel)?;
+		let to = project_dir(conn, p, &to_rel)?;
 		if to.exists() {
 			return Err(AppError::InvalidInput(format!("{name} already exists")));
 		}
@@ -522,13 +542,12 @@ pub fn rename_folder(conn: &Connection, id: &str, name: &str) -> AppResult<()> {
 /// project they move up one level, never over another file (`-2` instead).
 pub fn delete_folder(conn: &Connection, id: &str) -> AppResult<()> {
 	if let Some((p, rel)) = files::parse_folder_id(id) {
-		let (root, dir) = project_dir(conn, p, rel)?;
-		let up = rel.rsplit_once('/').map_or("", |(up, _)| up);
+		let dir = project_dir(conn, p, rel)?;
+		let up = project_dir(conn, p, rel.rsplit_once('/').map_or("", |(up, _)| up))?;
 		for e in fs::read_dir(&dir)?.flatten() {
 			let path = e.path();
 			if path.is_file() && path.extension().is_some_and(|x| x == "server") {
-				let stem = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
-				write_new(&files::new_file_path(&root, up, &stem)?, &fs::read(&path)?)?;
+				write_new(&free_path(&up, &path)?, &fs::read(&path)?)?;
 				fs::remove_file(&path)?;
 			}
 		}
@@ -1006,7 +1025,7 @@ mod tests {
 		let e = env();
 		e.put("servers/web.server", &with_tunnel("s1", "web"));
 		e.list();
-		let moved = e.save(&input(Some("s1"), "web", None)).unwrap();
+		let moved = e.save(&input(Some("s1"), "web", Some(""))).unwrap();
 		assert_eq!(moved.source, ServerSource::Local);
 		assert!(!e.root.join("servers/web.server").exists());
 		let l = e.list();
@@ -1032,12 +1051,12 @@ mod tests {
 	fn deleting_a_folder_never_overwrites() {
 		let e = env();
 		let (inner, outer) = (body("s1", "web"), body("s2", "web"));
-		e.put("servers/a/web.server", &inner);
-		e.put("servers/web.server", &outer);
+		e.put("servers/a/My Web.server", &inner);
+		e.put("servers/My Web.server", &outer);
 		e.list();
 		e.db.with(|c| delete_folder(c, &format!("p:{}:a", e.p1))).unwrap();
-		assert_eq!(e.read("servers/web.server"), outer);
-		assert_eq!(e.read("servers/web-2.server"), inner);
+		assert_eq!(e.read("servers/My Web.server"), outer);
+		assert_eq!(e.read("servers/My Web-2.server"), inner);
 		assert!(!e.root.join("servers/a").exists());
 	}
 
@@ -1121,5 +1140,83 @@ mod tests {
 		e.list();
 		e.list();
 		assert_eq!(snap(), before);
+	}
+
+	#[test]
+	fn edit_without_home_keeps_the_file() {
+		let e = env();
+		e.put("servers/web.server", &body("s1", "web"));
+		e.list();
+		let saved = e.save(&input(Some("s1"), "renamed", None)).unwrap();
+		assert_eq!(saved.source, project_source(&e.p1, "servers/web.server"));
+		assert!(e.read("servers/web.server").contains("\"renamed\""));
+		let rows: i64 =
+			e.db.with(|c| Ok(c.query_row("SELECT COUNT(*) FROM servers", [], |r| r.get(0))?))
+				.unwrap();
+		assert_eq!(rows, 0);
+	}
+
+	#[test]
+	fn folder_change_moves_the_file_keeping_its_name() {
+		let e = env();
+		e.put("servers/My Web.server", &body("s1", "web"));
+		e.put("servers/a/My Web.server", &body("s2", "other"));
+		e.list();
+		let mut i = input(Some("s1"), "web", None);
+		i.folder_id = Some(format!("p:{}:a", e.p1));
+		let saved = e.save(&i).unwrap();
+		assert_eq!(saved.source, project_source(&e.p1, "servers/a/My Web-2.server"));
+		assert!(!e.root.join("servers/My Web.server").exists());
+		assert!(e.read("servers/a/My Web-2.server").contains("\"s1\""));
+		assert!(e.read("servers/a/My Web.server").contains("\"s2\""));
+	}
+
+	#[test]
+	fn move_between_projects_keeps_name_and_unknown_fields() {
+		let e = env();
+		let dir2 = e._tmp.path().join("proj2");
+		std::fs::create_dir_all(&dir2).unwrap();
+		let p2 = crate::commands::projects::add_project_in(&e.db, dir2.to_str().unwrap()).unwrap();
+		let root2 = PathBuf::from(&p2.real_path);
+		e.put(
+			"servers/My Web.server",
+			&with_tunnel("s1", "web").replacen('{', r#"{"x-note":"keep","#, 1),
+		);
+		e.list();
+		let saved = e.save(&input(Some("s1"), "web", Some(&p2.id))).unwrap();
+		assert_eq!(saved.source, project_source(&p2.id, "servers/My Web.server"));
+		assert!(!e.root.join("servers/My Web.server").exists());
+		let text = std::fs::read_to_string(root2.join("servers/My Web.server")).unwrap();
+		assert!(text.contains("\"x-note\": \"keep\"") && text.contains("5433"), "{text}");
+		assert_eq!(e.db.with(|c| list_tunnels(c, "s1")).unwrap()[0].id, "s1/t1");
+	}
+
+	#[test]
+	fn stale_file_refuses_delete_and_tunnel_writes() {
+		let e = env();
+		e.put("servers/web.server", &with_tunnel("s1", "web"));
+		e.vault.put(&secret_id("s1", "password"), b"pw").unwrap();
+		e.list();
+		let tunnel = e.db.with(|c| list_tunnels(c, "s1")).unwrap().remove(0);
+		let changed = with_tunnel("s1", "pulled");
+		e.put("servers/web.server", &changed);
+		let conflict = |r: AppResult<()>| matches!(r, Err(AppError::Conflict(_)));
+		assert!(conflict(e.db.with(|c| delete(c, &e.vault, "s1"))));
+		assert!(e.vault.has(&secret_id("s1", "password")), "secrets kept on a refused delete");
+		assert!(conflict(e.db.with(|c| save_tunnel(c, &tunnel).map(drop))));
+		assert!(conflict(e.db.with(|c| delete_tunnel(c, "s1/t1"))));
+		assert_eq!(e.read("servers/web.server"), changed);
+	}
+
+	#[test]
+	fn fix_file_gives_an_id_less_file_an_id() {
+		let e = env();
+		e.put("servers/c.server", r#"{"name":"n","host":"h","user":"u","login":"agent"}"#);
+		assert!(e.list().is_empty());
+		let p = problems();
+		assert_eq!(p[0].kind, ProblemKind::NoId);
+		e.db.with(|c| fix_file(c, &e.p1, "servers/c.server")).unwrap();
+		assert_eq!(e.list().len(), 1);
+		assert!(problems().is_empty());
 	}
 }

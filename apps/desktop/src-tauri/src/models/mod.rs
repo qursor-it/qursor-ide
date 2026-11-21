@@ -1600,8 +1600,9 @@ pub struct ServerInput {
 	pub password: Option<String>,
 	pub private_key: Option<String>,
 	pub passphrase: Option<String>,
-	/// Where it is kept: `None` is this computer, `Some(projectId)` a file in
-	/// that project. `folder_id` must belong to the same home.
+	/// Where it is kept: `None` keeps its current home (a new server: this
+	/// computer), `Some("")` is this computer, `Some(projectId)` a file in that
+	/// project. `folder_id` must belong to the resolved home.
 	pub home: Option<String>,
 }
 
