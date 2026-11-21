@@ -9010,7 +9010,8 @@ human in chat whether to pass the work on, and writes a self-contained brief:
 the new session has no memory of the caller.
 
 The new session opens in the caller's own project, with the caller's agent and
-in its folder, with `prompt` as its first message. It starts headless like a
+in the folder the caller was started in (a caller that later moved to a worktree
+hands off to its start folder; the new session is not pinned), with `prompt` as its first message. It starts headless like a
 routine run (F22): it appears in the sidebar, no tab opens and focus does not
 move. Fire-and-forget: the tool answers at once, and the caller neither waits
 for the new session nor reads its result.

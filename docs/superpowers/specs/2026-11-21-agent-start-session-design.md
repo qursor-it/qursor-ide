@@ -25,8 +25,9 @@ or read its result.
   MCP approval behaviour not verified.
 - B. A + a Qursor confirm banner (reusing `agent_policy::Confirmations`).
   Consent that always holds, at the cost of more UI and a double ask.
-- C. A one-shot `createRoutine`. Rejected: routine runs have no tab
-  (ADR-0026) and land in the routines list.
+- C. A one-shot `createRoutine`. Rejected: a routine fire carries a routine
+  origin (`setRoutineOrigin`), is claimed and recorded as a routine run
+  (ADR-0030) and lands in the routines list.
 
 ## Design
 

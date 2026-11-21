@@ -580,6 +580,7 @@ session_usage(session_id: String) -> Option<SessionUsage>
 | `session:adopted`      | `{ id, provisional, adopted, projectId }` | TerminalManager — a Codex session took its agent's id (F30, ADR-0062) |
 | `session:worktree`     | `{ sessionId, path, branch }`        | IDE bridge (F21)    |
 | `routine:fire`         | `{ routineId, routineName, projectId, sessionId, prompt, cwd }` | RoutineRunner (F22) |
+| `agent-session:start`  | `{ projectId, agent, prompt, cwd }`  | agent tool server (F50) |
 | `routines:changed`     | `{ projectId }`                      | routines service (F22 slice 3) |
 | `file:changed`         | `{ path }`                           | FileWatch (F7)      |
 | `canvas:changed`       | `{ path }`                           | the canvas FileWatch (F44) |
@@ -599,7 +600,9 @@ nobody else, and this one is emitted from `setup()` on launch — before the web
 has loaded the bundle. So it is a *reminder* of a `routine_claims` row: re-emitted
 every tick until the session starts, and readable on demand through
 `routine_pending_fires`. Any future event that asks the renderer to *do* something,
-rather than to render something, inherits the same requirement.
+rather than to render something, inherits the same requirement. The one exception
+is `agent-session:start` (F50, ADR-0113): only a live session can emit it, so the
+window is alive and there is nothing to drain.
 
 PTY output is base64-encoded bytes, not UTF-8 strings — Claude prints ANSI
 that contains invalid UTF-8 boundaries when chunked. The renderer decodes
