@@ -113,6 +113,7 @@ services/
     tools.rs          # listRoutines, createRoutine, updateRoutine,
                       #   setRoutineEnabled, and the canvas tools canvasOutline,
                       #   canvasRead, canvasFreeSpot, canvasPatch (F44, ADR-0104)
+                      #   and startSession (F50, ADR-0113)
                       #   — reaching the agent as mcp__factorai__*
   canvas_tools.rs     # pure functions behind the canvas tools: outline, read_part,
                       #   free_spot, apply_ops over the JSON Canvas document

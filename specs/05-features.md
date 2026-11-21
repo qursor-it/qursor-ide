@@ -8999,3 +8999,20 @@ Canvas, and the session route's terminal adopts it again on returning to
 Sessions.
 
 **Not in it (yet).** The pen (ink nodes) arrives in a later slice.
+
+## F50 — An agent hands work off to a new session
+
+**Decision.** ADR-0113.
+
+Every agent session Qursor starts (Claude and Codex) has an MCP tool
+`startSession({ prompt })` on the `factorai` server. The agent first asks the
+human in chat whether to pass the work on, and writes a self-contained brief:
+the new session has no memory of the caller.
+
+The new session opens in the caller's own project, with the caller's agent and
+in its folder, with `prompt` as its first message. It starts headless like a
+routine run (F22): it appears in the sidebar, no tab opens and focus does not
+move. Fire-and-forget: the tool answers at once, and the caller neither waits
+for the new session nor reads its result.
+
+**Events.** `agent-session:start` (`projectId`, `agent`, `prompt`, `cwd`).
