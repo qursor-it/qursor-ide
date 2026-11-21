@@ -4,6 +4,7 @@ import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
 import { PanelResizer } from '@components/layout/PanelResizer';
+import { ServerBook, VaultFooter } from '@components/servers/ServerModeView';
 import { Sidebar } from '@components/layout/Sidebar';
 import { UpdateBadge } from '@components/layout/UpdateBadge';
 import { ZoomControls } from '@components/layout/ZoomControls';
@@ -51,8 +52,12 @@ export function ModeSidebar() {
 						<GitSlot />
 					</div>
 				)}
-				{mode === 'servers' && <div className="min-h-0 flex-1" />}
-				<SidebarFooter />
+				{mode === 'servers' && (
+					<div className="flex min-h-0 flex-1 flex-col">
+						<ServerBook />
+					</div>
+				)}
+				<SidebarFooter extra={mode === 'servers' ? <VaultFooter /> : undefined} />
 			</aside>
 			{/* On the sidebar's right edge, so dragging right widens it. Not rendered
 			    while collapsed: a handle that resizes nothing lies (ADR-0038). */}

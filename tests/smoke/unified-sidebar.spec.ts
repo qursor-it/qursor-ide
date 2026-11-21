@@ -139,4 +139,16 @@ test.describe('unified sidebar', () => {
 		await expect(page.getByTestId('git-sidebar')).toBeVisible();
 		await expect(page.getByTestId('git-mode-view')).toBeVisible();
 	});
+
+	test('@smoke servers: the book and the vault are in the shared sidebar', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		const sessionsWidth = (await page.getByTestId('sidebar').boundingBox())!.width;
+		await page.getByTestId('mode-servers').click();
+
+		const sidebar = page.getByTestId('sidebar');
+		await expect(sidebar.getByTestId('server-book')).toBeVisible();
+		await expect(sidebar.getByTestId('sidebar-footer').getByTestId('vault-state')).toBeVisible();
+		expect((await sidebar.boundingBox())!.width).toBe(sessionsWidth);
+	});
 });
