@@ -1,4 +1,11 @@
-import type { Server, ServerFolder } from '@factorai/types';
+import type {
+	Project,
+	Server,
+	ServerBook as ServerBookData,
+	ServerFolder,
+	ServerFileProblem,
+	SidebarRow,
+} from '@factorai/types';
 import {
 	Button,
 	Dialog,
@@ -28,14 +35,16 @@ import {
 	Server as ServerIcon,
 	ShieldAlert,
 	TerminalSquare,
+	TriangleAlert,
 	X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AgentMenu, AgentPane, ConfirmBanner, RunningChip } from '@components/servers/AgentPane';
 import { ServerDialog } from '@components/servers/ServerDialog';
 import { SftpPanel } from '@components/servers/SftpPanel';
 import { TunnelsMenu } from '@components/servers/TunnelsMenu';
 import { AgentMark } from '@components/layout/AgentMark';
+import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { agentName } from '@lib/agents';
 import { answerHostKey, reconnectTab, ServerTerminal } from '@components/servers/ServerTerminal';
 import { disposeTerminal } from '@components/terminal/Terminal';
@@ -172,14 +181,18 @@ export function ServerModeView() {
 	);
 }
 
-const NO_SERVERS: Server[] = [];
-const NO_FOLDERS: ServerFolder[] = [];
+const flatProjects = (rows: SidebarRow[]): Project[] =>
+	rows.flatMap((r) => (r.kind === 'project' ? [r.project] : r.children.map((c) => c.project)));
+
+const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
+const fileName = (relPath: string) => relPath.split('/').pop() ?? relPath;
+
+const EMPTY_BOOK: ServerBookData = { folders: [], servers: [], problems: [] };
 
 /** The address book, in the shared sidebar's body. */
 export function ServerBook() {
-	const book = useServerBook();
-	const servers = book.data?.servers ?? NO_SERVERS;
-	const folders = book.data?.folders ?? NO_FOLDERS;
+	const { servers, folders, problems } = useServerBook().data ?? EMPTY_BOOK;
+	const sidebar = useQuery({ queryKey: queryKeys.sidebar(), queryFn: () => cmd.listSidebar() });
 	const qc = useQueryClient();
 	const open = useServerStore((s) => s.open);
 	const collapsed = useServerStore((s) => s.collapsed);
@@ -189,11 +202,14 @@ export function ServerBook() {
 		null,
 	);
 	const [deleting, setDeleting] = useState<Server | null>(null);
-	const [newFolder, setNewFolder] = useState<string | null>(null);
+	const [newFolder, setNewFolder] = useState<{ projectId: string | null; name: string } | null>(
+		null,
+	);
 	const refresh = () => qc.invalidateQueries({ queryKey: queryKeys.servers() });
 
 	const createFolder = useMutation({
-		mutationFn: (name: string) => cmd.createServerFolder(name),
+		mutationFn: (f: { projectId: string | null; name: string }) =>
+			cmd.createServerFolder(f.name, f.projectId ?? undefined),
 		onSuccess: () => {
 			setNewFolder(null);
 			refresh();
@@ -204,14 +220,41 @@ export function ServerBook() {
 		onSuccess: refresh,
 	});
 
-	const byFolder = useMemo(() => {
-		const m = new Map<string | null, Server[]>();
-		for (const s of servers) {
-			const k = folders.some((f) => f.id === s.folderId) ? s.folderId : null;
-			m.set(k, [...(m.get(k) ?? []), s]);
-		}
-		return m;
-	}, [servers, folders]);
+	const fix = useMutation({
+		mutationFn: (p: ServerFileProblem) => cmd.fixServerFile(p.projectId, p.relPath),
+		onSettled: refresh,
+	});
+
+	const problemRow = (p: ServerFileProblem) => {
+		const label =
+			p.kind === 'duplicate'
+				? 'Make it a separate server'
+				: p.kind === 'noId'
+					? 'Give it an id'
+					: null;
+		return (
+			<div
+				key={p.relPath}
+				data-testid={`server-problem-${fileName(p.relPath)}`}
+				title={p.message}
+				className="flex h-7 items-center gap-2 pl-2 text-sm text-muted-foreground"
+			>
+				<TriangleAlert className="size-3.5 shrink-0" />
+				<span className="min-w-0 flex-1 truncate">{fileName(p.relPath)}</span>
+				{label && (
+					<Button
+						size="sm"
+						variant="ghost"
+						className="h-6 px-2 text-xs"
+						disabled={fix.isPending}
+						onClick={() => fix.mutate(p)}
+					>
+						{label}
+					</Button>
+				)}
+			</div>
+		);
+	};
 
 	const row = (s: Server, indent: boolean) => {
 		const sessions = tabs.filter((t) => t.serverId === s.id).length;
@@ -276,42 +319,13 @@ export function ServerBook() {
 		);
 	};
 
-	return (
-		<div className="flex min-h-0 flex-1 flex-col px-2">
-			<div className="flex h-9 items-center gap-1 px-1 text-xs font-medium tracking-wider text-muted-foreground uppercase">
-				<span className="flex-1">Servers</span>
-				<IconButton aria-label="New folder" title="New folder" onClick={() => setNewFolder('')}>
-					<FolderPlus />
-				</IconButton>
-				<IconButton
-					aria-label="New server"
-					title="New server"
-					data-testid="new-server"
-					onClick={() => setEditing({ server: null, folderId: null })}
-				>
-					<Plus />
-				</IconButton>
-			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto" data-testid="server-book">
-				{newFolder !== null && (
-					<form
-						className="px-1 pb-1"
-						onSubmit={(e) => {
-							e.preventDefault();
-							if (newFolder.trim()) createFolder.mutate(newFolder);
-						}}
-					>
-						<Input
-							autoFocus
-							placeholder="Folder name"
-							className="h-7"
-							value={newFolder}
-							onChange={(e) => setNewFolder(e.target.value)}
-							onBlur={() => !newFolder.trim() && setNewFolder(null)}
-						/>
-					</form>
-				)}
-				{folders.map((f) => {
+	/** A home's folders, then its loose servers, then its problem files. */
+	const tree = (fs: ServerFolder[], ss: Server[], ps: ServerFileProblem[] = []) => {
+		const inFolder = (f: ServerFolder) => ss.filter((s) => s.folderId === f.id).sort(byName);
+		const loose = ss.filter((s) => !fs.some((f) => f.id === s.folderId)).sort(byName);
+		return (
+			<>
+				{[...fs].sort(byName).map((f) => {
 					const closed = collapsed.includes(f.id);
 					return (
 						<div key={f.id}>
@@ -331,7 +345,7 @@ export function ServerBook() {
 									<span className="truncate">{f.name}</span>
 								</button>
 								<span className="text-xs text-muted-foreground tabular-nums">
-									{byFolder.get(f.id)?.length ?? 0}
+									{inFolder(f).length}
 								</span>
 								<DropdownMenu>
 									<DropdownMenuTrigger asChild>
@@ -352,11 +366,94 @@ export function ServerBook() {
 									</DropdownMenuContent>
 								</DropdownMenu>
 							</div>
-							{!closed && (byFolder.get(f.id) ?? []).map((s) => row(s, true))}
+							{!closed && inFolder(f).map((s) => row(s, true))}
 						</div>
 					);
 				})}
-				{(byFolder.get(null) ?? []).map((s) => row(s, false))}
+				{loose.map((s) => row(s, false))}
+				{ps.map(problemRow)}
+			</>
+		);
+	};
+	const projects = flatProjects(sidebar.data ?? []);
+
+	/** The name field of a new folder, in the home it was asked for. */
+	const folderForm = (projectId: string | null) =>
+		newFolder && newFolder.projectId === projectId ? (
+			<form
+				className="px-1 pb-1"
+				onSubmit={(e) => {
+					e.preventDefault();
+					if (newFolder.name.trim()) createFolder.mutate(newFolder);
+				}}
+			>
+				<Input
+					autoFocus
+					placeholder="Folder name"
+					className="h-7"
+					value={newFolder.name}
+					onChange={(e) => setNewFolder({ projectId, name: e.target.value })}
+					onBlur={() => !newFolder.name.trim() && setNewFolder(null)}
+				/>
+			</form>
+		) : null;
+
+	return (
+		<div className="flex min-h-0 flex-1 flex-col px-2">
+			<div className="flex h-9 items-center gap-1 px-1 text-xs font-medium tracking-wider text-muted-foreground uppercase">
+				<span className="flex-1">Servers</span>
+				<IconButton
+					aria-label="New folder"
+					title="New folder"
+					onClick={() => setNewFolder({ projectId: null, name: '' })}
+				>
+					<FolderPlus />
+				</IconButton>
+				<IconButton
+					aria-label="New server"
+					title="New server"
+					data-testid="new-server"
+					onClick={() => setEditing({ server: null, folderId: null })}
+				>
+					<Plus />
+				</IconButton>
+			</div>
+			<div className="min-h-0 flex-1 overflow-y-auto" data-testid="server-book">
+				{folderForm(null)}
+				<Section title="This computer" testId="local">
+					{tree(
+						folders.filter((f) => f.projectId === null),
+						servers.filter((s) => s.source.kind === 'local'),
+					)}
+				</Section>
+				{projects.map((p) => {
+					const pf = folders.filter((f) => f.projectId === p.id);
+					const ps = servers.filter(
+						(s) => s.source.kind === 'project' && s.source.projectId === p.id,
+					);
+					const pp = problems.filter((x) => x.projectId === p.id);
+					if (!ps.length && !pp.length) return null;
+					return (
+						<Section
+							key={p.id}
+							testId={p.id}
+							title={p.displayName}
+							icon={<ProjectIcon name={p.displayName} size={18} />}
+							action={
+								<IconButton
+									aria-label={`New folder in ${p.displayName}`}
+									title="New folder"
+									onClick={() => setNewFolder({ projectId: p.id, name: '' })}
+								>
+									<FolderPlus />
+								</IconButton>
+							}
+						>
+							{folderForm(p.id)}
+							{tree(pf, ps, pp)}
+						</Section>
+					);
+				})}
 			</div>
 			<ServerDialog
 				open={editing !== null}
@@ -364,9 +461,35 @@ export function ServerBook() {
 				server={editing?.server ?? null}
 				folderId={editing?.folderId ?? null}
 				folders={folders}
+				projects={projects}
 			/>
 			<DeleteServerDialog server={deleting} onClose={() => setDeleting(null)} />
 		</div>
+	);
+}
+
+function Section({
+	title,
+	testId,
+	icon,
+	action,
+	children,
+}: {
+	title: string;
+	testId: string;
+	icon?: React.ReactNode;
+	action?: React.ReactNode;
+	children: React.ReactNode;
+}) {
+	return (
+		<section data-testid="server-section" data-section={testId} className="pb-1">
+			<div className="flex h-7 items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
+				{icon}
+				<span className="min-w-0 flex-1 truncate">{title}</span>
+				{action}
+			</div>
+			{children}
+		</section>
 	);
 }
 

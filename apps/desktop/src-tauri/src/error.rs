@@ -34,6 +34,9 @@ pub enum AppError {
 	/// SHA-256 fingerprint the human is asked to confirm (F45).
 	#[error("unknown host key: {0}")]
 	HostKey(String),
+	/// A file changed on disk since it was last read; nothing was written.
+	#[error("conflict: {0}")]
+	Conflict(String),
 }
 
 impl From<std::io::Error> for AppError {

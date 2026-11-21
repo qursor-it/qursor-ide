@@ -1549,6 +1549,39 @@ pub struct Server {
 	pub has_passphrase: bool,
 	/// A live connection is open to it right now.
 	pub connected: bool,
+	/// Where it lives: the local address book or a project's `.server` file.
+	pub source: ServerSource,
+}
+
+/// Where a server is stored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum ServerSource {
+	Local,
+	/// `sha256` is the file as last read; an edit sends it back as `baseSha`.
+	Project {
+		project_id: String,
+		rel_path: String,
+		sha256: String,
+	},
+}
+
+/// Why a `.server` file is not listed as a server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProblemKind {
+	Broken,
+	Duplicate,
+	NoId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerFileProblem {
+	pub project_id: String,
+	pub rel_path: String,
+	pub kind: ProblemKind,
+	pub message: String,
 }
 
 /// What the server form sends. Secret fields are write-only: `Some("")` clears
@@ -1572,6 +1605,14 @@ pub struct ServerInput {
 	pub password: Option<String>,
 	pub private_key: Option<String>,
 	pub passphrase: Option<String>,
+	/// Where it is kept: `None` keeps its current home (a new server: this
+	/// computer), `Some("")` is this computer, `Some(projectId)` a file in that
+	/// project. `folder_id` must belong to the resolved home.
+	pub home: Option<String>,
+	/// A project server's `source.sha256` when the form opened: the write is
+	/// refused if the file no longer holds it.
+	#[serde(default)]
+	pub base_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1579,6 +1620,8 @@ pub struct ServerInput {
 pub struct ServerFolder {
 	pub id: String,
 	pub name: String,
+	/// `None` for a folder of this computer's address book.
+	pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1586,6 +1629,8 @@ pub struct ServerFolder {
 pub struct ServerBook {
 	pub folders: Vec<ServerFolder>,
 	pub servers: Vec<Server>,
+	/// `.server` files that are not listed as servers, and why.
+	pub problems: Vec<ServerFileProblem>,
 }
 
 /// One `Host` block of `~/.ssh/config`, offered for import.

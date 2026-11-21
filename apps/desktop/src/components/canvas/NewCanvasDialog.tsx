@@ -6,32 +6,41 @@ import {
 	DialogHeader,
 	DialogTitle,
 	Input,
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
 } from '@factorai/ui';
 import { useState } from 'react';
 
 interface NewCanvasDialogProps {
-	/** Null closes it. */
-	projectName: string | null;
+	open: boolean;
+	projects: { id: string; displayName: string }[];
+	initialProjectId: string | null;
 	error: string | null;
 	pending: boolean;
 	onCancel: () => void;
-	onSubmit: (title: string) => void;
+	onSubmit: (projectId: string, title: string) => void;
 }
 
 /** One-line title prompt for a new canvas (F44). */
 export function NewCanvasDialog({
-	projectName,
+	open,
+	projects,
+	initialProjectId,
 	error,
 	pending,
 	onCancel,
 	onSubmit,
 }: NewCanvasDialogProps) {
 	return (
-		<Dialog open={projectName !== null} onOpenChange={(open) => !open && onCancel()}>
+		<Dialog open={open} onOpenChange={(open) => !open && onCancel()}>
 			<DialogContent>
-				{projectName !== null && (
+				{open && projects.length > 0 && (
 					<Body
-						projectName={projectName}
+						projects={projects}
+						initialProjectId={initialProjectId}
 						error={error}
 						pending={pending}
 						onCancel={onCancel}
@@ -44,24 +53,43 @@ export function NewCanvasDialog({
 }
 
 function Body({
-	projectName,
+	projects,
+	initialProjectId,
 	error,
 	pending,
 	onCancel,
 	onSubmit,
-}: Omit<NewCanvasDialogProps, 'projectName'> & { projectName: string }) {
+}: Omit<NewCanvasDialogProps, 'open'>) {
 	const [value, setValue] = useState('');
+	const [picked, setPicked] = useState(initialProjectId ?? projects[0]?.id ?? '');
+	const project = projects.find((p) => p.id === picked) ?? projects[0];
 	const title = value.trim();
 	return (
 		<form
 			onSubmit={(e) => {
 				e.preventDefault();
-				if (title && !pending) onSubmit(title);
+				if (title && project && !pending) onSubmit(project.id, title);
 			}}
 		>
 			<DialogHeader>
-				<DialogTitle>New canvas in {projectName}</DialogTitle>
+				<DialogTitle>
+					{projects.length === 1 ? `New canvas in ${project?.displayName}` : 'New canvas'}
+				</DialogTitle>
 			</DialogHeader>
+			{projects.length > 1 && (
+				<Select value={project?.id} onValueChange={setPicked}>
+					<SelectTrigger aria-label="Project" className="mt-4">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{projects.map((p) => (
+							<SelectItem key={p.id} value={p.id}>
+								{p.displayName}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			)}
 			<Input
 				autoFocus
 				aria-label="Canvas title"

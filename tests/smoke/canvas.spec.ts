@@ -1,5 +1,12 @@
 import { type Page, expect, test } from '@playwright/test';
-import { FOO_ID, fixtureOneProjectOneSession, installMockBridge } from './fixtures';
+import {
+	ALPHA_ID,
+	FOO_ID,
+	ZULU_ID,
+	fixtureOneProjectOneSession,
+	fixtureTwoProjectsManySessions,
+	installMockBridge,
+} from './fixtures';
 
 /**
  * Canvas mode (specs/05-features.md F44): the third rail entry, a canvas list per
@@ -72,7 +79,7 @@ test.describe('canvas mode', () => {
 		await page.getByTestId('mode-canvas').click();
 		await expect(page.getByTestId('canvas-mode-view')).toBeVisible();
 
-		await page.getByTestId('new-canvas').click();
+		await page.getByTestId('new-canvas-top').click();
 		await page.getByLabel('Canvas title').fill('Brainstorm MVP');
 		await page.getByRole('button', { name: 'Create' }).click();
 
@@ -84,6 +91,85 @@ test.describe('canvas mode', () => {
 		);
 		expect(saved?.[0]).toBe('/home/alice/code/foo/canvas/brainstorm-mvp.canvas');
 		expect(saved?.[1].contents).toContain('"title": "Brainstorm MVP"');
+	});
+
+	test('@smoke projects without canvases are hidden', async ({ page }) => {
+		const fx = fixtureTwoProjectsManySessions();
+		fx.canvasesByProject = {
+			[ALPHA_ID]: [
+				{
+					projectId: ALPHA_ID,
+					path: '/home/alice/code/alpha/canvas/a.canvas',
+					relPath: 'canvas/a.canvas',
+					slug: 'a',
+					title: 'A',
+					modifiedMs: 1,
+				},
+			],
+		};
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+		await expect(page.getByTestId('canvas-project')).toHaveCount(1);
+		await expect(page.getByTestId('canvas-project')).toHaveAttribute('data-project', ALPHA_ID);
+	});
+
+	test('@smoke the top + creates a canvas in the chosen project', async ({ page }) => {
+		const fx = fixtureTwoProjectsManySessions();
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('new-canvas-top').click();
+		await page.getByRole('combobox', { name: 'Project' }).click();
+		await page.getByRole('option', { name: 'alpha' }).click();
+		await page.getByLabel('Canvas title').fill('Plan');
+		await page.getByRole('button', { name: 'Create' }).click();
+		await expect(page.getByTestId('canvas-row')).toHaveText('Plan');
+		const calls = await page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
+		expect(calls.find((c) => c.name === 'create_canvas')?.args).toMatchObject({
+			projectId: ALPHA_ID,
+			title: 'Plan',
+		});
+	});
+
+	test('@smoke the top + preselects the selected canvas project, else the active session project', async ({
+		page,
+	}) => {
+		const fx = fixtureTwoProjectsManySessions();
+		const entry = (projectId: string, root: string) => ({
+			projectId,
+			path: `${root}/canvas/a.canvas`,
+			relPath: 'canvas/a.canvas',
+			slug: 'a',
+			title: 'A',
+			modifiedMs: 1,
+		});
+		fx.canvasesByProject = {
+			[ZULU_ID]: [entry(ZULU_ID, '/home/alice/code/zulu')],
+			[ALPHA_ID]: [entry(ALPHA_ID, '/home/alice/code/alpha')],
+		};
+		await installMockBridge(page, fx);
+		await page.goto('/');
+		// (b) no canvas selected, a session of alpha in front.
+		await page.getByRole('button', { name: 'Expand alpha' }).click();
+		await page.getByRole('link', { name: /Alpha only task/ }).click();
+		await page.getByTestId('mode-canvas').click();
+		await page.getByTestId('new-canvas-top').click();
+		await expect(page.getByRole('combobox', { name: 'Project' })).toHaveText('alpha');
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		// (a) a canvas of zulu selected wins over the session.
+		await page.locator('[data-project="' + ZULU_ID + '"] [data-testid="canvas-row"]').click();
+		await page.getByTestId('new-canvas-top').click();
+		await expect(page.getByRole('combobox', { name: 'Project' })).toHaveText('zulu');
+	});
+
+	test('@smoke empty state when no canvas exists', async ({ page }) => {
+		await installMockBridge(page, fixtureOneProjectOneSession());
+		await page.goto('/');
+		await page.getByTestId('mode-canvas').click();
+		await expect(page.getByText('No canvases yet. Create one in any project.')).toBeVisible();
+		await expect(page.getByTestId('new-canvas-top')).toBeVisible();
+		await expect(page.getByTestId('canvas-project')).toHaveCount(0);
 	});
 
 	test('@smoke an unreadable canvas shows an error card, not a board', async ({ page }) => {

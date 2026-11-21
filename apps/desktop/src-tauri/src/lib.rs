@@ -552,6 +552,7 @@ pub fn run() {
 			commands::servers::create_server_folder,
 			commands::servers::rename_server_folder,
 			commands::servers::delete_server_folder,
+			commands::servers::fix_server_file,
 			commands::servers::ssh_config_hosts,
 			commands::servers::vault_status,
 			commands::servers::vault_unlock,
