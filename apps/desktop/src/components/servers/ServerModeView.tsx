@@ -77,8 +77,8 @@ function closeServerTab(key: string, persistent = false) {
 }
 
 /**
- * The Server mode (F45, ADR-0107): the address book beside the rail and the
- * active SSH session filling the card. The tab strip is in the top bar.
+ * The Server mode (F45, ADR-0107): the active SSH session filling the card; the
+ * address book is the shared sidebar's content (ADR-0115). The tab strip is in the top bar.
  */
 export function ServerModeView() {
 	const book = useServerBook();

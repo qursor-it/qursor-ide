@@ -133,7 +133,7 @@ export function SidebarCollapseButton() {
  * 6px the moment an update staged itself. `h-9` is the file panel header's
  * height, and it is the badge's 24px plus the padding it wants.
  */
-export function SidebarFooter({ extra }: { extra?: ReactNode }) {
+function SidebarFooter({ extra }: { extra?: ReactNode }) {
 	const progress = useIndexerStore((s) => s.progress);
 	return (
 		<footer

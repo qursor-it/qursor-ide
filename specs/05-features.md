@@ -6,6 +6,13 @@ For each feature: behavior, UI, backend touchpoints, edge cases.
 
 ## F1 — Project list
 
+**One sidebar frame since ADR-0115.** Sessions, Git, Canvas and Servers share
+`ModeSidebar`: one stored width (180–480px), one resizer, collapse in every mode,
+the brand in a `h-10.5` header and a `h-9` footer (update badge, zoom). It runs
+from the top of the window to the status bar, beside the 56px rail; each mode
+fills its body. Collapsed, only the app rail remains. What follows describes
+the Sessions content.
+
 **A project is a folder you added.** Not a directory Claude happens to have
 worked in — see [ADR-0011](adr/0011-a-project-is-a-folder-in-the-workspace.md),
 which is the contract this section implements. `~/.claude/projects/` is a
@@ -40,11 +47,12 @@ scan a sidebar for.
 
 ### Collapsed — the rail
 
-**It collapses to a 48px rail rather than to nothing** ([ADR-0038](adr/0038-the-sidebar-collapses-to-a-flat-rail.md)),
+**It collapses to a 56px rail rather than to nothing** ([ADR-0038](adr/0038-the-sidebar-collapses-to-a-flat-rail.md)),
 because it is the app's navigation and a navigation column you dismissed is an
 app with no way to change what you are looking at. The toggle sits in the
-sidebar's own search row, left of the field — this column's state, not window
-chrome, which is what the file-tree toggle in `TopBar` is. The two are
+sidebar frame's header, beside the brand, in every mode (ADR-0115) — this
+column's state, not window chrome, which is what the file-tree toggle in `TopBar`
+is. While collapsed it moves to the left of the top bar's first row. The two are
 deliberately asymmetric for that reason.
 
 `collapsed` is a boolean beside `width`, not a width of zero: a width is how
@@ -60,8 +68,8 @@ F10 already puts there; and one overflow menu carrying what `h-9` cannot —
 indexing, the updater and the zoom controls.
 
 **The rail routes. It does not expand.** Clicking a glyph goes to that project
-and leaves the sidebar at 48px; the search icon goes to `/search`, which has a
-field of its own and takes the caret on arrival. What a 48px column cannot show
+and leaves the sidebar collapsed; the search icon goes to `/search`, which has a
+field of its own and takes the caret on arrival. What a narrow rail cannot show
 — a project's sessions — a **hover card** shows: the same list the expanded row
 draws, from the same component, plus that row's `+`. Right-click gives the same
 project menu minus the reordering, which is off while collapsed along with its
@@ -1241,8 +1249,8 @@ host-agnostic, which is what makes three hosts possible at all.
 
 - **A column of its own**, between the session and the file panel, whenever the
   shell can hold four columns:
-  `shellWidth ≥ sidebarWidth + MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH +
-  panelWidth + gutters`, with a 40px dead band so dragging a window edge across
+  `shellWidth ≥ MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH + panelWidth + gutters`
+  (the shell is the row right of the sidebar, ADR-0115), with a 40px dead band so dragging a window edge across
   the threshold does not strobe the layout. `lib/viewerLayout.ts` is the whole
   rule and it is pure.
 - **A split under the tree** inside the file panel when it cannot, at the
@@ -2938,6 +2946,10 @@ off the file-tree toggle (Q15). It belongs to the keybinding pass.
 ---
 
 ## F16 — Session tabs
+
+**Rows over the work area (ADR-0115).** The top bar's two rows start at the
+sidebar's right edge, not at the window's; the sidebar and rail run full height
+beside them. Collapsed, the rows extend to the rail.
 
 **Back in the top bar since 2026-11-16 (ADR-0100)**, after three days as the
 Inbox (ADR-0092): the work row under the brand row holds the session tabs in
@@ -8402,7 +8414,8 @@ Git mode is added beside them, not instead of them.
 
 ### Placement
 
-**The top bar becomes two rows.**
+**The top bar becomes two rows** (over the work area only since ADR-0115; the
+brand moved to the sidebar's header).
 
 - **Row 1, the tools row** (`h-10.5`, the bar's current height): brand and DEV
   badge, the **`Sessions | Git` switch**, then search, settings and the panel
@@ -8490,7 +8503,7 @@ beside it. Local changes stack the lists above the diff when narrow. Git's
 confirm and error dialogs are mounted once in the shell, for both. The panel's
 tab row scrolls when the tabs outgrow it.
 
-**The sidebar since ADR-0098.** The open repositories are tabs in the top
+**The sidebar since ADR-0098** (inside the shared frame, ADR-0115: its section is kept per repository). The open repositories are tabs in the top
 bar's work row again (ADR-0100), not a list here. The strip ends in a labelled
 **Open project** button (its menu: *Open repository…*, a filter, every project
 with its tile), and with no tab open the card lists the projects, one click
@@ -8912,7 +8925,7 @@ left; a collision becomes `-2`, `-3`, and a file is never overwritten. Extras ar
 "agent"`; **every field the app does not know is written back unchanged.** A
 project with no folder gets no *New canvas*.
 
-**Layout.** Sidebar: the projects, each with its canvases. Centre card: the
+**Layout.** Sidebar (the shared frame, ADR-0115): the projects, each with its canvases. Centre card: the
 board, with a header of project, path, title, save state, the agent-panel toggle
 and close. Right card: the agent panel (below), resizable between 280 and 640 px
 and collapsible; the width and open state are kept.
@@ -9006,8 +9019,8 @@ Sessions.
 vault), ADR-0107 (a tab per SSH session), ADR-0108 (Production Rose).
 
 **What it is.** A third window mode, **Servers**, beside Sessions and Git. Its
-sidebar is an address book: folders, servers, a connection dot, the `PROD` word
-on production servers, the vault's state at the foot. Its top bar has **one tab
+sidebar (the shared frame, ADR-0115) is an address book: folders, servers, a connection dot, the `PROD` word
+on production servers, the vault's state in the frame's footer. Its top bar has **one tab
 per SSH session**; opening a server twice is two tabs (`web01 · 1`, `web01 ·
 2`). A tab's card is the SSH terminal, with the footer shells' pooled xterm,
 base64 stream and kill-on-quit.

@@ -388,7 +388,7 @@ never shows a double line where a block is absent.
 
 ## Layout
 
-A fixed three-column desktop shell inside a bordered window: **sidebar** (resizable, ~288px default, collapsible to a 48px rail) · **session area** (flex, min-width 0) · **file panel** (resizable, collapsible to nothing). The top bar, the sidebar and the status bar are one continuous chrome; the session area, the viewer column and the file panel are **cards on it** (12px radius, hairline, `shadow-card`), inset 8px from the window's right and bottom edges, with the 8px resize handle as the gap between two cards (ADR-0090). The shell itself draws a hairline border on its sides and bottom only — the titlebar caps the top — which is what gives the window a defined silhouette against the desktop. Bottom corners are rounded (12px) on macOS only; on Linux, where the WM clips nothing, a radius takes a bite out of the shell and reads worse than a square corner.
+A fixed three-column desktop shell inside a bordered window: **sidebar** (one shared frame for every mode, ADR-0115: resizable, ~288px default, full height beside the 56px app rail, collapsible in every mode) · **session area** (flex, min-width 0) · **file panel** (resizable, collapsible to nothing). The top bar, the sidebar and the status bar are one continuous chrome; the session area, the viewer column and the file panel are **cards on it** (12px radius, hairline, `shadow-card`), inset 8px from the window's right and bottom edges, with the 8px resize handle as the gap between two cards (ADR-0090). The shell itself draws a hairline border on its sides and bottom only — the titlebar caps the top — which is what gives the window a defined silhouette against the desktop. Bottom corners are rounded (12px) on macOS only; on Linux, where the WM clips nothing, a radius takes a bite out of the shell and reads worse than a square corner.
 
 There is no responsive breakpoint system. This is a desktop application with a
 minimum window size, and the two side panels are user-resized rather than
@@ -400,8 +400,8 @@ than by a constant.
 row 42px (`h-10.5`), work row 36px (`h-9`, the tab strip); file
 panel header, sidebar footer and the session's shell footer 36px (`h-9`);
 session tab 30px (`h-7.5`); **status bar 24px (`h-6`)**, full width under
-every column; menu row 28px; sidebar rows 26–28px; **collapsed
-sidebar 48px wide, on a 36px cell**. The sidebar
+every column; menu row 28px; sidebar rows 26–28px; **sidebar
+header `h-10.5`, level with the top bar's tools row; collapsed rail 56px wide, on a 36px cell**. The sidebar
 footer and the shell footer share a height because they share a **line**: they
 sit level across the bottom of the window, and 6px between them read as a
 misalignment rather than as two surfaces. A row sized by padding moves the moment a taller
@@ -420,7 +420,7 @@ grow, it truncates or scrolls; it does not push its container.
 
 **The App Rail** (ADR-0093). A 56px column at the window's left edge on the chrome, always drawn: Sessions is drawn with our agent mark (`components/brand/AgentMascot.tsx`: a terminal with a `>_` prompt for a face, on lucide's 24px grid and 2px stroke), Git with the branch glyph; 36px items with 18px glyphs, the place you are on raised with the `background` fill and `shadow-sm` (the one icon control that paints a background), settings at the foot. No project tiles: initials do not tell a dozen projects apart (ADR-0098). The rule below about icons only and identity kept still holds for it.
 
-**The Rail Rule.** A column collapsed to 48px carries **icons only, one per
+**The Rail Rule.** A column collapsed to the 56px rail carries **icons only, one per
 cell, at the size the expanded row drew them** — a project's avatar is 20px in
 both. Collapsing takes the label away, not the identity, so a glyph that grew to
 fill the rail would read as a different object from the row it replaced. Nothing
