@@ -23,7 +23,8 @@ holding only server files works as a shared address book.
    `<server id>/<tunnel id in the file>`.
 3. **The scan never writes.** A file with no id, a second file with the same id
    and a file that is not valid are listed as problems (`noId`, `duplicate`,
-   `broken`); the human fixes them (`fix_server_file` writes a fresh id).
+   `broken`); the human fixes them. `fix_server_file` writes a fresh id for
+   `noId` and `duplicate` files; a `broken` file is fixed by editing it.
 4. **Polling, not watching.** `list_servers` rescans the projects of the
    Sessions sidebar that have a folder on disk; the renderer already polls it
    every 3 s.

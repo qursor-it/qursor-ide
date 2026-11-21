@@ -9050,7 +9050,8 @@ again when shown; a renderer reload re-adopts live PTYs by client key.
 
 **Two homes (ADR-0115).** A server is kept *on this computer* (the row above) or
 in a project, as `<project>/servers/<folder…>/<name>.server`: JSON, UTF-8, 2-space
-indent, with `id`, `name`, `host`, `user`, `login` required and `port` 22,
+indent, with `id`, `name`, `host`, `user`, `login` required (an `id` containing `/` makes the
+file broken), `startDir` optional, and `port` 22,
 `environment` `dev`, `agentPolicy` `free`, `persistent` false and `tunnels` []
 by default, validated like a saved server. Unknown fields are kept; `keyPath`
 keeps `~/…` in the file and the UI and is expanded only at login. The file's `id`
@@ -9063,8 +9064,8 @@ folder on disk that are not missing, rescanned on every `list_servers` (the
 renderer polls every 3 s; no watcher). Empty sub-folders of `servers/` count as
 folders. The scan never writes. Problems (`ServerBook.problems`): `broken`
 (invalid JSON or fields, duplicate tunnel ids, or a path escaping `servers/` by a
-symlink), `duplicate` (same id as another file or a local server; action *Make it
-a separate server*) and `noId` (action *Give it an id*); both actions call
+symlink; no button, edit the file), `duplicate` (same id as another file or a local server; action *Make it
+a separate server*) and `noId` (action *Give it an id*); those two actions call
 `fix_server_file(projectId, relPath)`, which writes a fresh id. A server whose
 file vanishes keeps its last valid entry for lookups until restart, never listed.
 
@@ -9077,8 +9078,9 @@ name (`-2`, `-3` only on a clash). Only a new file gets a slug (as F44); renamin
 a server does not rename its file.
 
 **Sidebar.** *This computer* first, then one section per project with a
-`.server` file (valid or not), in the Sessions order: folders, then servers by
-name, problem rows with the message. Each project section has *New folder in
+`.server` file (valid or not), in the Sessions sidebar's project order. Inside a
+section: folders, then servers by name, then problem rows (a warning icon, the
+file name and the fix button, the message on hover). Each project section has *New folder in
 the project* (`create_server_folder(name, projectId?)`); deleting a project
 folder moves its `.server` files up one level, never overwriting.
 
