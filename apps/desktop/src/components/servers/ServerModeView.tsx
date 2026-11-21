@@ -77,8 +77,8 @@ function closeServerTab(key: string, persistent = false) {
 }
 
 /**
- * The Server mode (F45, ADR-0107): the address book beside the rail and the
- * active SSH session filling the card. The tab strip is in the top bar.
+ * The Server mode (F45, ADR-0107): the active SSH session filling the card; the
+ * address book is the shared sidebar's content (ADR-0115). The tab strip is in the top bar.
  */
 export function ServerModeView() {
 	const book = useServerBook();
@@ -102,9 +102,6 @@ export function ServerModeView() {
 
 	return (
 		<div className="flex min-h-0 min-w-0 flex-1 pr-2 pb-2" data-testid="server-mode">
-			<aside className="flex w-64 shrink-0 flex-col bg-chrome">
-				<ServerSidebar servers={servers} folders={book.data?.folders ?? []} />
-			</aside>
 			<section
 				className={`flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border bg-background shadow-card ${
 					server?.environment === 'prod' ? 'border-production' : 'border-border'
@@ -175,7 +172,14 @@ export function ServerModeView() {
 	);
 }
 
-function ServerSidebar({ servers, folders }: { servers: Server[]; folders: ServerFolder[] }) {
+const NO_SERVERS: Server[] = [];
+const NO_FOLDERS: ServerFolder[] = [];
+
+/** The address book, in the shared sidebar's body. */
+export function ServerBook() {
+	const book = useServerBook();
+	const servers = book.data?.servers ?? NO_SERVERS;
+	const folders = book.data?.folders ?? NO_FOLDERS;
 	const qc = useQueryClient();
 	const open = useServerStore((s) => s.open);
 	const collapsed = useServerStore((s) => s.collapsed);
@@ -354,7 +358,6 @@ function ServerSidebar({ servers, folders }: { servers: Server[]; folders: Serve
 				})}
 				{(byFolder.get(null) ?? []).map((s) => row(s, false))}
 			</div>
-			<VaultFooter />
 			<ServerDialog
 				open={editing !== null}
 				onOpenChange={(o) => !o && setEditing(null)}
@@ -449,8 +452,8 @@ function HostKeyDialog({ servers }: { servers: Server[] }) {
 	);
 }
 
-/** The vault's state at the foot of the book, and its master password. */
-function VaultFooter() {
+/** The vault's state in the sidebar footer's row, and its master password. */
+export function VaultFooter() {
 	const qc = useQueryClient();
 	const status = useQuery({ queryKey: queryKeys.vault(), queryFn: () => cmd.vaultStatus() });
 	const [dialog, setDialog] = useState<'unlock' | 'set' | null>(null);
@@ -473,21 +476,22 @@ function VaultFooter() {
 	// the way forward is a master password.
 	const needsSetup = s?.mode === 'keychain' && !!s.keychainError;
 	const locked = (s?.locked ?? false) && !needsSetup;
+	const vaultText = needsSetup
+		? 'No OS keychain'
+		: locked
+			? 'Vault locked'
+			: s?.mode === 'masterPassword'
+				? 'Vault unlocked'
+				: 'Vault (OS keychain)';
 	return (
-		<div className="flex h-9 shrink-0 items-center gap-1.5 px-1 text-xs text-muted-foreground">
+		<div className="flex min-w-0 shrink items-center gap-1.5 text-xs text-muted-foreground">
 			{locked ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
 			<span
 				className="flex-1 truncate"
-				title={s?.keychainError ?? undefined}
+				title={s?.keychainError ?? vaultText}
 				data-testid="vault-state"
 			>
-				{needsSetup
-					? 'No OS keychain'
-					: locked
-						? 'Vault locked'
-						: s?.mode === 'masterPassword'
-							? 'Vault unlocked'
-							: 'Vault (OS keychain)'}
+				{vaultText}
 			</span>
 			{needsSetup ? (
 				<Button
@@ -510,7 +514,7 @@ function VaultFooter() {
 			) : (
 				<DropdownMenu>
 					<DropdownMenuTrigger asChild>
-						<IconButton aria-label="Vault actions">
+						<IconButton aria-label="Vault actions" title="Vault actions">
 							<MoreHorizontal />
 						</IconButton>
 					</DropdownMenuTrigger>

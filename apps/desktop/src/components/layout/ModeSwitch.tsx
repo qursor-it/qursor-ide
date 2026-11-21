@@ -54,6 +54,9 @@ export function ModeSwitch() {
 	const confirmsWaiting = useServerStore((s) => s.confirms.length);
 
 	const pick = (next: AppMode) => {
+		// Clicking the icon of the mode you are in is the way back to a collapsed
+		// sidebar; switching to another mode leaves it as it is (ADR-0115).
+		if (next === mode && collapsed) toggleCollapsed();
 		if (next === 'git') {
 			// Git opens on every project you have a session tab in, so the two strips
 			// list the same projects (F35). Closed Git tabs come back on the next switch.
@@ -65,8 +68,6 @@ export function ModeSwitch() {
 			if (tabs.length === 0 && project && root) openTab(project.id, root);
 			ensureTabs(fromSessions);
 		}
-		// The Sessions icon is also the way back to a collapsed project tree.
-		else if (mode === 'sessions' && collapsed) toggleCollapsed();
 		setMode(next);
 	};
 

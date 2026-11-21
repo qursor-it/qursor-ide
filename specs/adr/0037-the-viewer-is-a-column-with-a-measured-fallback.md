@@ -43,7 +43,7 @@ chosen by measurement rather than by a preference.**
 - The rule is one pure function over measured widths:
 
   ```
-  column ⟺ shellWidth ≥ sidebarWidth + MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH + panelWidth + gutters
+  column ⟺ shellWidth ≥ MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH + panelWidth + gutters
   ```
 
   with a **40px dead band** so dragging a window edge across the threshold does
@@ -78,6 +78,10 @@ second window and it earns its own ADR — window lifetime, kill-on-quit
 between windows are three separate problems, none of which this one has.
 
 ## Consequences
+
+_Amended by [ADR-0115](0115-one-sidebar-for-every-mode-full-height.md), 2026-11-21:
+the sidebar no longer shares a row with the session, so `shellWidth` is the
+width right of it and the rule has no `sidebarWidth` term._
 
 - `FileViewerModal` stops being the host and becomes one of three. The thing F7
   promised — `FileView` is host-agnostic — is now load-bearing rather than

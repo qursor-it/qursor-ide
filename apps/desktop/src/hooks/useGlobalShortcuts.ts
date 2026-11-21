@@ -1,9 +1,10 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useActiveProject } from '@hooks/useActiveProject';
 import { useSettingsModal } from '@hooks/useSettingsModal';
 import { useShortcuts } from '@hooks/useShortcuts';
 import { useStartSession } from '@hooks/useStartSession';
+import { useGitModeStore } from '@store/gitModeStore';
 import { usePanelStore } from '@store/panelStore';
 import { usePaletteStore } from '@store/paletteStore';
 import { useSidebarStore } from '@store/sidebarStore';
@@ -22,7 +23,15 @@ export function useGlobalShortcuts(): void {
 	const settings = useSettingsModal();
 	const togglePanel = usePanelStore((s) => s.toggle);
 	const focusSearch = useSidebarStore((s) => s.focusSearch);
+	const setMode = useGitModeStore((s) => s.setMode);
 	const setPaletteOpen = usePaletteStore((s) => s.setOpen);
+
+	// The search field lives in the Sessions body, so asking for it goes there
+	// first rather than expanding a Git, Canvas or Servers frame (ADR-0115).
+	const focusSessionsSearch = useCallback(() => {
+		setMode('sessions');
+		focusSearch();
+	}, [setMode, focusSearch]);
 
 	const handlers = useMemo(
 		() => ({
@@ -32,10 +41,10 @@ export function useGlobalShortcuts(): void {
 				if (projectId) void startSession(projectId);
 			},
 			openPalette: () => setPaletteOpen(true),
-			focusSidebarSearch: focusSearch,
+			focusSidebarSearch: focusSessionsSearch,
 			// The other half of this action lives in `ViewerPane`: with the editor
 			// focused the chord is find, and it never reaches here.
-			findOrSearch: focusSearch,
+			findOrSearch: focusSessionsSearch,
 			toggleFilePanel: togglePanel,
 			// Q24: opens and focuses, and does nothing when settings is already
 			// open. `open()` on an open section is exactly that — it writes the
@@ -48,7 +57,7 @@ export function useGlobalShortcuts(): void {
 			// drops the registration there.
 			quit: () => void getCurrentWindow().close(),
 		}),
-		[projectId, startSession, focusSearch, setPaletteOpen, togglePanel, settings],
+		[projectId, startSession, focusSessionsSearch, setPaletteOpen, togglePanel, settings],
 	);
 
 	useShortcuts(handlers);

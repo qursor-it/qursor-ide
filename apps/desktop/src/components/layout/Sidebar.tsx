@@ -2,8 +2,6 @@ import { DragChip } from '@components/layout/DragChip';
 import { ImportMenuItems } from '@components/layout/ImportMenuItems';
 import { SidebarGroup } from '@components/layout/SidebarGroup';
 import { SidebarProject } from '@components/layout/SidebarProject';
-import { UpdateBadge } from '@components/layout/UpdateBadge';
-import { ZoomControls } from '@components/layout/ZoomControls';
 import {
 	DndContext,
 	DragOverlay,
@@ -68,18 +66,10 @@ import {
 import { cmd } from '@lib/tauri';
 import { useAttentionStore } from '@store/attentionStore';
 import { useAddProjectStore } from '@store/addProjectStore';
-import { useIndexerStore } from '@store/indexerStore';
 import { type ProjectSort, useSidebarStore } from '@store/sidebarStore';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import {
-	AlertTriangle,
-	ArrowUpDown,
-	FolderPlus,
-	PanelLeftClose,
-	PanelLeftOpen,
-	Search,
-} from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, FolderPlus, Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /** A group row, narrowed once so the dialog and the handlers can name it. */
@@ -197,7 +187,6 @@ export const Sidebar = memo(function Sidebar() {
 		refetchInterval: dragging ? false : 15_000,
 		refetchOnWindowFocus: true,
 	});
-	const progress = useIndexerStore((s) => s.progress);
 	// One dot per project, worst-status-wins over its **open** sessions (F10,
 	// F16). Was a Set of "has anything live", which is all the dot could say when
 	// a live PTY was one state; then it was the live sessions, until a tab could
@@ -220,8 +209,6 @@ export const Sidebar = memo(function Sidebar() {
 	}, [open, unseen]);
 	const { projectId: activeProjectId } = useActiveProject();
 
-	const collapsed = useSidebarStore((s) => s.collapsed);
-	const toggleCollapsed = useSidebarStore((s) => s.toggleCollapsed);
 	const sort = useSidebarStore((s) => s.sort);
 	const setSort = useSidebarStore((s) => s.setSort);
 	const expanded = useSidebarStore((s) => s.expanded);
@@ -532,55 +519,10 @@ export const Sidebar = memo(function Sidebar() {
 		return () => clearTimeout(t);
 	}, [term, navigate]);
 
-	// **Focus must not be left inside a subtree that just changed shape** (F1,
-	// ADR-0038). Collapsing removes the rows focus may be sitting on — nothing
-	// else in the shell does that, so there is no precedent to copy — and focus
-	// on a detached node falls to `<body>`, taking the tab order with it.
-	//
-	// **Only when it is actually in here, and only on the way in.** Expanding
-	// removes nothing: every rail control has an expanded counterpart, so focus
-	// stays where the click left it. And a rescue fired unconditionally would
-	// pull focus off whatever the *rest* of the app had it on, for a button the
-	// user may have reached with the mouse.
-	const toggleRef = useRef<HTMLButtonElement>(null);
-	function onToggleCollapsed() {
-		// The `<aside>` is AppShell's, so this asks the DOM rather than holding a
-		// ref to a node this component does not own.
-		const inHere = document.activeElement?.closest('[data-testid="sidebar"]') !== null;
-		const rescue = !collapsed && inHere;
-		toggleCollapsed();
-		if (rescue) toggleRef.current?.focus();
-	}
-
-	const toggleButton = (
-		<IconButton
-			ref={toggleRef}
-			// `md` in the rail, `sm` everywhere else in this column. A 48px column
-			// gives an icon-only control the room a dense row cannot, and at the
-			// row's 14px the two controls at the top of it read as specks
-			// (DESIGN.md, The Rail Rule).
-			size={collapsed ? 'md' : 'sm'}
-			aria-expanded={!collapsed}
-			aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-			title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-			data-testid="sidebar-collapse"
-			onClick={onToggleCollapsed}
-		>
-			{collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-		</IconButton>
-	);
-
 	return (
 		<>
-			{/* The app's brand row lives in TopBar now — the sidebar starts at
-			    its search box.
-
-			    **The toggle sits here, not in TopBar** (F1, ADR-0038). It is this
-			    column's own state, and a rail is left behind to hold it — which is
-			    the whole reason it can live with the thing it toggles rather than
-			    reading as window chrome beside the file-tree button. */}
-			<div className="flex items-center gap-1.5 py-2.5 pr-3 pl-1.5">
-				{toggleButton}
+			{/* The brand row and the collapse toggle are the frame's (ModeSidebar). */}
+			<div className="flex items-center gap-1.5 py-2.5 pr-3 pl-3">
 				<div className="relative min-w-0 flex-1">
 					<Search className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 size-3.5 text-muted-foreground" />
 					<Input
@@ -804,32 +746,6 @@ export const Sidebar = memo(function Sidebar() {
 					</DragOverlay>
 				</DndContext>
 			</nav>
-
-			{/* **A fixed height, not `py-*`.** The updater's badge is 24px tall and
-			    everything else in this row is 18px or less, so a footer that hugged
-			    its content grew by 6px the moment an update staged itself — the whole
-			    sidebar shifting under you to announce something the badge was already
-			    announcing. `h-9` is the file panel header's height, and it is the
-			    badge's 24px plus the padding it wants. */}
-			<footer
-				data-testid="sidebar-footer"
-				className="flex h-9 shrink-0 items-center gap-2 pr-1.5 pl-3 text-muted-foreground text-xs"
-			>
-				{/* Indexing is transient and worth saying; "Idle" was a label for the
-				    absence of news. In its place, the updater — the one background
-				    thing whose state you might actually want to poke. */}
-				{/* `@container` so the badge inside can drop its label when this cell
-				    gets narrow — the sidebar's 180px floor leaves it about 76px, and a
-				    pill reading `Upd…` is not a degradation, it is a broken word. */}
-				<span className="@container min-w-0 flex-1 truncate">
-					{progress && progress.phase !== 'idle' ? (
-						`Indexing… ${progress.processed}/${progress.total}`
-					) : (
-						<UpdateBadge />
-					)}
-				</span>
-				<ZoomControls />
-			</footer>
 
 			{/* Only reached with projects inside. An empty group goes on the click:
 			    it is a container you can remake in two clicks, and a dialog there is
