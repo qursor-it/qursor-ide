@@ -1,6 +1,7 @@
 import { startAgentSession } from '@components/terminal/Terminal';
 import { queryKeys } from '@lib/queryKeys';
 import { showErrorNotice } from '@lib/errorNotice';
+import { formatError } from '@lib/errors';
 import { cmd, events } from '@lib/tauri';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
@@ -27,7 +28,9 @@ export function useAgentSessionStarts(): void {
 				})
 				.catch((err) => {
 					console.error('agent startSession failed', err);
-					showErrorNotice(`An agent asked for a new session, but it did not start: ${String(err)}`);
+					showErrorNotice(
+						`An agent asked for a new session, but it did not start: ${formatError(err)}`,
+					);
 				});
 		});
 		return () => {
