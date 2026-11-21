@@ -2000,7 +2000,8 @@ export type ServerAuth = 'password' | 'key' | 'keyFile' | 'agent' | 'system';
  *  project's `servers/` folder. */
 export type ServerSource =
 	| { kind: 'local' }
-	| { kind: 'project'; projectId: string; relPath: string };
+	/** `sha256` is the file as last read; an edit sends it back as `baseSha`. */
+	| { kind: 'project'; projectId: string; relPath: string; sha256: string };
 
 /** A saved server. Mirrors the Rust `Server`; carries no secret, only whether
  *  the vault holds one. */
@@ -2038,6 +2039,9 @@ export interface ServerInput {
 	/** Absent/null keeps the server's current home (a new one goes to this
 	 *  computer); `''` is this computer; a project id is that project. */
 	home?: string | null;
+	/** A project server's `source.sha256` when the form opened: the write is
+	 *  refused if the file no longer holds it. */
+	baseSha?: string | null;
 	environment: ServerEnvironment;
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;

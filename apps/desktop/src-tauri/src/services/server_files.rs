@@ -1,4 +1,4 @@
-//! Portable servers (F51): one JSON file per server in
+//! Portable servers (F45): one JSON file per server in
 //! `<project>/servers/**/<slug>.server`. This module only reads, scans and
 //! formats; it never touches the database or rewrites an id.
 
@@ -17,6 +17,7 @@ use crate::services::intelligence::sha256_hex;
 
 const DIR: &str = "servers";
 const EXT: &str = "server";
+const MAX_BYTES: u64 = 1024 * 1024;
 
 pub struct ScanProject {
 	pub id: String,
@@ -121,6 +122,15 @@ fn join_slash(p: &Path) -> String {
 	parts.join("/")
 }
 
+/// An id reaches folder names and vault prefixes: `^[A-Za-z0-9._-]{1,128}$`,
+/// never `.` or `..`.
+fn safe_id(id: &str) -> bool {
+	(1..=128).contains(&id.len())
+		&& id != "."
+		&& id != ".."
+		&& id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 struct Parsed {
 	server: Server,
 	tunnels: Vec<Tunnel>,
@@ -160,6 +170,7 @@ fn parse(
 		private_key: None,
 		passphrase: None,
 		home: None,
+		base_sha: None,
 	};
 	crate::services::servers::validate(&input).map_err(|e| match e {
 		AppError::InvalidInput(m) => Bad::Broken(m),
@@ -167,8 +178,10 @@ fn parse(
 	})?;
 	let id = match doc.id.as_deref().map(str::trim) {
 		None | Some("") => return Err(Bad::NoId),
-		Some(id) if id.contains('/') => {
-			return Err(Bad::Broken("the id cannot contain '/'".into()))
+		Some(id) if !safe_id(id) => {
+			return Err(Bad::Broken(
+				"the id may use only letters, digits, '.', '_' and '-' (at most 128)".into(),
+			))
 		}
 		Some(id) => id.to_string(),
 	};
@@ -212,6 +225,7 @@ fn parse(
 		source: ServerSource::Project {
 			project_id: project_id.to_string(),
 			rel_path: rel_path.to_string(),
+			sha256: sha256_hex(bytes),
 		},
 	};
 	Ok(Parsed { server, tunnels, raw })
@@ -282,6 +296,10 @@ pub fn scan(
 					ProblemKind::Broken,
 					"the file resolves outside the project's servers folder".into(),
 				));
+				continue;
+			}
+			if fs::metadata(&canon).is_ok_and(|m| m.len() > MAX_BYTES) {
+				problems.push(problem(ProblemKind::Broken, "the file is larger than 1 MiB".into()));
 				continue;
 			}
 			let bytes = match fs::read(&canon) {
@@ -527,6 +545,52 @@ mod tests {
 		let s = run(&[sp("P1", &d)]);
 		assert!(s.servers.is_empty());
 		assert_eq!(s.problems[0].kind, ProblemKind::Broken);
+	}
+
+	#[test]
+	fn option_like_user_or_host_is_broken() {
+		let f = |user: &str, host: &str| {
+			format!(r#"{{"id":"a","name":"n","host":"{host}","user":"{user}","login":"system"}}"#)
+		};
+		let d = project(&[
+			("servers/a.server", &f("-oProxyCommand=powershell -c calc #", "h")),
+			("servers/b.server", &f("-oProxyCommand=calc", "h")),
+			("servers/c.server", &f("u", "-oProxyCommand=calc")),
+			("servers/d.server", &f("de\\tploy", "h")),
+		]);
+		let s = run(&[sp("P1", &d)]);
+		assert!(s.servers.is_empty());
+		assert_eq!(s.problems.len(), 4);
+		assert!(s.problems.iter().all(|p| p.kind == ProblemKind::Broken));
+	}
+
+	#[test]
+	fn unsafe_ids_are_broken() {
+		let f = |id: &str| {
+			format!(r#"{{"id":"{id}","name":"n","host":"h","user":"u","login":"agent"}}"#)
+		};
+		let d = project(&[
+			("servers/a.server", &f("..")),
+			("servers/b.server", &f("a:x")),
+			("servers/c.server", &f("C:\\\\x")),
+			("servers/d.server", &f("..\\\\..\\\\x")),
+			("servers/e.server", &f(".")),
+			("servers/f.server", &f(&"x".repeat(129))),
+			("servers/g.server", &f("8f3c2a1e-0b4d-4c2a-9e1f-1234567890ab")),
+		]);
+		let s = run(&[sp("P1", &d)]);
+		assert_eq!(s.servers.len(), 1, "a uuid passes");
+		assert_eq!(s.problems.len(), 6);
+		assert!(s.problems.iter().all(|p| p.kind == ProblemKind::Broken));
+	}
+
+	#[test]
+	fn oversized_file_is_broken() {
+		let big = format!("{}{}", MIN, " ".repeat(1024 * 1024));
+		let d = project(&[("servers/a.server", &big)]);
+		let s = run(&[sp("P1", &d)]);
+		assert!(s.servers.is_empty());
+		assert_eq!(s.problems[0].message, "the file is larger than 1 MiB");
 	}
 
 	#[test]

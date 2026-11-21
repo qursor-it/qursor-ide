@@ -1558,7 +1558,12 @@ pub struct Server {
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ServerSource {
 	Local,
-	Project { project_id: String, rel_path: String },
+	/// `sha256` is the file as last read; an edit sends it back as `baseSha`.
+	Project {
+		project_id: String,
+		rel_path: String,
+		sha256: String,
+	},
 }
 
 /// Why a `.server` file is not listed as a server.
@@ -1604,6 +1609,10 @@ pub struct ServerInput {
 	/// computer), `Some("")` is this computer, `Some(projectId)` a file in that
 	/// project. `folder_id` must belong to the resolved home.
 	pub home: Option<String>,
+	/// A project server's `source.sha256` when the form opened: the write is
+	/// refused if the file no longer holds it.
+	#[serde(default)]
+	pub base_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

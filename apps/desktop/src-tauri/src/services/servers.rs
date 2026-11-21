@@ -1,5 +1,5 @@
 //! The saved-server address book (F45): rows in SQLite, secrets in the vault,
-//! and (F51) servers kept as `.server` files in the sidebar's projects.
+//! and servers kept as `.server` files in the sidebar's projects.
 //!
 //! Validation lives here rather than in the command so every writer — the form,
 //! an import — goes through the same checks.
@@ -107,7 +107,13 @@ fn fresh(conn: &Connection) -> AppResult<MutexGuard<'static, Index>> {
 		.query_map([], |r| r.get(0))?
 		.collect::<Result<_, _>>()?;
 	let mut idx = INDEX.lock();
-	let prior = idx.servers.iter().map(|f| (f.server.id.clone(), f.abs_path.clone())).collect();
+	// A retired id still belongs to its last file, should it come back.
+	let prior = idx
+		.retired
+		.values()
+		.chain(&idx.servers)
+		.map(|f| (f.server.id.clone(), f.abs_path.clone()))
+		.collect();
 	let mut scan = files::scan(&projects, &prior, &db_ids);
 	let rank = |p: &str| projects.iter().position(|x| x.id == p);
 	scan.servers.sort_by_cached_key(|f| (rank(&f.project_id), f.server.name.to_lowercase()));
@@ -213,11 +219,19 @@ pub(crate) fn validate(input: &ServerInput) -> AppResult<()> {
 		return bad("a server needs a name");
 	}
 	let host = input.host.trim();
-	if host.is_empty() || host.chars().any(|c| c.is_whitespace() || c == '@' || c == '/') {
+	if host.is_empty()
+		|| host.starts_with('-')
+		|| host.chars().any(|c| c.is_whitespace() || c.is_control() || c == '@' || c == '/')
+	{
 		return bad("the host is a name or an address, without user@ or a path");
 	}
-	if input.username.trim().is_empty() {
+	let user = input.username.trim();
+	if user.is_empty() {
 		return bad("a server needs a user");
+	}
+	// A leading '-' would reach the system ssh as an option (`-oProxyCommand=…`).
+	if user.starts_with('-') || user.chars().any(|c| c.is_whitespace() || c.is_control()) {
+		return bad("the user cannot start with '-' or contain spaces");
 	}
 	if input.port == 0 {
 		return bad("the port must be between 1 and 65535");
@@ -360,10 +374,15 @@ pub fn save(
 	let current = match &input.id {
 		None => None,
 		Some(id) if get_row(conn, id)?.is_some() => Some(None),
-		Some(id) => Some(Some(
-			file_server(conn, id, false)?
-				.ok_or_else(|| AppError::NotFound(format!("server {id}")))?,
-		)),
+		Some(id) => {
+			let mut f = file_server(conn, id, false)?
+				.ok_or_else(|| AppError::NotFound(format!("server {id}")))?;
+			// The form's own read, not the poll's: a pull while it was open is a conflict.
+			if let Some(base) = &input.base_sha {
+				f.sha256 = base.clone();
+			}
+			Some(Some(f))
+		}
 	};
 	// `None` keeps the current home, `Some("")` is this computer.
 	let home = match input.home.as_deref().map(str::trim) {
@@ -469,6 +488,8 @@ pub fn delete(conn: &Connection, vault: &Vault, id: &str) -> AppResult<()> {
 	if let Some(f) = file {
 		fs::remove_file(&f.abs_path)?;
 		rescan(conn)?;
+		// Gone on purpose: tabs, tunnels and the agent no longer resolve it.
+		INDEX.lock().retired.remove(id);
 	}
 	Ok(())
 }
@@ -546,7 +567,9 @@ pub fn delete_folder(conn: &Connection, id: &str) -> AppResult<()> {
 		let up = project_dir(conn, p, rel.rsplit_once('/').map_or("", |(up, _)| up))?;
 		for e in fs::read_dir(&dir)?.flatten() {
 			let path = e.path();
-			if path.is_file() && path.extension().is_some_and(|x| x == "server") {
+			// `file_type` does not follow a symlink, which could copy e.g. a key into the repo.
+			let file = e.file_type().is_ok_and(|t| t.is_file());
+			if file && path.extension().is_some_and(|x| x == "server") {
 				write_new(&free_path(&up, &path)?, &fs::read(&path)?)?;
 				fs::remove_file(&path)?;
 			}
@@ -830,6 +853,7 @@ mod tests {
 			private_key: None,
 			passphrase: None,
 			home: None,
+			base_sha: None,
 		};
 		assert!(validate(&input).is_err(), "user@ in the host");
 		input.host = "web01".into();
@@ -841,7 +865,7 @@ mod tests {
 		assert!(validate(&input).is_err(), "keyFile without a path");
 	}
 
-	// ── Project files (F51) ──
+	// ── Project files ──
 
 	use crate::db::Db;
 	use crate::models::ProblemKind;
@@ -935,11 +959,22 @@ mod tests {
 			private_key: None,
 			passphrase: None,
 			home: home.map(str::to_string),
+			base_sha: None,
 		}
 	}
 
-	fn project_source(p: &str, rel: &str) -> ServerSource {
-		ServerSource::Project { project_id: p.into(), rel_path: rel.into() }
+	/// The source without its sha, which the tests do not spell out.
+	fn project_source(p: &str, rel: &str) -> (String, String) {
+		(p.into(), rel.into())
+	}
+
+	fn place(s: &ServerSource) -> (String, String) {
+		match s {
+			ServerSource::Project { project_id, rel_path, .. } => {
+				(project_id.clone(), rel_path.clone())
+			}
+			ServerSource::Local => Default::default(),
+		}
 	}
 
 	#[test]
@@ -948,9 +983,9 @@ mod tests {
 		e.put("servers/web.server", &body("s1", "web"));
 		let l = e.list();
 		assert_eq!(l.len(), 1);
-		assert_eq!(l[0].source, project_source(&e.p1, "servers/web.server"));
+		assert_eq!(place(&l[0].source), project_source(&e.p1, "servers/web.server"));
 		let g = e.db.with(|c| get(c, "s1")).unwrap();
-		assert_eq!(g.source, project_source(&e.p1, "servers/web.server"));
+		assert_eq!(place(&g.source), project_source(&e.p1, "servers/web.server"));
 	}
 
 	#[test]
@@ -983,7 +1018,7 @@ mod tests {
 		e.put("servers/web.server", &old);
 		e.list();
 		let saved = e.save(&input(None, "Web", Some(&e.p1))).unwrap();
-		assert_eq!(saved.source, project_source(&e.p1, "servers/web-2.server"));
+		assert_eq!(place(&saved.source), project_source(&e.p1, "servers/web-2.server"));
 		assert_eq!(e.read("servers/web.server"), old);
 		assert!(e.read("servers/web-2.server").contains(&saved.id));
 		assert_eq!(e.list().len(), 2);
@@ -1007,7 +1042,7 @@ mod tests {
 		e.db.with(|c| save_tunnel(c, &t)).unwrap();
 		let moved = e.save(&input(Some(&s.id), "web", Some(&e.p1))).unwrap();
 		assert_eq!(moved.id, s.id);
-		assert_eq!(moved.source, project_source(&e.p1, "servers/web.server"));
+		assert_eq!(place(&moved.source), project_source(&e.p1, "servers/web.server"));
 		let rows: i64 =
 			e.db.with(|c| Ok(c.query_row("SELECT COUNT(*) FROM servers", [], |r| r.get(0))?))
 				.unwrap();
@@ -1045,6 +1080,59 @@ mod tests {
 		e.db.with(|c| delete(c, &e.vault, "s1")).unwrap();
 		assert!(!e.root.join("servers/web.server").exists());
 		assert!(e.list().is_empty());
+	}
+
+	#[test]
+	fn deleted_server_no_longer_resolves() {
+		let e = env();
+		e.put("servers/web.server", &body("s1", "web"));
+		e.list();
+		e.db.with(|c| delete(c, &e.vault, "s1")).unwrap();
+		assert!(matches!(e.db.with(|c| get(c, "s1")), Err(AppError::NotFound(_))));
+	}
+
+	#[test]
+	fn stale_base_sha_is_refused_after_a_rescan() {
+		let e = env();
+		e.put("servers/web.server", &body("s1", "web"));
+		let ServerSource::Project { sha256: base, .. } = e.list().remove(0).source else {
+			panic!("a project server")
+		};
+		let changed = body("s1", "pulled");
+		e.put("servers/web.server", &changed);
+		e.list();
+		let mut i = input(Some("s1"), "mine", None);
+		i.base_sha = Some(base);
+		assert!(matches!(e.save(&i), Err(AppError::Conflict(_))));
+		assert_eq!(e.read("servers/web.server"), changed);
+	}
+
+	#[test]
+	fn a_returning_owner_keeps_its_id_over_a_new_duplicate() {
+		let e = env();
+		e.put("servers/z.server", &body("s1", "owner"));
+		e.list();
+		std::fs::remove_file(e.root.join("servers/z.server")).unwrap();
+		e.list();
+		e.put("servers/z.server", &body("s1", "owner"));
+		e.put("servers/a.server", &body("s1", "newcomer"));
+		let l = e.list();
+		assert_eq!(l.len(), 1);
+		assert_eq!(l[0].name, "owner");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn deleting_a_folder_skips_symlinks() {
+		let e = env();
+		let outside = e._tmp.path().join("secret.server");
+		std::fs::write(&outside, "secret").unwrap();
+		e.put("servers/a/web.server", &body("s1", "web"));
+		std::os::unix::fs::symlink(&outside, e.root.join("servers/a/link.server")).unwrap();
+		e.list();
+		e.db.with(|c| delete_folder(c, &format!("p:{}:a", e.p1))).unwrap();
+		assert!(!e.root.join("servers/link.server").exists());
+		assert!(e.root.join("servers/web.server").exists());
 	}
 
 	#[test]
@@ -1148,7 +1236,7 @@ mod tests {
 		e.put("servers/web.server", &body("s1", "web"));
 		e.list();
 		let saved = e.save(&input(Some("s1"), "renamed", None)).unwrap();
-		assert_eq!(saved.source, project_source(&e.p1, "servers/web.server"));
+		assert_eq!(place(&saved.source), project_source(&e.p1, "servers/web.server"));
 		assert!(e.read("servers/web.server").contains("\"renamed\""));
 		let rows: i64 =
 			e.db.with(|c| Ok(c.query_row("SELECT COUNT(*) FROM servers", [], |r| r.get(0))?))
@@ -1165,7 +1253,7 @@ mod tests {
 		let mut i = input(Some("s1"), "web", None);
 		i.folder_id = Some(format!("p:{}:a", e.p1));
 		let saved = e.save(&i).unwrap();
-		assert_eq!(saved.source, project_source(&e.p1, "servers/a/My Web-2.server"));
+		assert_eq!(place(&saved.source), project_source(&e.p1, "servers/a/My Web-2.server"));
 		assert!(!e.root.join("servers/My Web.server").exists());
 		assert!(e.read("servers/a/My Web-2.server").contains("\"s1\""));
 		assert!(e.read("servers/a/My Web.server").contains("\"s2\""));
@@ -1184,7 +1272,7 @@ mod tests {
 		);
 		e.list();
 		let saved = e.save(&input(Some("s1"), "web", Some(&p2.id))).unwrap();
-		assert_eq!(saved.source, project_source(&p2.id, "servers/My Web.server"));
+		assert_eq!(place(&saved.source), project_source(&p2.id, "servers/My Web.server"));
 		assert!(!e.root.join("servers/My Web.server").exists());
 		let text = std::fs::read_to_string(root2.join("servers/My Web.server")).unwrap();
 		assert!(text.contains("\"x-note\": \"keep\"") && text.contains("5433"), "{text}");

@@ -15,6 +15,12 @@ describe('formatError', () => {
 		expect(out).not.toContain('[object Object]');
 	});
 
+	it("shows a Conflict's own message, which names what changed", () => {
+		expect(
+			formatError({ kind: 'Conflict', message: 'canvas/a.canvas changed on disk; reload' }),
+		).toBe('Conflict: canvas/a.canvas changed on disk; reload');
+	});
+
 	it('unwraps an Error to its message', () => {
 		expect(formatError(new Error('boom'))).toBe('boom');
 	});

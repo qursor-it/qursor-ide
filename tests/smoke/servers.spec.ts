@@ -324,7 +324,12 @@ test.describe('servers', () => {
 	const inZulu = (over: Partial<Server>) =>
 		server({
 			folderId: null,
-			source: { kind: 'project', projectId: ZULU_ID, relPath: `servers/${over.name}.server` },
+			source: {
+				kind: 'project',
+				projectId: ZULU_ID,
+				relPath: `servers/${over.name}.server`,
+				sha256: `sha-${over.name}`,
+			},
 			...over,
 		});
 	const calls = (page: import('@playwright/test').Page, name: string) =>
@@ -429,6 +434,26 @@ test.describe('servers', () => {
 		const input = ((await calls(page, 'save_server'))[0].args as { input: { home: unknown } })
 			.input;
 		expect(input.home).toBe(ALPHA_ID);
+	});
+
+	test('@smoke editing a project server sends the file it was read from', async ({ page }) => {
+		await installMockBridge(page, {
+			...projects,
+			serverBook: { folders: [], servers: [inZulu({ id: 's9', name: 'shared01' })], problems: [] },
+		});
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		const row = page.getByTestId('server-row-shared01');
+		await row.hover();
+		await row.getByRole('button', { name: 'shared01 actions' }).click();
+		await page.getByRole('menuitem', { name: 'Edit…' }).click();
+		const d = page.getByTestId('server-dialog');
+		await d.getByLabel('Name').fill('renamed');
+		await d.getByTestId('server-save').click();
+		await expect(d).toHaveCount(0);
+		const input = ((await calls(page, 'save_server'))[0].args as { input: { baseSha: unknown } })
+			.input;
+		expect(input.baseSha).toBe('sha-shared01');
 	});
 
 	test('@smoke a folder can be made inside a project section', async ({ page }) => {

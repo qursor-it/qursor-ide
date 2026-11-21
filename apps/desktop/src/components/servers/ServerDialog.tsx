@@ -59,6 +59,8 @@ interface Draft {
 	startDir: string;
 	folderId: string;
 	home: string;
+	/** The file the form was filled from, for a project server. */
+	baseSha: string | null;
 	environment: ServerEnvironment;
 	agentPolicy: AgentPolicy;
 	auth: ServerAuth;
@@ -84,6 +86,7 @@ function draftFrom(s: Server | null, folderId: string | null, folders: ServerFol
 		startDir: s?.startDir ?? '',
 		folderId: fid ?? NO_FOLDER,
 		home,
+		baseSha: s?.source.kind === 'project' ? s.source.sha256 : null,
 		environment: s?.environment ?? 'dev',
 		agentPolicy: s?.agentPolicy ?? 'free',
 		auth: s?.auth ?? 'agent',
@@ -107,6 +110,7 @@ function toInput(d: Draft, id?: string): ServerInput {
 		startDir: d.startDir || null,
 		folderId: d.folderId === NO_FOLDER ? null : d.folderId,
 		home: d.home === THIS_COMPUTER ? '' : d.home,
+		baseSha: d.baseSha,
 		environment: d.environment,
 		agentPolicy: d.agentPolicy,
 		auth: d.auth,

@@ -10,7 +10,7 @@ use tauri::State;
 use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
-use crate::models::{Server, ServerBook, ServerFolder, ServerInput, SshConfigHost};
+use crate::models::{Server, ServerBook, ServerFolder, ServerInput, ServerSource, SshConfigHost};
 use crate::services::servers::{self, secret_id};
 use crate::services::ssh::{self, pty, Auth, Target};
 use crate::services::terminal::{LinkDto, LinkMode, TerminalId};
@@ -36,7 +36,14 @@ pub fn list_servers(state: State<'_, AppState>) -> AppResult<ServerBook> {
 #[tauri::command]
 pub fn save_server(state: State<'_, AppState>, input: ServerInput) -> AppResult<Server> {
 	let now = chrono::Utc::now().timestamp_millis();
+	let before = match &input.id {
+		Some(id) => state.db.with(|c| servers::get(c, id)).ok().map(|s| s.source),
+		None => None,
+	};
 	let saved = state.db.with(|c| servers::save(c, &state.vault, &input, now))?;
+	if before.is_some_and(|b| home_changed(&b, &saved.source)) {
+		state.tunnels.stop_server(&saved.id);
+	}
 	// New credentials or a new address take effect on the next login; an idle
 	// connection is dropped so that login happens now, an open tab keeps its own.
 	if !state.terminals.has_ssh_for(&saved.id) {
@@ -62,7 +69,7 @@ pub fn create_server_folder(
 	state.db.with(|c| servers::create_folder(c, &name, project_id.as_deref()))
 }
 
-/// Write a fresh id into a duplicate or id-less `.server` file (F51).
+/// Write a fresh id into a duplicate or id-less `.server` file (F45).
 #[tauri::command]
 pub fn fix_server_file(
 	state: State<'_, AppState>,
@@ -149,9 +156,20 @@ pub(crate) fn target_for(s: &Server, vault: &Vault) -> AppResult<Target> {
 	Ok(Target { host: s.host.clone(), port: s.port, user: s.username.clone(), auth })
 }
 
+/// Another home gives a server's tunnels other ids, orphaning running ones.
+fn home_changed(before: &ServerSource, after: &ServerSource) -> bool {
+	let home = |s: &ServerSource| match s {
+		ServerSource::Local => None,
+		ServerSource::Project { project_id, .. } => Some(project_id.clone()),
+	};
+	home(before) != home(after)
+}
+
 /// The `ssh -t` command line for a server on the system client.
 fn system_argv(s: &Server) -> Vec<String> {
 	let mut v = vec!["ssh".to_string(), "-t".into(), "-p".into(), s.port.to_string()];
+	// `--`: nothing from the address, even from a cloned file, is read as an option.
+	v.push("--".into());
 	v.push(format!("{}@{}", s.username, s.host));
 	if let Some(dir) = s.start_dir.as_deref().filter(|d| !d.is_empty()) {
 		v.extend(ssh::start_in(Some(dir), None));
@@ -249,8 +267,23 @@ mod tests {
 			source: crate::models::ServerSource::Local,
 		};
 		let argv = system_argv(&s);
-		assert_eq!(&argv[..5], ["ssh", "-t", "-p", "2222", "deploy@web01"]);
-		assert!(argv[5].starts_with("exec /bin/sh -c 'cd '\\''/srv/my app"), "{argv:?}");
+		assert_eq!(&argv[..6], ["ssh", "-t", "-p", "2222", "--", "deploy@web01"]);
+		assert!(argv[6].starts_with("exec /bin/sh -c 'cd '\\''/srv/my app"), "{argv:?}");
+	}
+
+	#[test]
+	fn a_change_of_home_is_noticed() {
+		use crate::models::ServerSource::{Local, Project};
+		let p = |id: &str, rel: &str| Project {
+			project_id: id.into(),
+			rel_path: rel.into(),
+			sha256: rel.into(),
+		};
+		assert!(home_changed(&Local, &p("P1", "a")));
+		assert!(home_changed(&p("P1", "a"), &Local));
+		assert!(home_changed(&p("P1", "a"), &p("P2", "a")));
+		assert!(!home_changed(&p("P1", "a"), &p("P1", "b")));
+		assert!(!home_changed(&Local, &Local));
 	}
 }
 
