@@ -4,9 +4,7 @@ import {
 	DEFAULT_SIDEBAR_WIDTH,
 	MAX_SIDEBAR_WIDTH,
 	MIN_SIDEBAR_WIDTH,
-	effectiveSidebarWidth,
 	migrateSidebarState,
-	SIDEBAR_RAIL_WIDTH,
 	useSidebarStore,
 } from '@store/sidebarStore';
 
@@ -63,19 +61,6 @@ describe('migrateSidebarState', () => {
 		// boot — the store falls back to its defaults instead.
 		expect(migrateSidebarState(null, 1)).toBe(null);
 		expect(migrateSidebarState('garbage', 1)).toBe('garbage');
-	});
-});
-
-describe('effectiveSidebarWidth', () => {
-	it('reports the rail, not the stored width, while collapsed', () => {
-		// The bug this exists to stop: a collapsed sidebar still claiming 256px
-		// makes the shell believe it has less room than it has (ADR-0037).
-		expect(effectiveSidebarWidth(256, true)).toBe(SIDEBAR_RAIL_WIDTH);
-		expect(effectiveSidebarWidth(480, true)).toBe(SIDEBAR_RAIL_WIDTH);
-	});
-
-	it('reports the rail plus the stored width while expanded', () => {
-		expect(effectiveSidebarWidth(320, false)).toBe(SIDEBAR_RAIL_WIDTH + 320);
 	});
 });
 

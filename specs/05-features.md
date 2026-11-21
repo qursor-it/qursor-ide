@@ -6,6 +6,13 @@ For each feature: behavior, UI, backend touchpoints, edge cases.
 
 ## F1 — Project list
 
+**One sidebar frame since ADR-0115.** Sessions, Git, Canvas and Servers share
+`ModeSidebar`: one stored width (180–480px), one resizer, collapse in every mode,
+the brand in a `h-10.5` header and a `h-9` footer (update badge, zoom). It runs
+from the top of the window to the status bar, beside the 56px rail; each mode
+fills its body. Collapsed, only the app rail remains. What follows describes
+the Sessions content.
+
 **A project is a folder you added.** Not a directory Claude happens to have
 worked in — see [ADR-0011](adr/0011-a-project-is-a-folder-in-the-workspace.md),
 which is the contract this section implements. `~/.claude/projects/` is a
@@ -38,14 +45,14 @@ all that differs. Width persists (180–480px). The session count was dropped fr
 competed with the status dot for the end of the row, and it is not what you
 scan a sidebar for.
 
-### Collapsed — the rail
+### Collapsed
 
-**It collapses to a 48px rail rather than to nothing** ([ADR-0038](adr/0038-the-sidebar-collapses-to-a-flat-rail.md)),
-because it is the app's navigation and a navigation column you dismissed is an
-app with no way to change what you are looking at. The toggle sits in the
-sidebar's own search row, left of the field — this column's state, not window
-chrome, which is what the file-tree toggle in `TopBar` is. The two are
-deliberately asymmetric for that reason.
+**Collapsing hides the sidebar frame and leaves the app rail** ([ADR-0038](adr/0038-the-sidebar-collapses-to-a-flat-rail.md),
+amended by ADR-0115), in every mode. The rail is the app's navigation, so a
+collapsed sidebar still leaves a way to change what you are looking at. The
+toggle sits in the frame's header, beside the brand — this column's state, not
+window chrome, which is what the file-tree toggle in `TopBar` is. While collapsed
+it moves to the left of the top bar's first row, and focus follows it.
 
 `collapsed` is a boolean beside `width`, not a width of zero: a width is how
 much sidebar you want and this is whether you want one at all, so **expanding
@@ -54,22 +61,11 @@ and there is no drag-to-collapse — the clamp keeps its 180px floor. The toggle
 is instant, with no width transition: every frame of one is a resize event, and
 a PTY resize per frame is a `SIGWINCH` storm at the agent.
 
-The rail holds, top to bottom: the toggle; a search icon; **one glyph per
-project, groups flattened away**, each its avatar badged with the status dot
-F10 already puts there; and one overflow menu carrying what `h-9` cannot —
-indexing, the updater and the zoom controls.
-
-**The rail routes. It does not expand.** Clicking a glyph goes to that project
-and leaves the sidebar at 48px; the search icon goes to `/search`, which has a
-field of its own and takes the caret on arrival. What a 48px column cannot show
-— a project's sessions — a **hover card** shows: the same list the expanded row
-draws, from the same component, plus that row's `+`. Right-click gives the same
-project menu minus the reordering, which is off while collapsed along with its
-keyboard path.
-
-**The toggle is therefore the only control that expands the sidebar, and it is
-mouse-only** until roadmap item 5 picks the bindings for it and the file-tree
-toggle together.
+The old project-glyph rail (search icon, a glyph per project, overflow menu,
+hover cards) is gone. **The toggle and the rail's icon for the mode you are
+in are the controls that expand the sidebar (switching to another mode leaves
+it collapsed), and the toggle is mouse-only** until roadmap
+item 5 picks the bindings for it and the file-tree toggle together.
 
 ### Ordering
 
@@ -364,8 +360,8 @@ enabled: a folder is a folder, and this is where the missing agent is
 cheapest to learn about. A failed add shows its error under the tiles here,
 and in the sidebar header once there is a list to put it over.
 
-The collapsed rail keeps its single `FolderPlus` (the picker) at zero
-projects; the hero beside it is the fuller version of the same offer.
+The hero is the offer at zero projects; a collapsed sidebar shows only the app
+rail, with no picker.
 
 **Import dialog.** Opened for one agent — `list_import_candidates { agent }`,
 `'claude'` when absent — and titled for it, never a merge of two stores. One
@@ -1241,8 +1237,8 @@ host-agnostic, which is what makes three hosts possible at all.
 
 - **A column of its own**, between the session and the file panel, whenever the
   shell can hold four columns:
-  `shellWidth ≥ sidebarWidth + MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH +
-  panelWidth + gutters`, with a 40px dead band so dragging a window edge across
+  `shellWidth ≥ MIN_SESSION_WIDTH + MIN_VIEWER_WIDTH + panelWidth + gutters`
+  (the shell is the row right of the sidebar, ADR-0115), with a 40px dead band so dragging a window edge across
   the threshold does not strobe the layout. `lib/viewerLayout.ts` is the whole
   rule and it is pure.
 - **A split under the tree** inside the file panel when it cannot, at the
@@ -2938,6 +2934,10 @@ off the file-tree toggle (Q15). It belongs to the keybinding pass.
 ---
 
 ## F16 — Session tabs
+
+**Rows over the work area (ADR-0115).** The top bar's two rows start at the
+sidebar's right edge, not at the window's; the sidebar and rail run full height
+beside them. Collapsed, the rows extend to the rail.
 
 **Back in the top bar since 2026-11-16 (ADR-0100)**, after three days as the
 Inbox (ADR-0092): the work row under the brand row holds the session tabs in
@@ -7742,7 +7742,7 @@ title is `"<label> — unseen"` and it carries `data-unseen`. It replaces the
 colour rather than badging it, since a badge on a 6px mark is invisible
 (DESIGN.md § Status Dot). Surfaces: session tabs, sidebar session rows, sidebar
 pending rows, and the project avatar, which shows the aggregate `projectUnseen`
-over its sessions' marks, including in the collapsed rail. Not on the lists in
+over its sessions' marks. Not on the lists in
 `routes/project.tsx` and not on the session header.
 
 ### Desktop notification (Rust)
@@ -8402,13 +8402,14 @@ Git mode is added beside them, not instead of them.
 
 ### Placement
 
-**The top bar becomes two rows.**
+**The top bar becomes two rows** (over the work area only since ADR-0115; the
+brand moved to the sidebar's header).
 
 - **Row 1, the tools row** (`h-10.5`, the bar's current height): brand and DEV
   badge, the **`Sessions | Git` switch**, then search, settings and the panel
   toggle on the right. Nothing in it belongs to one project; the switch changes
   the mode of the whole window.
-- **Row 2, the work row** (`h-9`): in Sessions mode, **the session tab strip
+- **Row 2, the work row** (`h-10`): in Sessions mode, **the session tab strip
   exactly as it is today** — tabs of every open project, grouped under each
   project's coloured chip (F16, ADR-0080), dragging, folding and all. It only
   moves down one row. In Git mode the same strip shows **Git tabs** instead,
@@ -8490,7 +8491,7 @@ beside it. Local changes stack the lists above the diff when narrow. Git's
 confirm and error dialogs are mounted once in the shell, for both. The panel's
 tab row scrolls when the tabs outgrow it.
 
-**The sidebar since ADR-0098.** The open repositories are tabs in the top
+**The sidebar since ADR-0098** (inside the shared frame, ADR-0115: its section is kept per repository). The open repositories are tabs in the top
 bar's work row again (ADR-0100), not a list here. The strip ends in a labelled
 **Open project** button (its menu: *Open repository…*, a filter, every project
 with its tile), and with no tab open the card lists the projects, one click
@@ -8671,8 +8672,7 @@ tab scrolled off the strip, was invisible.
 **Placement (since ADR-0093).** The Inbox is the column beside the app rail,
 its whole height, whenever the rail's Inbox (Sessions) icon is the place picked;
 the project tree is the other list that column can show. Before that it sat at
-the top of the expanded sidebar, under the search box and above `PROJECTS`. Not in the collapsed rail (The Rail Rule: nothing in it is
-read as prose). Capped at 45% of the sidebar's height, scrolling inside itself,
+the top of the expanded sidebar, under the search box and above `PROJECTS`. Not while the sidebar is collapsed (only the app rail is left). Capped at 45% of the sidebar's height, scrolling inside itself,
 so the project tree always keeps room.
 
 **What it lists.** Two sections, each with a count, each absent when empty;
@@ -8912,11 +8912,11 @@ left; a collision becomes `-2`, `-3`, and a file is never overwritten. Extras ar
 "agent"`; **every field the app does not know is written back unchanged.** A
 project with no folder gets no *New canvas*.
 
-**Layout.** Sidebar: only the projects with at least one canvas, each with its
-canvases; with none, *No canvases yet. Create one in any project.* A `[+]` at
-the top opens *New canvas* with a project picker, preselecting the selected
-canvas's project, else the active session's, else the first; each project
-section keeps its own *New canvas*. Centre card: the
+**Layout.** Sidebar (the shared frame, ADR-0115): only the projects with at
+least one canvas, each with its canvases; with none, *No canvases yet. Create
+one in any project.* A `[+]` at the top opens *New canvas* with a project
+picker, preselecting the selected canvas's project, else the active session's,
+else the first; each project section keeps its own *New canvas*. Centre card: the
 board, with a header of project, path, title, save state, the agent-panel toggle
 and close. Right card: the agent panel (below), resizable between 280 and 640 px
 and collapsible; the width and open state are kept.
@@ -9010,8 +9010,8 @@ Sessions.
 vault), ADR-0107 (a tab per SSH session), ADR-0108 (Production Rose).
 
 **What it is.** A third window mode, **Servers**, beside Sessions and Git. Its
-sidebar is an address book: folders, servers, a connection dot, the `PROD` word
-on production servers, the vault's state at the foot. Its top bar has **one tab
+sidebar (the shared frame, ADR-0115) is an address book: folders, servers, a connection dot, the `PROD` word
+on production servers, the vault's state in the frame's footer. Its top bar has **one tab
 per SSH session**; opening a server twice is two tabs (`web01 · 1`, `web01 ·
 2`). A tab's card is the SSH terminal, with the footer shells' pooled xterm,
 base64 stream and kill-on-quit.

@@ -9,7 +9,7 @@ import { ExternalLink, GitBranch } from 'lucide-react';
 import { useState } from 'react';
 import { GitActionBar } from './GitActionBar';
 import { GitHistory } from './GitHistory';
-import { type GitSection } from './GitSidebar';
+import type { GitSection } from '@store/gitModeStore';
 import { LocalChanges } from './LocalChanges';
 
 /**

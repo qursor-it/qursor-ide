@@ -11,11 +11,9 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { useCanvasStore } from '@store/canvasStore';
 import { useGitModeStore } from '@store/gitModeStore';
-import { clampSidebarWidth, useSidebarStore } from '@store/sidebarStore';
 import { useQuery } from '@tanstack/react-query';
 import { PanelRight, X } from 'lucide-react';
 import { Suspense, useEffect, useRef, useState } from 'react';
-import { CanvasSidebar } from './CanvasSidebar';
 import type { SaveState } from './useCanvasDoc';
 
 const SAVE_LABEL: Record<SaveState, string> = {
@@ -25,10 +23,8 @@ const SAVE_LABEL: Record<SaveState, string> = {
 	conflict: 'Changed on disk',
 };
 
-/** The full-window Canvas mode: sidebar, the board's card, the agent's slot (F44). */
+/** The full-window Canvas mode: the board's card, the agent's slot (F44). */
 export function CanvasModeView() {
-	const width = useSidebarStore((s) => s.width);
-	const setWidth = useSidebarStore((s) => s.setWidth);
 	const selected = useCanvasStore((s) => s.selected);
 	const setMode = useGitModeStore((s) => s.setMode);
 	const viewer = useFileViewer();
@@ -39,16 +35,6 @@ export function CanvasModeView() {
 	};
 	return (
 		<div data-testid="canvas-mode-view" className="flex min-h-0 min-w-0 flex-1 pr-2 pb-2">
-			<aside style={{ width }} className="flex shrink-0 flex-col bg-chrome">
-				<CanvasSidebar />
-			</aside>
-			<PanelResizer
-				size={width}
-				onSize={setWidth}
-				edge="right"
-				label="Resize sidebar"
-				clamp={clampSidebarWidth}
-			/>
 			{selected ? (
 				// Keyed on the file so one board never shows another's state.
 				<CanvasCard key={selected.path} onOpenAsText={openAsText} />

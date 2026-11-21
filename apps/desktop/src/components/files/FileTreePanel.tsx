@@ -25,7 +25,6 @@ import {
 	type PanelTab,
 	usePanelStore,
 } from '@store/panelStore';
-import { effectiveSidebarWidth, useSidebarStore } from '@store/sidebarStore';
 import { useViewerStore } from '@store/viewerStore';
 
 /**
@@ -49,7 +48,6 @@ export function FileTreePanel() {
 	// **The rail's 48, not the stored width, once the sidebar is collapsed**
 	// (F1, ADR-0038). A collapsed sidebar still reporting 256 gives this panel a
 	// ceiling 208px tighter than the room it actually has.
-	const sidebarWidth = useSidebarStore((s) => effectiveSidebarWidth(s.width, s.collapsed));
 	const viewer = useFileViewer();
 
 	if (!open) return null;
@@ -61,7 +59,6 @@ export function FileTreePanel() {
 	const split = host === 'split' && viewer.path !== null;
 	const ceiling = maxPanelWidth({
 		shellWidth,
-		sidebarWidth,
 		viewerWidth,
 		host,
 		viewerOpen: viewer.path !== null,

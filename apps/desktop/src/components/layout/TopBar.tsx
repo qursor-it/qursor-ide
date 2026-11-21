@@ -1,26 +1,25 @@
 import { ServerTabs } from '@components/servers/ServerModeView';
-import { Brand } from '@components/brand/Brand';
-import { DevBadge } from '@components/layout/DevBadge';
 import { CanvasTabs } from '@components/layout/CanvasTabs';
 import { GitTabs } from '@components/layout/GitTabs';
 import { SessionTabs } from '@components/layout/SessionTabs';
+import { SidebarCollapseButton } from '@components/layout/ModeSidebar';
 import { Button, IconButton } from '@factorai/ui';
 import { useChordLabel, useChordTitle } from '@hooks/useShortcuts';
 import { usePaletteStore } from '@store/paletteStore';
 import { useGitModeStore } from '@store/gitModeStore';
 import { usePanelStore } from '@store/panelStore';
+import { useSidebarStore } from '@store/sidebarStore';
 import { PanelRight, Search } from 'lucide-react';
 
 /**
- * Full-window header. Deliberately spans above the sidebar too: this is the
- * shape the custom titlebar needs when we drop the OS decorations and
- * reimplement minimise / maximise / close (specs/06-milestones.md M5), so that
- * step becomes "add buttons" rather than "restructure the shell".
+ * The header of everything right of the sidebar: the palette and the work row.
+ * The sidebar frame runs the full height beside it and carries the brand.
  */
 export function TopBar() {
 	const open = usePanelStore((s) => s.open);
 	const toggle = usePanelStore((s) => s.toggle);
 	const mode = useGitModeStore((s) => s.mode);
+	const sidebarCollapsed = useSidebarStore((s) => s.collapsed);
 	// The chord rides on the tooltip these buttons already had (F28).
 	const panelTitle = useChordTitle('Toggle file tree', 'toggleFilePanel');
 	const paletteChord = useChordLabel('openPalette');
@@ -29,8 +28,9 @@ export function TopBar() {
 	return (
 		<div className="shrink-0 bg-chrome">
 			<header className="flex h-10.5 items-center gap-2 px-3">
-				<Brand />
-				<DevBadge />
+				{/* The frame's own toggle is in its header; with the frame gone this is
+				    the way back. */}
+				{sidebarCollapsed && <SidebarCollapseButton />}
 
 				{/* The palette's door (F37), centred in what the tools row leaves. */}
 				<div className="flex min-w-0 flex-1 justify-center px-4">

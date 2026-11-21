@@ -25,23 +25,6 @@ export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 480;
 export const DEFAULT_SIDEBAR_WIDTH = 256;
 
-/** The app rail's fixed width (ADR-0093), always on screen at the window's
- *  left edge; collapsing the sidebar hides only the column beside it. Not a
- *  clamped width and never passed through `clampSidebarWidth`. */
-export const SIDEBAR_RAIL_WIDTH = 56;
-
-/** What the layout should use, which is not always what was dragged.
- *
- *  Every consumer of the sidebar's width is really asking "how much room is the
- *  sidebar taking", and a collapsed sidebar still reporting 256 makes the shell
- *  believe it has less room than it has — the viewer's column then refuses to
- *  appear at a width where it now fits, and the file panel's ceiling comes out
- *  208px short (ADR-0037, `lib/viewerLayout.ts`). Exported so the three call
- *  sites share one answer instead of each writing the ternary. */
-export function effectiveSidebarWidth(width: number, collapsed: boolean): number {
-	return collapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_RAIL_WIDTH + width;
-}
-
 /** Pure, so the drag maths is testable without a pointer — same rule as the
  *  file panel's `clampPanelWidth`. */
 export function clampSidebarWidth(width: number): number {
