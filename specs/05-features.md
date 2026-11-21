@@ -359,8 +359,8 @@ enabled: a folder is a folder, and this is where the missing agent is
 cheapest to learn about. A failed add shows its error under the tiles here,
 and in the sidebar header once there is a list to put it over.
 
-The collapsed rail keeps its single `FolderPlus` (the picker) at zero
-projects; the hero beside it is the fuller version of the same offer.
+The hero is the offer at zero projects; a collapsed sidebar shows only the app
+rail, with no picker.
 
 **Import dialog.** Opened for one agent — `list_import_candidates { agent }`,
 `'claude'` when absent — and titled for it, never a merge of two stores. One
@@ -7741,7 +7741,7 @@ title is `"<label> — unseen"` and it carries `data-unseen`. It replaces the
 colour rather than badging it, since a badge on a 6px mark is invisible
 (DESIGN.md § Status Dot). Surfaces: session tabs, sidebar session rows, sidebar
 pending rows, and the project avatar, which shows the aggregate `projectUnseen`
-over its sessions' marks, including in the collapsed rail. Not on the lists in
+over its sessions' marks. Not on the lists in
 `routes/project.tsx` and not on the session header.
 
 ### Desktop notification (Rust)
