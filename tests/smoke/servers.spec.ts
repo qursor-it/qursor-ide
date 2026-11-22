@@ -7,6 +7,7 @@
 import { expect, test } from '@playwright/test';
 import {
 	ALPHA_ID,
+	fixtureOneProjectOneSession,
 	fixtureTwoProjectsManySessions,
 	installMockBridge,
 	type TestFixture,
@@ -160,6 +161,53 @@ test.describe('servers', () => {
 		await expect.poll(async () => (await calls('agent_link_terminal')).length).toBe(2);
 		const own = (await calls('agent_link_terminal'))[1];
 		expect(own.args).toMatchObject({ mode: 'own' });
+	});
+
+	test('@smoke a terminal can be lent to an open session, from either side', async ({ page }) => {
+		await installMockBridge(page, {
+			...fixtureOneProjectOneSession(),
+			serverBook: book,
+			claudeCli: { installed: true, binaryPath: '/usr/local/bin/claude', version: '2.1.0' },
+		});
+		await page.goto('/');
+		await page.getByRole('button', { name: 'Expand foo' }).click();
+		await page.getByRole('link', { name: /Refactor the auth middleware/ }).click();
+		await expect(page.locator('.xterm:visible')).toBeVisible();
+		const calls = async (name: string) =>
+			page.evaluate(
+				(n) => (window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === n),
+				name,
+			);
+
+		// From the SSH tab: borrowed, so no second view of the session's PTY.
+		await page.getByTestId('mode-servers').click();
+		await page.getByTestId('server-row-web01').dblclick();
+		await expect(page.getByTestId('server-terminal')).toBeVisible();
+		await page.getByTestId('agent-menu').click();
+		await page.getByTestId('agent-lend-session-uuid-001').click();
+		await expect.poll(async () => (await calls('agent_link_terminal')).length).toBe(1);
+		expect((await calls('agent_link_terminal'))[0].args).toMatchObject({
+			sessionId: 'session-uuid-001',
+			mode: 'shared',
+		});
+		await expect(page.getByTestId('agent-pane')).toHaveCount(0);
+		await page.getByTestId('agent-menu').click();
+		await expect(page.getByText('Lent to Refactor the auth middleware')).toBeVisible();
+		await page.getByTestId('agent-detach').click();
+		await expect.poll(async () => (await calls('agent_unlink_terminal')).length).toBe(1);
+
+		// From the session's header.
+		await page.getByTestId('agent-menu').click();
+		await page.getByTestId('agent-lend-session-uuid-001').click();
+		await page.getByTestId('agent-menu').click();
+		await page.getByTestId('agent-goto-session').click();
+		await page.getByTestId('agent-menu').waitFor({ state: 'detached' });
+		await page.getByTestId('session-lend-terminal').click();
+		await page.getByRole('menuitem', { name: /Take back/ }).click();
+		await expect.poll(async () => (await calls('agent_unlink_terminal')).length).toBe(2);
+		await page.getByTestId('session-lend-terminal').click();
+		await page.locator('[data-testid^="lend-tab-"]').click();
+		await expect.poll(async () => (await calls('agent_link_terminal')).length).toBe(3);
 	});
 
 	test('@smoke an agent command on a confirm server waits for the human in a banner', async ({
