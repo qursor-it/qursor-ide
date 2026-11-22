@@ -1,3 +1,4 @@
+import { wheelScrollsX } from '@lib/wheel';
 import { TAB_LOOK } from '@components/layout/SessionTabs';
 import { TabGroup } from '@components/layout/TabGroup';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
@@ -62,7 +63,8 @@ export function GitTabs() {
 			role="tablist"
 			aria-label="Git tabs"
 			data-testid="git-tabs"
-			className="scrollbar-none flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5"
+			className="scrollbar-hairline flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5"
+			onWheel={wheelScrollsX}
 		>
 			{/* `TabGroup` is sortable, so it needs the contexts even with nothing to
 			    move. */}

@@ -65,9 +65,15 @@ interface ServerState {
 /**
  * The Server mode's tabs: one per SSH session, not per server (F45).
  *
- * Persisted without their PTYs: after a restart the tabs come back and each
- * logs in again when it is shown.
+ * Persisted without their PTYs: after a restart the tabs come back
+ * disconnected, and each logs in again only when you press Reconnect. Opening
+ * an SSH session is the human's act, not the app's on launch (F45). A renderer
+ * reload still re-adopts the live PTYs.
  */
+const LAUNCHED = 'qursor.servers.launched';
+/** Why a tab restored after a restart is not connected. */
+const RESTORED = 'Not connected since Qursor was restarted.';
+
 export const useServerStore = create<ServerState>()(
 	persist(
 		(set) => ({
@@ -141,6 +147,17 @@ export const useServerStore = create<ServerState>()(
 				active: s.active,
 				collapsed: s.collapsed,
 			}),
+			// sessionStorage outlives a renderer reload, which re-adopts the live
+			// PTYs, but not a restart of the app, whose PTYs are gone.
+			merge: (persisted, current) => {
+				const p = persisted as Partial<ServerState>;
+				const restarted = sessionStorage.getItem(LAUNCHED) === null;
+				sessionStorage.setItem(LAUNCHED, '1');
+				const tabs = (p.tabs ?? []).map((t) =>
+					restarted ? { ...t, dead: true, error: RESTORED } : t,
+				);
+				return { ...current, ...p, tabs };
+			},
 		},
 	),
 );

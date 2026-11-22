@@ -1,3 +1,4 @@
+import { wheelScrollsX } from '@lib/wheel';
 import {
 	type CloseGesture,
 	CloseSessionConfirm,
@@ -427,17 +428,10 @@ export function SessionTabs() {
 					role="tablist"
 					aria-label="Open tabs"
 					data-testid="session-tabs"
-					// `overflow-x-auto` with the bar hidden: at 42px tall a scrollbar
-					// would eat a third of the strip. The wheel handler below is what
-					// makes it reachable without one.
-					className="scrollbar-none flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5"
-					onWheel={(e) => {
-						// A vertical wheel over a horizontal strip does nothing by default,
-						// which reads as "these tabs are stuck".
-						if (e.deltaY !== 0 && stripRef.current) {
-							stripRef.current.scrollLeft += e.deltaY;
-						}
-					}}
+					// A hairline scrollbar, only while the tabs outrun the strip: it says
+					// there is more, and at 4px it leaves the 42px row its tabs.
+					className="scrollbar-hairline flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5"
+					onWheel={wheelScrollsX}
 				>
 					<SortableContext items={groupSortIds} strategy={horizontalListSortingStrategy}>
 						{groups.map((g) => (

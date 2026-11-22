@@ -472,4 +472,31 @@ test.describe('servers', () => {
 			projectId: ZULU_ID,
 		});
 	});
+
+	test('@smoke after a restart the tabs come back disconnected, and log in only on Reconnect', async ({
+		page,
+	}) => {
+		await page.addInitScript(() => {
+			const tab = { key: 'ssh:t1', serverId: 's1', terminalId: null, dead: false, agent: null };
+			localStorage.setItem(
+				'qursor.servers',
+				JSON.stringify({ state: { tabs: [tab], active: 'ssh:t1', collapsed: [] }, version: 0 }),
+			);
+		});
+		await installMockBridge(page, { serverBook: book });
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		await expect(page.getByText('Not connected since Qursor was restarted.')).toBeVisible();
+		const opens = () =>
+			page.evaluate(
+				() =>
+					(window.__FACTORAI_TEST_CALLS__ ?? []).filter((c) => c.name === 'server_open_shell')
+						.length,
+			);
+		expect(await opens()).toBe(0);
+
+		await page.getByTestId('server-reconnect').click();
+		await expect(page.getByTestId('server-terminal')).toBeVisible();
+		await expect.poll(opens).toBe(1);
+	});
 });

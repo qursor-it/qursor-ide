@@ -1,3 +1,4 @@
+import { wheelScrollsX } from '@lib/wheel';
 import type {
 	Project,
 	Server,
@@ -156,8 +157,15 @@ export function ServerModeView() {
 						<ConfirmBanner tab={tab} />
 						<div className="min-h-0 flex-1">
 							{tab.dead ? (
-								<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+								<div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
 									{tab.error ?? 'The session ended.'}
+									<Button
+										size="sm"
+										data-testid="server-reconnect"
+										onClick={() => reconnectTab(tab.key)}
+									>
+										Reconnect to {server.name}
+									</Button>
 								</div>
 							) : (
 								<div className="flex h-full min-w-0">
@@ -774,7 +782,8 @@ export function ServerTabs() {
 		<div
 			role="tablist"
 			aria-label="SSH sessions"
-			className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+			className="scrollbar-hairline flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+			onWheel={wheelScrollsX}
 		>
 			{tabs.map((t) => {
 				const s = byId.get(t.serverId);

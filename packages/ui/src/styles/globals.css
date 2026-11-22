@@ -44,14 +44,15 @@
 	}
 }
 
-/* A hairline that only appears while scrolling is possible: for strips too
-   short to give a real scrollbar room. */
+/* A thin bar that only appears while scrolling is possible: the tab strips,
+   which are too short to give a real scrollbar room but must still say there
+   are more tabs than fit. */
 @utility scrollbar-hairline {
 	scrollbar-width: thin;
 	scrollbar-color: var(--color-border) transparent;
 	&::-webkit-scrollbar {
-		height: 2px;
-		width: 2px;
+		height: 4px;
+		width: 4px;
 	}
 	&::-webkit-scrollbar-track {
 		background: transparent;

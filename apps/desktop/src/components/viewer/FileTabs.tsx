@@ -1,3 +1,4 @@
+import { wheelScrollsX } from '@lib/wheel';
 import { X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { FileIcon } from '@components/files/FileIcon';
@@ -76,20 +77,13 @@ export function FileTabs({ tabs, active, onOpen, onPin, onClose }: FileTabsProps
 			data-testid="file-tabs"
 			role="tablist"
 			aria-label="Open files"
-			// `scrollbar-none`: the strip scrolls when the files outrun it, the same
-			// way the session strip does, and a scrollbar inside a 30px row eats the
-			// row. The row itself belongs to `ViewerPane`, which shares it with the
+			// `scrollbar-hairline`: the strip scrolls when the files outrun it, the
+			// same way the session strip does, and says so with a 4px bar. The row itself belongs to `ViewerPane`, which shares it with the
 			// pane's two controls — one 36px strip rather than two, because the
 			// column this sits in can be 400px wide.
 			ref={strip}
-			className="scrollbar-none flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1"
-			onWheel={(e) => {
-				// A vertical wheel over a horizontal strip does nothing by default,
-				// which reads as "these tabs are stuck".
-				if (e.deltaY !== 0 && strip.current) {
-					strip.current.scrollLeft += e.deltaY;
-				}
-			}}
+			className="scrollbar-hairline flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1"
+			onWheel={wheelScrollsX}
 		>
 			{tabs.map((tab) => {
 				const name = baseName(tab.path);

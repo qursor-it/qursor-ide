@@ -9055,8 +9055,10 @@ nothing is stored unprotected. No command returns a secret.
 
 **Lifetime.** The last tab of a server closing ends its login within 20s.
 Killing a tab closes its channel and the server hangs the shell up; quitting the
-app does the same for every tab. Tabs persist without their PTYs and log in
-again when shown; a renderer reload re-adopts live PTYs by client key.
+app does the same for every tab. Tabs persist without their PTYs: after a
+restart of the app they come back **disconnected**, each with **Reconnect to
+<name>**, and log in only when you press it (user ask, 2026-11-22). A renderer
+reload re-adopts live PTYs by client key.
 
 **Two homes (ADR-0116).** A server is kept *on this computer* (the row above) or
 in a project, as `<project>/servers/<folder…>/<name>.server`: JSON, UTF-8, 2-space
