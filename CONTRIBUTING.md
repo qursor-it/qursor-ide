@@ -59,7 +59,7 @@ You need:
     sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
       librsvg2-dev libgtk-3-dev libxdo-dev libssl-dev build-essential patchelf file
     ```
-    That is the list CI uses (`.github/workflows/quality.yml`). For other
+    For other
     distributions, see [Tauri's prerequisites](https://tauri.app/start/prerequisites/).
   - **macOS:** the Xcode command line tools, `xcode-select --install`.
   - **Windows:** see [docs/windows-native.md](docs/windows-native.md) for the

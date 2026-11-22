@@ -2,9 +2,8 @@
 //! machine's `sops` produced come back as the plaintext it was made from, and
 //! do its failures classify into sentences a reader can act on.
 //!
-//! **Skipped, loudly, where there is no `sops`.** CI has none — see
-//! `.github/workflows/quality.yml`, which runs `cargo test` on a runner with no
-//! secrets tooling — so these print why they did nothing rather than failing on
+//! **Skipped, loudly, where there is no `sops`.** A machine without the
+//! secrets tooling runs `cargo test` too, so these print why they did nothing rather than failing on
 //! a machine that was never going to pass them. The unit tests in
 //! `services::sops` cover everything that does not need the binary.
 //!
