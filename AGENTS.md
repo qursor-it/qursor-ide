@@ -99,8 +99,8 @@ cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- 
 
 Every one of them was added after the thing it catches had already broken
 `main`; `.claude/skills/quality-gate/SKILL.md` records which and why.
-`.github/workflows/quality.yml` runs all of it except `pnpm e2e` on every PR and
-push to `main`.
+There is no CI on push or PR (removed 2026-11-22): this local gate is the only
+one, so run it before every merge.
 
 For UI or behaviour work, also launch the app and use the feature in the real
 window. Type checking does not validate UX.
@@ -139,7 +139,7 @@ rulesets, and a direct push is refused for everyone, the owner included. The
 ## What this project does not do
 
 Native Windows is an additional x64 target (ADR-0074): `x86_64-pc-windows-msvc`,
-WebView2, ConPTY and an NSIS installer, gated by `windows-native.yml`. Keep it
+WebView2, ConPTY and an NSIS installer, built by `windows-release.yml`. Keep it
 working — a Windows difference is a narrow platform branch, not a reason to drop
 the target. The WSL 2 path (ADR-0044) remains, with its runtime branches in
 `services/wsl.rs`. No ARM64 Windows. No telemetry, analytics or crash reporting in the app — the

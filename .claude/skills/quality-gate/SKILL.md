@@ -96,14 +96,9 @@ reads as dead, and following that advice deletes the export and breaks the test.
 
 ## CI
 
-**CI runs all of this except `e2e`** — `.github/workflows/quality.yml`, on every
-PR and every push to `main`. It is the net under the local gate, not a
-replacement for it. Since ADR-0070 its two jobs are **required checks**: a PR
-cannot merge until both are green, and nothing reaches `main` any other way.
-`pnpm e2e` is declared in the PR template because CI cannot vouch for it. Since
-ADR-0064 it was the upstream release gate (removed, ADR-0087). In place of e2e's incidental coverage it
-builds the renderer (`vite:build`), which catches a bundler-visible break that
-`tsc` doesn't. If you add a check here, add it there.
+**There is no CI on push or PR** (the Quality and Windows native workflows were
+removed on 2026-11-22). This local gate is the only one: run it before merging.
+`pnpm e2e` is declared in the PR template.
 
 ## The quality floor these checks enforce
 
