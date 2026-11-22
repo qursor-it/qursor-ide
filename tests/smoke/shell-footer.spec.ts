@@ -127,7 +127,7 @@ test.describe('the footer belongs to the project', () => {
 		await installMockBridge(page, fixtureTwoSessionsOneProject());
 		await page.goto('/');
 		const sidebar = page.locator('aside');
-		await sidebar.getByText('foo').click();
+		await sidebar.getByText('foo', { exact: true }).click();
 		await page.getByText('Refactor the auth middleware').click();
 		await page.getByTestId('shell-footer').getByRole('button', { name: 'Terminal' }).click();
 		await expect(page.getByTestId('shell-pane')).toBeVisible();
@@ -136,7 +136,7 @@ test.describe('the footer belongs to the project', () => {
 		// across two navigations the footer used to be unmounted by — out to the
 		// project page and into a second session. Clicked rather than `goto`,
 		// which would reload the renderer and prove nothing about navigation.
-		await sidebar.getByText('foo').click();
+		await sidebar.getByText('foo', { exact: true }).click();
 		await expect(page.getByRole('heading', { name: 'foo' })).toBeVisible();
 		await expect(page.getByTestId('shell-pane')).toBeVisible();
 

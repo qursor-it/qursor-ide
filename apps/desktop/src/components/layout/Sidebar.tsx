@@ -209,7 +209,7 @@ export const Sidebar = memo(function Sidebar() {
 		const ids = new Set(Object.values(open).map((t) => t.projectId));
 		return new Map([...ids].map((id) => [id, projectUnseen(open, unseen, id)]));
 	}, [open, unseen]);
-	const { projectId: activeProjectId } = useActiveProject();
+	const { projectId: activeProjectId, project: activeProject } = useActiveProject();
 
 	const sort = useSidebarStore((s) => s.sort);
 	const setSort = useSidebarStore((s) => s.setSort);
@@ -531,10 +531,14 @@ export const Sidebar = memo(function Sidebar() {
 				onChange={setTerm}
 				placeholder="Search projects and sessions…"
 				action={{
-					label: activeProjectId ? 'New session' : 'Open a project to start a session',
+					// Named for the project, so it is not a second "New session" beside
+					// the project page's; disabled where that one is (F1, missing folder).
+					label: activeProject
+						? `New session in ${activeProject.displayName}`
+						: 'Open a project to start a session',
 					testId: 'sidebar-new-session',
-					disabled: !activeProjectId,
-					onClick: () => activeProjectId && void startSession(activeProjectId),
+					disabled: !activeProject || activeProject.missing,
+					onClick: () => activeProject && void startSession(activeProject.id),
 				}}
 			/>
 			<SessionsLive />
