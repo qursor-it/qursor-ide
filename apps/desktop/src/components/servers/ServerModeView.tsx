@@ -5,6 +5,7 @@ import type {
 	ServerBook as ServerBookData,
 	ServerFolder,
 	ServerFileProblem,
+	ServerInput,
 	SidebarRow,
 } from '@factorai/types';
 import {
@@ -19,10 +20,23 @@ import {
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuSeparator,
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 	IconButton,
 	Input,
 } from '@factorai/ui';
+import {
+	DndContext,
+	type DragEndEvent,
+	DragOverlay,
+	PointerSensor,
+	useDraggable,
+	useDroppable,
+	useSensor,
+	useSensors,
+} from '@dnd-kit/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
 	ChevronDown,
@@ -38,7 +52,7 @@ import {
 	TriangleAlert,
 	X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { AgentMenu, AgentPane, ConfirmBanner, RunningChip } from '@components/servers/AgentPane';
 import { ServerDialog } from '@components/servers/ServerDialog';
 import { SftpPanel } from '@components/servers/SftpPanel';
@@ -245,6 +259,26 @@ export function ServerBook() {
 		onSettled: refresh,
 	});
 
+	// Drag a server onto a folder, or onto its home's heading for no folder; the
+	// same as `Move to folder` in its menu (F45). Within its home only: moving a
+	// server into a project's repository is the Edit form's, where it is said.
+	const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+	const [dragging, setDragging] = useState<Server | null>(null);
+	const move = useMutation({
+		mutationFn: (v: { server: Server; folderId: string | null }) =>
+			cmd.saveServer(moveInput(v.server, v.folderId)),
+		onSettled: refresh,
+	});
+	const moveTo = (server: Server, folderId: string | null) => {
+		if (server.folderId !== folderId) move.mutate({ server, folderId });
+	};
+	const onDragEnd = (e: DragEndEvent) => {
+		setDragging(null);
+		const server = servers.find((x) => x.id === e.active.id);
+		const target = e.over?.data.current as DropData | undefined;
+		if (server && target && target.home === homeOf(server)) moveTo(server, target.folderId);
+	};
+
 	const problemRow = (p: ServerFileProblem) => {
 		const label =
 			p.kind === 'duplicate'
@@ -278,64 +312,84 @@ export function ServerBook() {
 
 	const row = (s: Server, indent: boolean) => {
 		const sessions = tabs.filter((t) => t.serverId === s.id).length;
+		const homeFolders = folders.filter((f) => (f.projectId ?? '') === homeOf(s)).sort(byName);
 		return (
-			<div
-				key={s.id}
-				role="button"
-				tabIndex={0}
-				data-testid={`server-row-${s.name}`}
-				title={`${s.username}@${s.host}:${s.port} · double-click to open a session`}
-				onDoubleClick={() => open(s.id)}
-				onKeyDown={(e) => {
-					if (e.key === 'Enter') open(s.id);
-				}}
-				className={`group flex h-7 items-center gap-2 rounded-md pr-1 text-sm hover:bg-secondary/60 ${
-					indent ? 'pl-7' : 'pl-2'
-				}`}
-			>
-				<span
-					className={`size-1.5 shrink-0 rounded-full ${s.connected ? 'bg-status-working' : 'border border-muted-foreground'}`}
-				/>
-				<span className="min-w-0 flex-1 truncate">{s.name}</span>
-				{s.environment === 'prod' && <ProdBadge />}
-				{sessions > 0 && (
-					<span className="text-xs text-muted-foreground tabular-nums">{sessions}</span>
-				)}
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<IconButton
-							aria-label={`${s.name} actions`}
-							className="opacity-0 group-hover:opacity-100"
-						>
-							<MoreHorizontal />
-						</IconButton>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
-						<DropdownMenuItem onSelect={() => open(s.id)}>
-							<TerminalSquare /> Open SSH session
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => setEditing({ server: s, folderId: s.folderId })}>
-							Edit…
-						</DropdownMenuItem>
-						{s.connected && (
-							<DropdownMenuItem
-								onSelect={() =>
-									cmd
-										.serverDisconnect(s.id)
-										.then(refresh)
-										.catch(() => {})
-								}
+			<Draggable key={s.id} id={s.id}>
+				<div
+					role="button"
+					tabIndex={0}
+					data-testid={`server-row-${s.name}`}
+					title={`${s.username}@${s.host}:${s.port} · double-click to open a session`}
+					onDoubleClick={() => open(s.id)}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter') open(s.id);
+					}}
+					className={`group flex h-7 items-center gap-2 rounded-md pr-1 text-sm hover:bg-secondary/60 ${
+						indent ? 'pl-7' : 'pl-2'
+					}`}
+				>
+					<span
+						className={`size-1.5 shrink-0 rounded-full ${s.connected ? 'bg-status-working' : 'border border-muted-foreground'}`}
+					/>
+					<span className="min-w-0 flex-1 truncate">{s.name}</span>
+					{s.environment === 'prod' && <ProdBadge />}
+					{sessions > 0 && (
+						<span className="text-xs text-muted-foreground tabular-nums">{sessions}</span>
+					)}
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<IconButton
+								aria-label={`${s.name} actions`}
+								className="opacity-0 group-hover:opacity-100"
 							>
-								Disconnect
+								<MoreHorizontal />
+							</IconButton>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem onSelect={() => open(s.id)}>
+								<TerminalSquare /> Open SSH session
 							</DropdownMenuItem>
-						)}
-						<DropdownMenuSeparator />
-						<DropdownMenuItem className="text-destructive" onSelect={() => setDeleting(s)}>
-							Delete…
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
+							<DropdownMenuItem onSelect={() => setEditing({ server: s, folderId: s.folderId })}>
+								Edit…
+							</DropdownMenuItem>
+							{s.connected && (
+								<DropdownMenuItem
+									onSelect={() =>
+										cmd
+											.serverDisconnect(s.id)
+											.then(refresh)
+											.catch(() => {})
+									}
+								>
+									Disconnect
+								</DropdownMenuItem>
+							)}
+							{homeFolders.length > 0 && (
+								<DropdownMenuSub>
+									<DropdownMenuSubTrigger data-testid="server-move">
+										Move to folder
+									</DropdownMenuSubTrigger>
+									<DropdownMenuSubContent>
+										{[{ id: null, name: 'No folder' }, ...homeFolders].map((f) => (
+											<DropdownMenuItem
+												key={f.id ?? ''}
+												disabled={s.folderId === f.id}
+												onSelect={() => moveTo(s, f.id)}
+											>
+												{f.name}
+											</DropdownMenuItem>
+										))}
+									</DropdownMenuSubContent>
+								</DropdownMenuSub>
+							)}
+							<DropdownMenuSeparator />
+							<DropdownMenuItem className="text-destructive" onSelect={() => setDeleting(s)}>
+								Delete…
+							</DropdownMenuItem>
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			</Draggable>
 		);
 	};
 
@@ -352,7 +406,11 @@ export function ServerBook() {
 					.map((f) => {
 						const closed = collapsed.includes(f.id);
 						return (
-							<div key={f.id}>
+							<Drop
+								key={f.id}
+								id={`folder:${f.id}`}
+								data={{ home: f.projectId ?? '', folderId: f.id }}
+							>
 								<div className="group flex h-7 items-center gap-1.5 rounded-md pr-1 pl-1 text-sm hover:bg-secondary/60">
 									<button
 										type="button"
@@ -393,7 +451,7 @@ export function ServerBook() {
 									</DropdownMenu>
 								</div>
 								{!closed && inFolder(f).map((s) => row(s, true))}
-							</div>
+							</Drop>
 						);
 					})}
 				{loose.map((s) => row(s, false))}
@@ -489,43 +547,61 @@ export function ServerBook() {
 					</IconButton>
 				}
 			/>
-			<div className="min-h-0 flex-1 overflow-y-auto px-2" data-testid="server-book">
-				{folderForm(null)}
-				<Section title="This computer" testId="local">
-					{tree(
-						folders.filter((f) => f.projectId === null),
-						servers.filter((s) => s.source.kind === 'local'),
-					)}
-				</Section>
-				{projects.map((p) => {
-					const pf = folders.filter((f) => f.projectId === p.id);
-					const ps = servers.filter(
-						(s) => s.source.kind === 'project' && s.source.projectId === p.id,
-					);
-					const pp = problems.filter((x) => x.projectId === p.id);
-					if (!ps.length && !pp.length) return null;
-					return (
-						<Section
-							key={p.id}
-							testId={p.id}
-							title={p.displayName}
-							icon={<ProjectIcon name={p.displayName} size={18} />}
-							action={
-								<IconButton
-									aria-label={`New folder in ${p.displayName}`}
-									title="New folder"
-									onClick={() => setNewFolder({ projectId: p.id, name: '' })}
-								>
-									<FolderPlus />
-								</IconButton>
-							}
+			<DndContext
+				sensors={sensors}
+				onDragStart={(e) => setDragging(servers.find((x) => x.id === e.active.id) ?? null)}
+				onDragCancel={() => setDragging(null)}
+				onDragEnd={onDragEnd}
+			>
+				<div className="min-h-0 flex-1 overflow-y-auto px-2" data-testid="server-book">
+					{folderForm(null)}
+					<Section title="This computer" testId="local" home="">
+						{tree(
+							folders.filter((f) => f.projectId === null),
+							servers.filter((s) => s.source.kind === 'local'),
+						)}
+					</Section>
+					{projects.map((p) => {
+						const pf = folders.filter((f) => f.projectId === p.id);
+						const ps = servers.filter(
+							(s) => s.source.kind === 'project' && s.source.projectId === p.id,
+						);
+						const pp = problems.filter((x) => x.projectId === p.id);
+						if (!ps.length && !pp.length) return null;
+						return (
+							<Section
+								key={p.id}
+								testId={p.id}
+								home={p.id}
+								title={p.displayName}
+								icon={<ProjectIcon name={p.displayName} size={18} />}
+								action={
+									<IconButton
+										aria-label={`New folder in ${p.displayName}`}
+										title="New folder"
+										onClick={() => setNewFolder({ projectId: p.id, name: '' })}
+									>
+										<FolderPlus />
+									</IconButton>
+								}
+							>
+								{folderForm(p.id)}
+								{tree(pf, ps, pp)}
+							</Section>
+						);
+					})}
+				</div>
+				<DragOverlay dropAnimation={null}>
+					{dragging && (
+						<div
+							data-testid="drag-chip"
+							className="pointer-events-none inline-flex max-w-40 items-center gap-2 rounded border border-border bg-card px-2 py-1 text-foreground text-sm shadow-md"
 						>
-							{folderForm(p.id)}
-							{tree(pf, ps, pp)}
-						</Section>
-					);
-				})}
-			</div>
+							<span className="min-w-0 truncate">{dragging.name}</span>
+						</div>
+					)}
+				</DragOverlay>
+			</DndContext>
 			<ServerDialog
 				open={editing !== null}
 				onOpenChange={(o) => !o && setEditing(null)}
@@ -542,25 +618,86 @@ export function ServerBook() {
 function Section({
 	title,
 	testId,
+	home,
 	icon,
 	action,
 	children,
 }: {
 	title: string;
 	testId: string;
+	/** `''` for this computer, else the project id: dropping on the heading
+	 *  takes a server of this home out of its folder. */
+	home: string;
 	icon?: React.ReactNode;
 	action?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	return (
 		<section data-testid="server-section" data-section={testId} className="pb-1">
-			<div className="flex h-7 items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
-				{icon}
-				<span className="min-w-0 flex-1 truncate">{title}</span>
-				{action}
-			</div>
+			<Drop id={`home:${home}`} data={{ home, folderId: null }}>
+				<div className="flex h-7 items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground">
+					{icon}
+					<span className="min-w-0 flex-1 truncate">{title}</span>
+					{action}
+				</div>
+			</Drop>
 			{children}
 		</section>
+	);
+}
+
+interface DropData {
+	home: string;
+	folderId: string | null;
+}
+
+const homeOf = (s: Server) => (s.source.kind === 'project' ? s.source.projectId : '');
+
+/** The save that only changes the folder: secrets are left out, so the vault keeps
+ *  them, and a project file is written only if it is still the one read. */
+function moveInput(s: Server, folderId: string | null): ServerInput {
+	return {
+		id: s.id,
+		name: s.name,
+		host: s.host,
+		port: s.port,
+		username: s.username,
+		startDir: s.startDir,
+		folderId,
+		baseSha: s.source.kind === 'project' ? s.source.sha256 : null,
+		environment: s.environment,
+		agentPolicy: s.agentPolicy,
+		auth: s.auth,
+		keyPath: s.keyPath,
+		persistent: s.persistent,
+	};
+}
+
+/** A server row you can pick up; the drag starts after 4px, so clicks and
+ *  double-clicks still reach the row. */
+function Draggable({ id, children }: { id: string; children: ReactNode }) {
+	const { setNodeRef, listeners, isDragging } = useDraggable({ id });
+	return (
+		<div ref={setNodeRef} {...listeners} className={isDragging ? 'opacity-40' : undefined}>
+			{children}
+		</div>
+	);
+}
+
+/** A folder or a home heading a server can be dropped on. Ringed, as a project
+ *  group is (F1), only while the server held is from the same home. */
+function Drop({ id, data, children }: { id: string; data: DropData; children: ReactNode }) {
+	const { setNodeRef, isOver, active } = useDroppable({ id, data });
+	const held = useServerBook().data?.servers.find((s) => s.id === active?.id);
+	const lit = isOver && held !== undefined && homeOf(held) === data.home;
+	return (
+		<div
+			ref={setNodeRef}
+			data-testid={`server-drop-${id}`}
+			className={lit ? 'rounded-md bg-secondary ring-1 ring-primary' : undefined}
+		>
+			{children}
+		</div>
 	);
 }
 

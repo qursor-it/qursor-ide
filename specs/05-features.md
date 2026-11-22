@@ -9060,6 +9060,13 @@ restart of the app they come back **disconnected**, each with **Reconnect to
 <name>**, and log in only when you press it (user ask, 2026-11-22). A renderer
 reload re-adopts live PTYs by client key.
 
+**Moving a server (user ask, 2026-11-22).** Drag a server row onto a folder, or
+onto its home's heading for no folder; `Move to folder ▸` in its menu is the
+keyboard path. The drag starts after 4px, so clicks and double-clicks still
+reach the row. Only within the server's own home: putting a server into a
+project's repository, or taking it out, stays in the Edit form. The order is
+still by name, so there is no reordering.
+
 **Two homes (ADR-0116).** A server is kept *on this computer* (the row above) or
 in a project, as `<project>/servers/<folder…>/<name>.server`: JSON, UTF-8, 2-space
 indent, with `id`, `name`, `host`, `user`, `login` required (an `id` must match `[A-Za-z0-9._-]{1,128}` and

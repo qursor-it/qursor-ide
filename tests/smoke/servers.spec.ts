@@ -499,4 +499,44 @@ test.describe('servers', () => {
 		await expect(page.getByTestId('server-terminal')).toBeVisible();
 		await expect.poll(opens).toBe(1);
 	});
+
+	test('@smoke a server dragged onto a folder moves there, and the menu does the same', async ({
+		page,
+	}) => {
+		const twoFolders: ServerBook = {
+			...book,
+			folders: [...book.folders, { id: 'f2', name: 'Infra', projectId: null }],
+		};
+		await installMockBridge(page, { serverBook: twoFolders });
+		await page.goto('/');
+		await page.getByTestId('mode-servers').click();
+		const saves = () =>
+			page.evaluate(() =>
+				(window.__FACTORAI_TEST_CALLS__ ?? [])
+					.filter((c) => c.name === 'save_server')
+					.map((c) => c.args as { input: Record<string, unknown> }),
+			);
+
+		const from = await page.getByTestId('server-row-web01').boundingBox();
+		const to = await page.getByTestId('server-drop-folder:f2').boundingBox();
+		if (!from || !to) throw new Error('no box');
+		await page.mouse.move(from.x + 20, from.y + from.height / 2);
+		await page.mouse.down();
+		// dnd-kit reads `over` a move behind: aim twice, a pixel apart.
+		await page.mouse.move(to.x + 30, to.y + 10, { steps: 8 });
+		await page.mouse.move(to.x + 31, to.y + 10);
+		await expect(page.getByTestId('drag-chip')).toHaveText('web01');
+		await page.mouse.up();
+		await expect.poll(async () => (await saves()).length).toBe(1);
+		const [{ input }] = await saves();
+		expect(input).toMatchObject({ id: 's1', folderId: 'f2', name: 'web01' });
+		expect(input).not.toHaveProperty('password');
+
+		await page.getByTestId('server-row-db01').hover();
+		await page.getByRole('button', { name: 'db01 actions', exact: true }).click();
+		await page.getByTestId('server-move').click();
+		await page.getByRole('menuitem', { name: 'No folder' }).click();
+		await expect.poll(async () => (await saves()).length).toBe(2);
+		expect((await saves())[1].input).toMatchObject({ id: 's2', folderId: null });
+	});
 });
