@@ -31,7 +31,6 @@ import {
 	Lock,
 	LockOpen,
 	MoreHorizontal,
-	Plus,
 	Server as ServerIcon,
 	ShieldAlert,
 	TerminalSquare,
@@ -45,6 +44,13 @@ import { SftpPanel } from '@components/servers/SftpPanel';
 import { TunnelsMenu } from '@components/servers/TunnelsMenu';
 import { AgentMark } from '@components/layout/AgentMark';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
+import {
+	LiveRow,
+	LiveSection,
+	NeedsYouPill,
+	SidebarSectionHeader,
+	SidebarToolbar,
+} from '@components/layout/SidebarParts';
 import { agentName } from '@lib/agents';
 import { answerHostKey, reconnectTab, ServerTerminal } from '@components/servers/ServerTerminal';
 import { disposeTerminal } from '@components/terminal/Terminal';
@@ -198,6 +204,12 @@ export function ServerBook() {
 	const collapsed = useServerStore((s) => s.collapsed);
 	const toggleFolder = useServerStore((s) => s.toggleFolder);
 	const tabs = useServerStore((s) => s.tabs);
+	const confirms = useServerStore((s) => s.confirms);
+	const activate = useServerStore((s) => s.activate);
+	const [term, setTerm] = useState('');
+	const q = term.trim().toLowerCase();
+	const matches = (s: Server) =>
+		!q || s.name.toLowerCase().includes(q) || s.host.toLowerCase().includes(q);
 	const [editing, setEditing] = useState<{ server: Server | null; folderId: string | null } | null>(
 		null,
 	);
@@ -320,62 +332,107 @@ export function ServerBook() {
 	};
 
 	/** A home's folders, then its loose servers, then its problem files. */
-	const tree = (fs: ServerFolder[], ss: Server[], ps: ServerFileProblem[] = []) => {
+	const tree = (fs: ServerFolder[], all: Server[], ps: ServerFileProblem[] = []) => {
+		const ss = all.filter(matches);
 		const inFolder = (f: ServerFolder) => ss.filter((s) => s.folderId === f.id).sort(byName);
 		const loose = ss.filter((s) => !fs.some((f) => f.id === s.folderId)).sort(byName);
 		return (
 			<>
-				{[...fs].sort(byName).map((f) => {
-					const closed = collapsed.includes(f.id);
-					return (
-						<div key={f.id}>
-							<div className="group flex h-7 items-center gap-1.5 rounded-md pr-1 pl-1 text-sm hover:bg-secondary/60">
-								<button
-									type="button"
-									className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-									aria-expanded={!closed}
-									onClick={() => toggleFolder(f.id)}
-								>
-									{closed ? (
-										<ChevronRight className="size-3.5 text-muted-foreground" />
-									) : (
-										<ChevronDown className="size-3.5 text-muted-foreground" />
-									)}
-									<Folder className="size-3.5 text-muted-foreground" />
-									<span className="truncate">{f.name}</span>
-								</button>
-								<span className="text-xs text-muted-foreground tabular-nums">
-									{inFolder(f).length}
-								</span>
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<IconButton
-											aria-label={`${f.name} actions`}
-											className="opacity-0 group-hover:opacity-100"
-										>
-											<MoreHorizontal />
-										</IconButton>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end">
-										<DropdownMenuItem onSelect={() => setEditing({ server: null, folderId: f.id })}>
-											New server here…
-										</DropdownMenuItem>
-										<DropdownMenuItem onSelect={() => deleteFolder.mutate(f.id)}>
-											Delete folder (keeps its servers)
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
+				{[...fs]
+					.sort(byName)
+					.filter((f) => !q || inFolder(f).length > 0)
+					.map((f) => {
+						const closed = collapsed.includes(f.id);
+						return (
+							<div key={f.id}>
+								<div className="group flex h-7 items-center gap-1.5 rounded-md pr-1 pl-1 text-sm hover:bg-secondary/60">
+									<button
+										type="button"
+										className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+										aria-expanded={!closed}
+										onClick={() => toggleFolder(f.id)}
+									>
+										{closed ? (
+											<ChevronRight className="size-3.5 text-muted-foreground" />
+										) : (
+											<ChevronDown className="size-3.5 text-muted-foreground" />
+										)}
+										<Folder className="size-3.5 text-muted-foreground" />
+										<span className="truncate">{f.name}</span>
+									</button>
+									<span className="text-xs text-muted-foreground tabular-nums">
+										{inFolder(f).length}
+									</span>
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<IconButton
+												aria-label={`${f.name} actions`}
+												className="opacity-0 group-hover:opacity-100"
+											>
+												<MoreHorizontal />
+											</IconButton>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="end">
+											<DropdownMenuItem
+												onSelect={() => setEditing({ server: null, folderId: f.id })}
+											>
+												New server here…
+											</DropdownMenuItem>
+											<DropdownMenuItem onSelect={() => deleteFolder.mutate(f.id)}>
+												Delete folder (keeps its servers)
+											</DropdownMenuItem>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</div>
+								{!closed && inFolder(f).map((s) => row(s, true))}
 							</div>
-							{!closed && inFolder(f).map((s) => row(s, true))}
-						</div>
-					);
-				})}
+						);
+					})}
 				{loose.map((s) => row(s, false))}
 				{ps.map(problemRow)}
 			</>
 		);
 	};
 	const projects = flatProjects(sidebar.data ?? []);
+
+	// In progress (ADR-0117): agent commands waiting for your yes or no first
+	// (ADR-0110), then each server with SSH sessions open.
+	const nameOf = new Map(servers.map((s) => [s.id, s]));
+	const openOn = [...new Set(tabs.filter((t) => !t.dead).map((t) => t.serverId))];
+	const live = [
+		...confirms.map((c) => (
+			<LiveRow
+				key={c.id}
+				testId="live-server-confirm"
+				mark={<span className="size-2 rounded-full bg-status-waiting" />}
+				label={c.serverName}
+				detail="command to confirm"
+				meta={<NeedsYouPill n={1} />}
+				onClick={() => {
+					const tab = tabs.find((t) => t.terminalId === c.terminalId);
+					if (tab) activate(tab.key);
+				}}
+			/>
+		)),
+		...openOn.map((id) => {
+			const open = tabs.filter((t) => t.serverId === id && !t.dead);
+			const s = nameOf.get(id);
+			return (
+				<LiveRow
+					key={id}
+					testId="live-server"
+					mark={
+						<span
+							className={`size-2 rounded-full ${s?.connected ? 'bg-status-working' : 'bg-status-stopped'}`}
+						/>
+					}
+					label={s?.name ?? id}
+					detail={`${open.length} SSH session${open.length === 1 ? '' : 's'}`}
+					onClick={() => open[0] && activate(open[0].key)}
+				/>
+			);
+		}),
+	];
 
 	/** The name field of a new folder, in the home it was asked for. */
 	const folderForm = (projectId: string | null) =>
@@ -399,26 +456,32 @@ export function ServerBook() {
 		) : null;
 
 	return (
-		<div className="flex min-h-0 flex-1 flex-col px-2">
-			<div className="flex h-9 items-center gap-1 px-1 text-xs font-medium tracking-wider text-muted-foreground uppercase">
-				<span className="flex-1">Servers</span>
-				<IconButton
-					aria-label="New folder"
-					title="New folder"
-					onClick={() => setNewFolder({ projectId: null, name: '' })}
-				>
-					<FolderPlus />
-				</IconButton>
-				<IconButton
-					aria-label="New server"
-					title="New server"
-					data-testid="new-server"
-					onClick={() => setEditing({ server: null, folderId: null })}
-				>
-					<Plus />
-				</IconButton>
-			</div>
-			<div className="min-h-0 flex-1 overflow-y-auto" data-testid="server-book">
+		<div className="flex min-h-0 flex-1 flex-col">
+			<SidebarToolbar
+				value={term}
+				onChange={setTerm}
+				placeholder="Filter servers…"
+				action={{
+					label: 'New server',
+					testId: 'new-server',
+					onClick: () => setEditing({ server: null, folderId: null }),
+				}}
+			/>
+			<LiveSection rows={live} />
+			<SidebarSectionHeader
+				title="Servers"
+				className="mt-2"
+				actions={
+					<IconButton
+						aria-label="New folder"
+						title="New folder"
+						onClick={() => setNewFolder({ projectId: null, name: '' })}
+					>
+						<FolderPlus />
+					</IconButton>
+				}
+			/>
+			<div className="min-h-0 flex-1 overflow-y-auto px-2" data-testid="server-book">
 				{folderForm(null)}
 				<Section title="This computer" testId="local">
 					{tree(

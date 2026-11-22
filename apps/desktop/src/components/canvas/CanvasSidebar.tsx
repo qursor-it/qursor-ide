@@ -1,6 +1,12 @@
 import type { CanvasEntry, Project, SidebarRow } from '@factorai/types';
-import { Button, IconButton } from '@factorai/ui';
+import { Button } from '@factorai/ui';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
+import {
+	LiveRow,
+	LiveSection,
+	SidebarSectionHeader,
+	SidebarToolbar,
+} from '@components/layout/SidebarParts';
 import { useActiveProject } from '@hooks/useActiveProject';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
@@ -43,41 +49,68 @@ export function CanvasSidebar() {
 			setCreatingIn(null);
 		},
 	});
-	const withCanvases = eligible.flatMap((p, i) => {
+	const [term, setTerm] = useState('');
+	const q = term.trim().toLowerCase();
+	const all = eligible.flatMap((p, i) => {
 		const canvases = canvasQs[i]?.data ?? [];
 		return canvases.length ? [{ project: p, canvases }] : [];
 	});
-	const anyLoading = canvasQs.some((q) => q.data === undefined);
+	const withCanvases = all.flatMap(({ project, canvases }) => {
+		const shown = canvases.filter((c) => !q || c.title.toLowerCase().includes(q));
+		return shown.length ? [{ project, canvases: shown }] : [];
+	});
+	const anyLoading = canvasQs.some((r) => r.data === undefined);
+	// In progress: canvases holding edits not yet on disk, the one thing here that
+	// can be lost (F44).
+	const unsaved = useHeldCanvasPaths();
+	const live = all.flatMap(({ project, canvases }) =>
+		canvases
+			.filter((c) => unsaved.includes(c.path))
+			.map((c) => (
+				<LiveRow
+					key={c.path}
+					testId="live-canvas"
+					mark={<span className="size-2 rounded-full bg-amber-400" />}
+					label={c.title}
+					detail={`${project.displayName} · unsaved`}
+					onClick={() => select({ projectId: project.id, path: c.path })}
+				/>
+			)),
+	);
 	return (
 		<nav
 			data-testid="canvas-sidebar"
 			aria-label="Canvases"
-			className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1.5 py-1"
+			className="flex min-h-0 flex-1 flex-col"
 		>
-			<div className="flex h-7 items-center justify-end">
-				<IconButton
-					aria-label="New canvas"
-					title="New canvas"
-					data-testid="new-canvas-top"
-					disabled={!eligible.length}
-					onClick={() => setCreatingIn(eligible)}
-				>
-					<Plus />
-				</IconButton>
+			<SidebarToolbar
+				value={term}
+				onChange={setTerm}
+				placeholder="Filter canvases…"
+				action={{
+					label: 'New canvas',
+					testId: 'new-canvas-top',
+					disabled: !eligible.length,
+					onClick: () => setCreatingIn(eligible),
+				}}
+			/>
+			<LiveSection rows={live} />
+			<SidebarSectionHeader title="Canvases" className="mt-2" />
+			<div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-1.5 pb-1">
+				{!all.length && !anyLoading && (
+					<p className="px-1.5 text-muted-foreground text-sm">
+						No canvases yet. Create one in any project.
+					</p>
+				)}
+				{withCanvases.map(({ project, canvases }) => (
+					<ProjectCanvases
+						key={project.id}
+						project={project}
+						canvases={canvases}
+						onNew={() => setCreatingIn([project])}
+					/>
+				))}
 			</div>
-			{!withCanvases.length && !anyLoading && (
-				<p className="px-2 text-muted-foreground text-sm">
-					No canvases yet. Create one in any project.
-				</p>
-			)}
-			{withCanvases.map(({ project, canvases }) => (
-				<ProjectCanvases
-					key={project.id}
-					project={project}
-					canvases={canvases}
-					onNew={() => setCreatingIn([project])}
-				/>
-			))}
 			<NewCanvasDialog
 				open={creatingIn !== null}
 				projects={creatingIn ?? []}

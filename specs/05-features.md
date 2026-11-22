@@ -10,8 +10,15 @@ For each feature: behavior, UI, backend touchpoints, edge cases.
 `ModeSidebar`: one stored width (180–480px), one resizer, collapse in every mode,
 the brand in a `h-10.5` header and a `h-9` footer (update badge, zoom). It runs
 from the top of the window to the status bar, beside the 56px rail; each mode
-fills its body. Collapsed, only the app rail remains. What follows describes
-the Sessions content.
+fills its body. Collapsed, only the app rail remains.
+
+**Every body opens the same way (ADR-0117).** A toolbar row (the filter, and
+the mode's primary `+`: New session, New branch, New canvas, New server), then
+**In progress** while something is happening (sessions needing you or
+working, conflicts or an unfinished merge/rebase, unsaved canvases, server
+commands waiting for confirmation and servers with SSH sessions open), at most
+five rows plus `N more…`, then the mode's sections under one uppercase
+heading. What follows describes the Sessions content.
 
 **A project is a folder you added.** Not a directory Claude happens to have
 worked in — see [ADR-0011](adr/0011-a-project-is-a-folder-in-the-workspace.md),

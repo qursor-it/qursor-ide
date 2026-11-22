@@ -658,6 +658,20 @@ alternatives were rendered and rejected: `border/40` (a 6/255 step, which fades
 out at a glance) and a dedicated per-theme `--guide` token at roughly 50/255,
 too loud for a mark repeated once per expanded project.
 
+### Sidebar Sections
+
+Every mode's sidebar body is built from the same three parts (ADR-0117):
+
+- **Toolbar**: the filter `Input` with a search glyph, and a filled 32px
+  primary `+` beside it for the mode's one creating action. One primary button
+  per sidebar, never more.
+- **In progress**: a section heading with a `status-working` circle-dot glyph,
+  then 28px rows (mark, label, muted `· detail`, right-aligned count or red
+  pill). Hidden while empty, never an empty heading.
+- **Section heading**: `SidebarSectionHeader`, a 28px row with a 12px medium
+  uppercase `tracking-wider` muted label and IconButtons at the right. When it
+  collapses its section, the chevron sits after the label and appears on hover.
+
 ### Inputs / Fields
 
 - **Style:** 32px tall, 8px radius, 1px `input` border, app-ground fill, 14px

@@ -1,6 +1,8 @@
 import { DragChip } from '@components/layout/DragChip';
 import { ImportMenuItems } from '@components/layout/ImportMenuItems';
 import { SidebarGroup } from '@components/layout/SidebarGroup';
+import { SessionsLive } from '@components/layout/SessionsLive';
+import { SidebarSectionHeader, SidebarToolbar } from '@components/layout/SidebarParts';
 import { SidebarProject } from '@components/layout/SidebarProject';
 import {
 	DndContext,
@@ -38,11 +40,11 @@ import {
 	DropdownMenuTrigger,
 	IconButton,
 	InlineEdit,
-	Input,
 } from '@factorai/ui';
 import { useActiveProject } from '@hooks/useActiveProject';
 import { useAddProject } from '@hooks/useAddProject';
 import { useDragDwell } from '@hooks/useDragDwell';
+import { useStartSession } from '@hooks/useStartSession';
 import { useSessionMarks } from '@hooks/useSessionMarks';
 import { queryKeys } from '@lib/queryKeys';
 import { projectStatus, projectUnseen } from '@lib/sessionGroups';
@@ -69,7 +71,7 @@ import { useAddProjectStore } from '@store/addProjectStore';
 import { type ProjectSort, useSidebarStore } from '@store/sidebarStore';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { AlertTriangle, ArrowUpDown, FolderPlus, Search } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, FolderPlus } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /** A group row, narrowed once so the dialog and the handlers can name it. */
@@ -506,6 +508,7 @@ export const Sidebar = memo(function Sidebar() {
 	// expanded by the time this runs — `focusSearch` does that — but the input
 	// only exists after that render, so the select happens in an effect.
 	const searchRef = useRef<HTMLInputElement>(null);
+	const startSession = useStartSession();
 	const searchFocusRequest = useSidebarStore((s) => s.searchFocusRequest);
 	useEffect(() => {
 		if (searchFocusRequest === 0) return;
@@ -522,94 +525,97 @@ export const Sidebar = memo(function Sidebar() {
 	return (
 		<>
 			{/* The brand row and the collapse toggle are the frame's (ModeSidebar). */}
-			<div className="flex items-center gap-1.5 py-2.5 pr-3 pl-3">
-				<div className="relative min-w-0 flex-1">
-					<Search className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 size-3.5 text-muted-foreground" />
-					<Input
-						ref={searchRef}
-						type="search"
-						value={term}
-						onChange={(e) => setTerm(e.target.value)}
-						placeholder="Search projects and sessions…"
-						className="pl-7"
-					/>
-				</div>
-			</div>
+			<SidebarToolbar
+				inputRef={searchRef}
+				value={term}
+				onChange={setTerm}
+				placeholder="Search projects and sessions…"
+				action={{
+					label: activeProjectId ? 'New session' : 'Open a project to start a session',
+					testId: 'sidebar-new-session',
+					disabled: !activeProjectId,
+					onClick: () => activeProjectId && void startSession(activeProjectId),
+				}}
+			/>
+			<SessionsLive />
 
 			{/* Outside the scroll container, not `position: sticky` inside it: the
 			    header then needs an opaque background and a z-index to stop rows
 			    showing through as they pass under, and it still scrolls a pixel
 			    before it sticks. A sibling above the scroller simply never moves. */}
-			<div className="flex shrink-0 items-center gap-1 pt-3 pr-3 pb-2 pl-3">
-				<span className="flex-1 font-medium text-muted-foreground text-xs uppercase tracking-wider">
-					Projects
-				</span>
-				{/* Two doors onto one action (ADR-0011): the picker gives
+			<SidebarSectionHeader
+				title="Projects"
+				className="mt-2"
+				actions={
+					<>
+						{/* Two doors onto one action (ADR-0011): the picker gives
 				    `add_project` a path you browsed to, the dialog gives it paths
 				    an agent already knows. A menu rather than two more icons — the
 				    header is 180px at its narrowest and already carries sort. */}
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<IconButton
-							aria-label="Add a project or group"
-							title="Add a project or group"
-							data-testid="add-project-menu"
-							disabled={adding}
-						>
-							<FolderPlus />
-						</IconButton>
-					</DropdownMenuTrigger>
-					{/* **`onCloseAutoFocus` prevented, and it is load-bearing.** Radix
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<IconButton
+									aria-label="Add a project or group"
+									title="Add a project or group"
+									data-testid="add-project-menu"
+									disabled={adding}
+								>
+									<FolderPlus />
+								</IconButton>
+							</DropdownMenuTrigger>
+							{/* **`onCloseAutoFocus` prevented, and it is load-bearing.** Radix
 					    returns focus to the trigger as the menu closes, which lands
 					    *after* `New Group…` has mounted the inline name editor — and an
 					    editor that treats blur as commit closes itself instantly. Nothing
 					    in this menu wants focus back on the button: each item either
 					    opens a dialog, a picker, or an editor that focuses itself. */}
-					<DropdownMenuContent
-						align="end"
-						className="w-52"
-						onCloseAutoFocus={(e) => e.preventDefault()}
-					>
-						<DropdownMenuItem data-testid="add-project" onSelect={() => void addProject()}>
-							Add Project…
-						</DropdownMenuItem>
-						<ImportMenuItems label={(name) => `Import from ${name}…`} />
-						{/* Below the separator: the two Add doors above it are one action
+							<DropdownMenuContent
+								align="end"
+								className="w-52"
+								onCloseAutoFocus={(e) => e.preventDefault()}
+							>
+								<DropdownMenuItem data-testid="add-project" onSelect={() => void addProject()}>
+									Add Project…
+								</DropdownMenuItem>
+								<ImportMenuItems label={(name) => `Import from ${name}…`} />
+								{/* Below the separator: the two Add doors above it are one action
 						    with two sources (ADR-0011), and making a group is a different
 						    kind of act rather than a third door onto the same one. */}
-						<DropdownMenuSeparator />
-						<DropdownMenuItem data-testid="new-group" onSelect={() => void createGroup()}>
-							New Group…
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<IconButton aria-label="Sort and expand projects" title="Sort and expand projects">
-							<ArrowUpDown />
-						</IconButton>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-44">
-						<DropdownMenuLabel>Sort</DropdownMenuLabel>
-						{/* `Manual` first and default: it is the order you built, and the
+								<DropdownMenuSeparator />
+								<DropdownMenuItem data-testid="new-group" onSelect={() => void createGroup()}>
+									New Group…
+								</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<IconButton aria-label="Sort and expand projects" title="Sort and expand projects">
+									<ArrowUpDown />
+								</IconButton>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end" className="w-44">
+								<DropdownMenuLabel>Sort</DropdownMenuLabel>
+								{/* `Manual` first and default: it is the order you built, and the
 						    other two are views over it that write nothing. Picking one of
 						    them turns the drag off rather than reinterpreting it. */}
-						<DropdownMenuRadioGroup
-							value={sort}
-							onValueChange={(value) => setSort(value as ProjectSort)}
-						>
-							<DropdownMenuRadioItem value="manual">Manual</DropdownMenuRadioItem>
-							<DropdownMenuRadioItem value="name">Name</DropdownMenuRadioItem>
-							<DropdownMenuRadioItem value="recent">Recent</DropdownMenuRadioItem>
-						</DropdownMenuRadioGroup>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => expandAll(allExpandableIds)}>
-							Expand all
-						</DropdownMenuItem>
-						<DropdownMenuItem onSelect={() => collapseAll()}>Collapse all</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
+								<DropdownMenuRadioGroup
+									value={sort}
+									onValueChange={(value) => setSort(value as ProjectSort)}
+								>
+									<DropdownMenuRadioItem value="manual">Manual</DropdownMenuRadioItem>
+									<DropdownMenuRadioItem value="name">Name</DropdownMenuRadioItem>
+									<DropdownMenuRadioItem value="recent">Recent</DropdownMenuRadioItem>
+								</DropdownMenuRadioGroup>
+								<DropdownMenuSeparator />
+								<DropdownMenuItem onSelect={() => expandAll(allExpandableIds)}>
+									Expand all
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => collapseAll()}>Collapse all</DropdownMenuItem>
+							</DropdownMenuContent>
+						</DropdownMenu>
+					</>
+				}
+			/>
 
 			{/* In the header rather than a toast: it belongs to the button that
 			    caused it, and it clears the next time you press that button. With

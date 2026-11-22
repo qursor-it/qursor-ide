@@ -1,4 +1,11 @@
 import {
+	LiveRow,
+	LiveSection,
+	NeedsYouPill,
+	SidebarSectionHeader,
+	SidebarToolbar,
+} from '@components/layout/SidebarParts';
+import {
 	Button,
 	ContextMenu,
 	ContextMenuContent,
@@ -21,12 +28,14 @@ import {
 	Archive,
 	Check,
 	ChevronRight,
+	CircleAlert,
 	FilePen,
 	Folder,
 	FolderGit2,
 	FolderOpen,
 	GitBranch,
 	GitCommitVertical,
+	GitMerge,
 	Globe,
 	Tag,
 } from 'lucide-react';
@@ -35,6 +44,7 @@ import { PromptDialog } from './PromptDialog';
 import { useGitOp } from './useGitOp';
 import { useQuickAgent } from './useQuickAgent';
 
+import type { GitRepoOp } from '@factorai/types';
 import type { GitSection } from '@store/gitModeStore';
 
 interface GitSidebarProps {
@@ -63,9 +73,21 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 	const head = refs?.head ?? null;
 	const [integrate, setIntegrate] = useState<IntegrateRequest | null>(null);
 
+	// Polled by the rail's conflict badge, which shares the cache entry.
+	const repoState = useQuery({
+		queryKey: queryKeys.gitRepoState(dir),
+		queryFn: () => cmd.gitRepoState(dir),
+	}).data;
+	const conflicts = repoState?.conflicted.length ?? 0;
+
+	const [term, setTerm] = useState('');
+	const q = term.trim().toLowerCase();
+	const matches = (name: string) => !q || name.toLowerCase().includes(q);
+
 	const toggled = useGitModeStore((s) => s.toggled);
 	const toggle = useGitModeStore((s) => s.toggle);
-	const open = (key: string, byDefault = true) => isOpen(toggled, key, byDefault);
+	// A filter opens everything, so a match inside a closed folder still shows.
+	const open = (key: string, byDefault = true) => !!q || isOpen(toggled, key, byDefault);
 
 	const nav = (
 		label: ReactNode,
@@ -230,26 +252,66 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 	};
 
 	const group = (key: string, title: string, children: ReactNode) => (
-		<section data-testid={`git-section-${key}`}>
-			<TreeToggle
-				depth={0}
-				heading
+		<section data-testid={`git-section-${key}`} className="mt-2">
+			<SidebarSectionHeader
+				title={title}
+				className="px-1.5"
 				open={open(`section/${key}`)}
 				onToggle={() => toggle(`section/${key}`)}
-			>
-				{title}
-			</TreeToggle>
+			/>
 			{open(`section/${key}`) && children}
 		</section>
 	);
 
+	const localNames = refs?.local.map((b) => b.name).filter(matches) ?? [];
+	const remotes = (refs?.remotes ?? [])
+		.map((r) => ({ ...r, branches: r.branches.filter(matches) }))
+		.filter((r) => !q || r.branches.length > 0);
+	const tags = refs?.tags.filter(matches) ?? [];
+	const stashes = refs?.stashes.filter((x) => matches(x.message)) ?? [];
+
+	const live = [
+		...(conflicts > 0
+			? [
+					<LiveRow
+						key="conflicts"
+						testId="live-git-conflicts"
+						mark={<CircleAlert className="text-destructive" />}
+						label="Conflicts"
+						meta={<NeedsYouPill n={conflicts} />}
+						onClick={() => onSection('changes')}
+					/>,
+				]
+			: []),
+		...(repoState && repoState.op !== 'none'
+			? [
+					<LiveRow
+						key="op"
+						testId="live-git-op"
+						mark={<GitMerge />}
+						label={`${OP_LABEL[repoState.op]} in progress`}
+						onClick={() => onSection('changes')}
+					/>,
+				]
+			: []),
+	];
+
 	return (
-		<nav
-			data-testid="git-sidebar"
-			aria-label="Repository"
-			className="flex min-h-0 flex-1 flex-col px-1.5 py-1"
-		>
-			<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+		<nav data-testid="git-sidebar" aria-label="Repository" className="flex min-h-0 flex-1 flex-col">
+			<SidebarToolbar
+				value={term}
+				onChange={setTerm}
+				placeholder="Filter branches and tags…"
+				action={{
+					label: head ? `New branch from ${head}` : 'New branch',
+					testId: 'git-new-branch',
+					disabled: !head,
+					onClick: () => head && setNaming({ kind: 'branch', at: head }),
+				}}
+			/>
+			<LiveSection rows={live} />
+			<div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5 pb-1">
+				<SidebarSectionHeader title="Views" className="mt-2 px-1.5" />
 				{nav(
 					<>
 						Local changes
@@ -269,18 +331,14 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 				)}
 
 				{refs &&
-					group(
-						'branches',
-						'Branches',
-						branchNodes(branchTree(refs.local.map((b) => b.name)), 1, 'local'),
-					)}
+					(localNames.length > 0 || !q) &&
+					group('branches', 'Branches', branchNodes(branchTree(localNames), 1, 'local'))}
 
-				{refs &&
-					refs.remotes.length > 0 &&
+				{remotes.length > 0 &&
 					group(
 						'remotes',
 						'Remotes',
-						refs.remotes.map((r) => (
+						remotes.map((r) => (
 							<div key={r.remote}>
 								<TreeToggle
 									depth={1}
@@ -300,12 +358,11 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 						)),
 					)}
 
-				{refs &&
-					refs.tags.length > 0 &&
+				{tags.length > 0 &&
 					group(
 						'tags',
 						'Tags',
-						refs.tags.map((t) => (
+						tags.map((t) => (
 							<div
 								key={t}
 								style={{ paddingLeft: indent(1) }}
@@ -317,12 +374,11 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 						)),
 					)}
 
-				{refs &&
-					refs.stashes.length > 0 &&
+				{stashes.length > 0 &&
 					group(
 						'stashes',
 						'Stashes',
-						refs.stashes.map((s) => (
+						stashes.map((s) => (
 							<ContextMenu key={s.index}>
 								<ContextMenuTrigger asChild>
 									<div
@@ -414,22 +470,26 @@ export function GitSidebar({ dir, projectId, section, onSection }: GitSidebarPro
 
 const ROW =
 	'h-7 w-full justify-start gap-1.5 px-2 font-normal text-sm hover:bg-secondary/60 hover:text-foreground';
+const OP_LABEL: Record<Exclude<GitRepoOp, 'none'>, string> = {
+	merge: 'Merge',
+	rebase: 'Rebase',
+	cherryPick: 'Cherry-pick',
+	revert: 'Revert',
+};
 const indent = (depth: number) => `${0.5 + depth * 0.875}rem`;
 
-/** A collapsible row: a section heading, a branch folder or a remote (F35). */
+/** A collapsible row: a branch folder or a remote (F35). */
 function TreeToggle({
 	depth,
 	open,
 	onToggle,
 	icon,
-	heading = false,
 	children,
 }: {
 	depth: number;
 	open: boolean;
 	onToggle: () => void;
 	icon?: ReactNode;
-	heading?: boolean;
 	children: ReactNode;
 }) {
 	return (
@@ -438,7 +498,7 @@ function TreeToggle({
 			aria-expanded={open}
 			onClick={onToggle}
 			style={{ paddingLeft: indent(depth) }}
-			className={`${ROW} ${heading ? 'mt-2 font-semibold text-foreground' : 'text-secondary-foreground'}`}
+			className={`${ROW} text-secondary-foreground`}
 		>
 			<ChevronRight className={`-ml-1 transition-transform ${open ? 'rotate-90' : ''}`} />
 			{icon}
