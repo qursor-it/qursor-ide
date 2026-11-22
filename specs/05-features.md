@@ -9137,6 +9137,16 @@ like any other — and lends it a terminal:
 A terminal is lent to one session at a time. "Take this terminal back" ends the
 loan; the session keeps running.
 
+A session that is already open can be lent a terminal too, from either side:
+- the SSH tab's **Agent** menu lists the running Claude and Codex sessions
+  under "Lend to an open session";
+- the session header's **Lend a server terminal** menu lists the open, live SSH
+  tabs that are not lent, and offers "Take back" for the ones lent to it (with
+  no SSH tab open it sends the human to Servers).
+The loan is shared, like "shares this terminal". The session already has its
+tab in Sessions mode, so the SSH tab draws no pane for it: its menu says "Lent
+to <session>" and offers "Go to session" beside "Take this terminal back".
+
 **Tools** (on the session's MCP server, ADR-0029): `terminals_list`,
 `terminal_run` (output, exit code, directory afterwards; timeout 1–600s, default
 60), `terminal_read` (screen and state), `terminal_send_keys` (named keys such
