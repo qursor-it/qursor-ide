@@ -25,6 +25,8 @@ export interface TabAgent {
 	agent: AgentId;
 	/** `shared`: the human's own shell. `own`: a session opened for the agent. */
 	mode: LinkMode;
+	/** The session was already open in Sessions mode: the tab draws no pane for it. */
+	borrowed?: boolean;
 }
 
 /** A host key waiting for the human, raised by a tab's first connect. */

@@ -20,6 +20,7 @@ import { StatusDot } from '@components/layout/StatusDot';
 import { ChangesChip, StatusPill } from '@components/session/HeaderChips';
 import { GitOriginStrip } from '@components/session/GitOriginStrip';
 import { CanvasOriginStrip } from '@components/session/CanvasOriginStrip';
+import { LendTerminalMenu } from '@components/session/LendTerminalMenu';
 import { CheckoutMenu } from '@components/session/CheckoutMenu';
 import { SubAgentTranscript } from '@components/session/SubAgentTranscript';
 import {
@@ -421,6 +422,9 @@ function SessionView() {
 								</>
 							)}
 						</IconButton>
+					)}
+					{live?.agent && !isSubAgent && (
+						<LendTerminalMenu sessionId={sessionId} projectId={projectId} agent={live.agent} />
 					)}
 					{/* **The bridge is broken for this session** (F20). Nothing is drawn
 					    while it works: a badge for a healthy bridge is a label that is
