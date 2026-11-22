@@ -9,10 +9,14 @@ import {
 	DropdownMenuTrigger,
 } from '@factorai/ui';
 import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { AgentMark } from '@components/layout/AgentMark';
 import { Terminal } from '@components/terminal/Terminal';
 import { useInstalledAgents } from '@hooks/useInstalledAgents';
+import { useLendableSessions } from '@hooks/useLendableSessions';
+import { lendTerminal, takeBackTerminal } from '@lib/lendTerminal';
+import { useGitModeStore } from '@store/gitModeStore';
 import { agentName } from '@lib/agents';
 import { formatError } from '@lib/errors';
 import { queryKeys } from '@lib/queryKeys';
@@ -58,6 +62,8 @@ export function AgentMenu({ tab, server }: { tab: ServerTab; server: Server }) {
 	const qc = useQueryClient();
 	const installed = useInstalledAgents();
 	const [busy, setBusy] = useState(false);
+	const navigate = useNavigate();
+	const { sessions, titleOf } = useLendableSessions();
 	const invalidate = () => {
 		qc.invalidateQueries({ queryKey: queryKeys.projects() });
 		qc.invalidateQueries({ queryKey: queryKeys.sidebar() });
@@ -68,9 +74,16 @@ export function AgentMenu({ tab, server }: { tab: ServerTab; server: Server }) {
 			.catch((e) => toast.error(`Could not start ${agentName(agent)}: ${formatError(e)}`))
 			.finally(() => setBusy(false));
 	};
-	const detach = () => {
-		if (tab.terminalId) cmd.agentUnlinkTerminal(tab.terminalId).catch(() => {});
-		useServerStore.getState().setAgent(tab.key, null);
+	const lend = (s: (typeof sessions)[number]) =>
+		lendTerminal(tab, s).catch((e) =>
+			toast.error(`Could not lend this terminal to ${s.title}: ${formatError(e)}`),
+		);
+	const gotoSession = (a: TabAgent) => {
+		useGitModeStore.getState().setMode('sessions');
+		void navigate({
+			to: '/projects/$projectId/sessions/$sessionId',
+			params: { projectId: a.projectId, sessionId: a.sessionId },
+		});
 	};
 	return (
 		<DropdownMenu>
@@ -84,9 +97,21 @@ export function AgentMenu({ tab, server }: { tab: ServerTab; server: Server }) {
 				{tab.agent ? (
 					<>
 						<DropdownMenuLabel>
-							{tab.agent.mode === 'shared' ? 'Uses this terminal with you' : 'Its own SSH session'}
+							{tab.agent.borrowed
+								? `Lent to ${titleOf(tab.agent.sessionId)}`
+								: tab.agent.mode === 'shared'
+									? 'Uses this terminal with you'
+									: 'Its own SSH session'}
 						</DropdownMenuLabel>
-						<DropdownMenuItem onSelect={detach} data-testid="agent-detach">
+						{tab.agent.borrowed && (
+							<DropdownMenuItem
+								onSelect={() => gotoSession(tab.agent as TabAgent)}
+								data-testid="agent-goto-session"
+							>
+								Go to session
+							</DropdownMenuItem>
+						)}
+						<DropdownMenuItem onSelect={() => takeBackTerminal(tab)} data-testid="agent-detach">
 							Take this terminal back
 						</DropdownMenuItem>
 					</>
@@ -95,21 +120,38 @@ export function AgentMenu({ tab, server }: { tab: ServerTab; server: Server }) {
 						No agent CLI found on this computer (Settings › Agents)
 					</DropdownMenuLabel>
 				) : (
-					installed.map((id) => (
-						<div key={id}>
-							<DropdownMenuLabel>{agentName(id)}</DropdownMenuLabel>
-							<DropdownMenuItem
-								onSelect={() => go(id, 'shared')}
-								data-testid={`agent-${id}-shared`}
-							>
-								<AgentMark agent={id} /> New session · shares this terminal
-							</DropdownMenuItem>
-							<DropdownMenuItem onSelect={() => go(id, 'own')} data-testid={`agent-${id}-own`}>
-								<AgentMark agent={id} /> New session · its own SSH tab
-							</DropdownMenuItem>
-							<DropdownMenuSeparator />
-						</div>
-					))
+					<>
+						<DropdownMenuLabel>Lend to an open session</DropdownMenuLabel>
+						{sessions.length === 0 ? (
+							<DropdownMenuItem disabled>No Claude or Codex session is running</DropdownMenuItem>
+						) : (
+							sessions.map((s) => (
+								<DropdownMenuItem
+									key={s.sessionId}
+									onSelect={() => void lend(s)}
+									data-testid={`agent-lend-${s.sessionId}`}
+								>
+									<AgentMark agent={s.agent} /> <span className="truncate">{s.title}</span>
+								</DropdownMenuItem>
+							))
+						)}
+						<DropdownMenuSeparator />
+						{installed.map((id) => (
+							<div key={id}>
+								<DropdownMenuLabel>{agentName(id)}</DropdownMenuLabel>
+								<DropdownMenuItem
+									onSelect={() => go(id, 'shared')}
+									data-testid={`agent-${id}-shared`}
+								>
+									<AgentMark agent={id} /> New session · shares this terminal
+								</DropdownMenuItem>
+								<DropdownMenuItem onSelect={() => go(id, 'own')} data-testid={`agent-${id}-own`}>
+									<AgentMark agent={id} /> New session · its own SSH tab
+								</DropdownMenuItem>
+								<DropdownMenuSeparator />
+							</div>
+						))}
+					</>
 				)}
 			</DropdownMenuContent>
 		</DropdownMenu>

@@ -187,7 +187,9 @@ export function ServerModeView() {
 										<ServerTerminal key={tab.key} tab={tab} />
 										<RunningChip tab={tab} />
 									</div>
-									{tab.agent && <AgentPane key={tab.agent.sessionId} agent={tab.agent} />}
+									{tab.agent && !tab.agent.borrowed && (
+										<AgentPane key={tab.agent.sessionId} agent={tab.agent} />
+									)}
 									{filesOpen && server.auth !== 'system' && (
 										<SftpPanel key={server.id} server={server} />
 									)}
