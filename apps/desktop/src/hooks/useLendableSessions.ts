@@ -3,7 +3,7 @@ import { useSessionTitles } from '@hooks/useSessionTitles';
 import { useTerminalStore } from '@store/terminalStore';
 import { useMemo } from 'react';
 
-export interface LendableSession {
+interface LendableSession {
 	sessionId: string;
 	projectId: string;
 	agent: AgentId;
