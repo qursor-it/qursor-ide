@@ -32,7 +32,12 @@ pub const INDEX_FILE: &str = "session_index.jsonl";
 /// is how both the status dot (`run-state`) and the id adoption (`thread-id`,
 /// ADR-0062) read the session, which is why the user's own
 /// `tui.terminal_title` is not honoured for a session factorai runs.
-pub const TITLE_ITEMS: &str = r#"tui.terminal_title=["run-state","thread-id"]"#;
+///
+/// Every `-c` value factorai passes uses TOML literal strings (`'…'`), never
+/// `"…"`: on Windows a `codex.cmd` shim is launched through Windows
+/// PowerShell, whose native-argument passing drops embedded double quotes, and
+/// `[run-state,thread-id]` is then a string Codex refuses ("expected a sequence").
+pub const TITLE_ITEMS: &str = "tui.terminal_title=['run-state','thread-id']";
 
 /// The environment variable the bearer token for factorai's tool server
 /// travels in: Codex reads it by name from `mcp_servers.<name>.bearer_token_env_var`.
@@ -70,16 +75,16 @@ pub fn argv(
 		// Codex filters `resume` by cwd and asks before switching folders; the
 		// session is already spawned where its transcript says it ran.
 		v.push("-c".into());
-		v.push(r#"tui.resume_cwd="session""#.into());
+		v.push("tui.resume_cwd='session'".into());
 	}
 	v.push("-c".into());
 	v.push(TITLE_ITEMS.into());
 	if let Some(t) = tools {
 		let name = crate::services::agent_tools::SERVER_NAME;
 		v.push("-c".into());
-		v.push(format!(r#"mcp_servers.{name}.url="{}""#, t.url));
+		v.push(format!("mcp_servers.{name}.url='{}'", t.url));
 		v.push("-c".into());
-		v.push(format!(r#"mcp_servers.{name}.bearer_token_env_var="{TOOLS_TOKEN_ENV}""#));
+		v.push(format!("mcp_servers.{name}.bearer_token_env_var='{TOOLS_TOKEN_ENV}'"));
 	}
 	if let Some(p) = prompt.filter(|p| !p.is_empty()) {
 		v.push(p.to_string());
@@ -554,15 +559,15 @@ mod tests {
 	fn a_resume_names_the_thread_and_pins_its_folder() {
 		let v = argv(Some("abc"), None, None);
 		assert_eq!(&v[..2], ["resume", "abc"]);
-		assert!(v.contains(&r#"tui.resume_cwd="session""#.to_string()));
+		assert!(v.contains(&"tui.resume_cwd='session'".to_string()));
 	}
 
 	#[test]
 	fn the_tool_server_is_registered_by_name_with_the_token_in_the_environment() {
 		let v = argv(None, Some(&ToolsRegistration { url: "http://127.0.0.1:1/mcp".into() }), None);
-		assert!(v.contains(&r#"mcp_servers.factorai.url="http://127.0.0.1:1/mcp""#.to_string()));
+		assert!(v.contains(&"mcp_servers.factorai.url='http://127.0.0.1:1/mcp'".to_string()));
 		assert!(v.contains(
-			&r#"mcp_servers.factorai.bearer_token_env_var="FACTORAI_MCP_TOKEN""#.to_string()
+			&"mcp_servers.factorai.bearer_token_env_var='FACTORAI_MCP_TOKEN'".to_string()
 		));
 		assert!(!v.iter().any(|a| a.contains("Bearer")), "the token never goes in argv");
 	}

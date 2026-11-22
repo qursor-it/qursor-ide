@@ -52,7 +52,7 @@ which is what makes the two-sessions problem vanish: the title parser
    for it: a row is written when a transcript exists, and none does.
 3. **The agent's id is read from the terminal title and completed from the
    store.** For Codex the spawn passes
-   `-c 'tui.terminal_title=["run-state","thread-id"]'`; the TUI writes
+   `-c "tui.terminal_title=['run-state','thread-id']"`; the TUI writes
    `ESC ] 0 ; <state> | <prefix>... BEL` from startup, where `<prefix>` is the
    first 29 characters of the thread uuid — the item is truncated (observed
    2026-09-22, not in the source reading). Twenty-four hex digits are enough to

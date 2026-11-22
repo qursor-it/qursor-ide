@@ -7028,15 +7028,19 @@ the correct outcome. The ambient directory is `$CODEX_HOME` if set, else
 
 ```
 codex \
-  -c 'tui.terminal_title=["run-state","thread-id"]' \
-  -c 'mcp_servers.factorai.url="http://127.0.0.1:<port>/mcp"' \
-  -c 'mcp_servers.factorai.bearer_token_env_var="FACTORAI_MCP_TOKEN"' \
+  -c "tui.terminal_title=['run-state','thread-id']" \
+  -c "mcp_servers.factorai.url='http://127.0.0.1:<port>/mcp'" \
+  -c "mcp_servers.factorai.bearer_token_env_var='FACTORAI_MCP_TOKEN'" \
   ["<prompt>"]
 ```
 
+Every `-c` value uses TOML literal strings (`'…'`): on Windows the `codex.cmd`
+shim runs through Windows PowerShell, which drops embedded double quotes, and
+Codex then refuses `tui.terminal_title` as a string ("expected a sequence").
+
 with `FACTORAI_MCP_TOKEN=<token>` in the environment. **For a resume:**
 `codex resume <id> -c … ["<prompt>"]`, spawned in the session's recorded cwd
-(the existing `resume_cwd` rule) and with `-c 'tui.resume_cwd="session"'` so
+(the existing `resume_cwd` rule) and with `-c "tui.resume_cwd='session'"` so
 Codex never raises its own "different directory" prompt [source:
 `tui/src/app/resume_config.rs`].
 
