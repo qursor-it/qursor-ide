@@ -13,6 +13,7 @@ OpenCode 1.x is the third local agent. It uses the existing binary probe,
 profile selection, and PTY lifecycle. Qursor passes the initial prompt in
 argv and merges its loopback MCP registration into the child's inline config.
 The registration resolves its bearer token from the child environment.
+The MCP endpoint returns HTTP 405 for an SSE probe and serves tools over POST.
 
 The default profile inherits OpenCode's XDG paths. A custom profile uses its
 directory as the root for OpenCode data and settings. Authentication and
