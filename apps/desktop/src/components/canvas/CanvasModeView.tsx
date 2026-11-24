@@ -1,4 +1,4 @@
-import { agentName } from '@lib/agents';
+import { agentShortName } from '@lib/agents';
 import { AgentPanel } from './AgentPanel';
 import type { NodeRef } from './Composer';
 import { StatusDot } from '@components/layout/StatusDot';
@@ -150,7 +150,7 @@ function CanvasCard({ onOpenAsText }: { onOpenAsText: (path: string) => void }) 
 									className="flex items-center gap-1.5 text-muted-foreground text-xs"
 								>
 									<StatusDot status="working" pulse className="motion-reduce:animate-none" />
-									{agentName(agent ?? 'claude')} is working…
+									{agentShortName(agent ?? 'claude')} is working…
 								</span>
 							)}
 							{connected && (

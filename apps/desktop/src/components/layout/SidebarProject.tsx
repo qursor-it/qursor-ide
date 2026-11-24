@@ -648,7 +648,9 @@ function SessionList({
 								clock24={clock24}
 							/>
 						)}
-						{p.agent && <AgentMark agent={p.agent} className="size-3" />}
+						{p.agent && !agentIndexesSessions(p.agent) && (
+							<AgentMark agent={p.agent} className="size-3" />
+						)}
 						<span className="min-w-0 flex-1 truncate">
 							{!agentIndexesSessions(p.agent) && (
 								<span className="sr-only">Live, no indexed transcript. </span>

@@ -44,3 +44,7 @@ export function agentIndexesSessions(id: AgentId | null | undefined): boolean {
 export function agentName(id: AgentId | string | null | undefined): string {
 	return AGENTS.find((a) => a.id === id)?.name ?? String(id ?? '');
 }
+
+export function agentShortName(id: AgentId): string {
+	return id === 'claude' ? 'Claude' : agentName(id);
+}

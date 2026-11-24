@@ -9,7 +9,7 @@ import {
 	TabsList,
 	TabsTrigger,
 } from '@factorai/ui';
-import { AGENTS, agentName } from '@lib/agents';
+import { AGENTS, agentShortName } from '@lib/agents';
 import type { AgentId } from '@factorai/types';
 import { Terminal, sendToSession } from '@components/terminal/Terminal';
 import { useCanvasStore } from '@store/canvasStore';
@@ -169,15 +169,15 @@ export function AgentPanel({
 				<div className="flex-1 space-y-3 p-4">
 					<Tabs value={agent} onValueChange={(v) => setAgent(v as AgentId)}>
 						<TabsList aria-label="Agent for this canvas">
-							{AGENTS.map(({ id, name }) => (
+							{AGENTS.map(({ id }) => (
 								<TabsTrigger key={id} value={id} data-testid={`canvas-agent-${id}`}>
-									{id === 'claude' ? 'Claude' : name}
+									{agentShortName(id)}
 								</TabsTrigger>
 							))}
 						</TabsList>
 					</Tabs>
 					<p className="text-muted-foreground text-sm">
-						The next message starts a new {agentName(agent)} session for this canvas.
+						The next message starts a new {agentShortName(agent)} session for this canvas.
 					</p>
 					{existing.length > 0 && (
 						<div className="space-y-1.5">
