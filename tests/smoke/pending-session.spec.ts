@@ -117,3 +117,53 @@ async function indexSession(page: Page, title: string): Promise<void> {
 		{ projectId: ALPHA_ID, sessionId: NEW_ID, sessionTitle: title },
 	);
 }
+
+test('@smoke an OpenCode delegate starts only after the user approves its brief', async ({
+	page,
+}) => {
+	const request = {
+		delegationId: NEW_ID,
+		projectId: ALPHA_ID,
+		agent: 'opencode' as const,
+		cwd: '/workspace/alpha',
+		prompt: 'Review the fixture diff',
+	};
+	await installMockBridge(page, {
+		...fixture(),
+		delegationRequest: request,
+		opencodeCli: { installed: true, binaryPath: '/usr/local/bin/opencode', version: '1.18.30' },
+	});
+	await page.goto('/');
+	await page.getByRole('button', { name: 'Expand alpha' }).click();
+	const emit = () =>
+		page.evaluate((payload) => window.__FACTORAI_EMIT__?.('agent-session:start', payload), request);
+	const spawnCalls = () =>
+		page.evaluate(
+			() => window.__FACTORAI_TEST_CALLS__?.filter((c) => c.name === 'terminal_spawn') ?? [],
+		);
+	await emit();
+	const dialog = page.getByRole('dialog', { name: 'Delegate to OpenCode' });
+	await expect(dialog.getByText(request.prompt)).toBeVisible();
+	await expect(dialog.getByText(request.cwd)).toBeVisible();
+	await dialog.getByRole('button', { name: 'Decline' }).click();
+	await expect(dialog).toHaveCount(0);
+	expect(await spawnCalls()).toEqual([]);
+
+	await emit();
+	await dialog.getByRole('button', { name: 'Start session' }).click();
+	await expect.poll(spawnCalls).toContainEqual({
+		name: 'terminal_spawn',
+		args: {
+			opts: expect.objectContaining({
+				agent: 'opencode',
+				sessionId: NEW_ID,
+				projectId: ALPHA_ID,
+				initialPrompt: request.prompt,
+				cwd: request.cwd,
+			}),
+		},
+	});
+	const row = page.getByTestId(`sidebar-sessions-${ALPHA_ID}`).getByRole('link').first();
+	await expect(row.getByRole('img', { name: 'OpenCode' })).toBeVisible();
+	await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(0);
+});

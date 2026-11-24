@@ -1,6 +1,8 @@
 import { NewSessionAgentMenu, ProjectMenu } from '@components/layout/ProjectMenu';
 import { DropLine } from '@components/layout/DropLine';
 import { DwellRing } from '@components/layout/DwellRing';
+import { AgentMark } from '@components/layout/AgentMark';
+import { agentIndexesSessions } from '@lib/agents';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { StatusDot } from '@components/layout/StatusDot';
 import { RoutineOrigin } from '@components/routines/RoutineOrigin';
@@ -646,7 +648,11 @@ function SessionList({
 								clock24={clock24}
 							/>
 						)}
+						{p.agent && <AgentMark agent={p.agent} className="size-3" />}
 						<span className="min-w-0 flex-1 truncate">
+							{!agentIndexesSessions(p.agent) && (
+								<span className="sr-only">Live, no indexed transcript. </span>
+							)}
 							{routineOrigins[p.sessionId]
 								? routineSessionLabel(routineOrigins[p.sessionId], clock24)
 								: 'New session'}

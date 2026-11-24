@@ -858,6 +858,13 @@ question glyph, the question at 14px medium, and its options as small buttons
 (the first primary) each carrying its number in a `kbd`. There is no reply
 box under the terminal: the agent's prompt is the one input (ADR-0097).
 
+### Delegation Confirmation
+
+The standard dialog shows the target agent and working folder above the exact
+brief. Long briefs scroll within the muted surface. Focus starts on Decline,
+and Start session is the primary action. The new session opens in the
+background when approved (F50).
+
 ### Command Palette
 
 A dialog (16px radius, `shadow-popover`) pinned 14% from the top rather than

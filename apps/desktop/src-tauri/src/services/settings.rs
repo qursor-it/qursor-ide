@@ -65,6 +65,7 @@ fn binary_key(agent: &str) -> AppResult<SettingKey> {
 	match agent {
 		crate::agents::CLAUDE => Ok(SettingKey::ClaudeBinaryPath),
 		crate::agents::CODEX => Ok(SettingKey::CodexBinaryPath),
+		crate::agents::OPENCODE => Ok(SettingKey::OpenCodeBinaryPath),
 		other => Err(AppError::InvalidInput(format!("unknown agent {other}"))),
 	}
 }

@@ -8,6 +8,7 @@
  */
 
 import type {
+	AgentId,
 	CanvasEntry,
 	AnalysisPreview,
 	AppError,
@@ -93,6 +94,13 @@ export interface TestFixture {
 	pendingRoutineFires?: RoutineFireEvent[];
 	sessionPages?: Record<string, SessionPage>;
 	terminalSpawnId?: TerminalId;
+	delegationRequest?: {
+		delegationId: string;
+		projectId: string;
+		agent: AgentId;
+		cwd: string;
+		prompt: string;
+	};
 	/** Make `terminal_spawn` reject with this `AppError`, as a missing CLI does. */
 	terminalSpawnFails?: { kind: string; message: string };
 	/** The id `shell_spawn` hands back (F23). Pin it and every pane of a chip
@@ -174,12 +182,14 @@ export interface TestFixture {
 	claudeCli?: ClaudeCliStatus;
 	/** The same for `codex` (F30). Omit for the single-agent UI. */
 	codexCli?: ClaudeCliStatus;
+	opencodeCli?: ClaudeCliStatus;
 	/** Paths that are a working `claude`, mapped to the version they report.
 	 *  Anything not listed validates as not installed — which is how a spec
 	 *  reaches the override field's inline error. */
 	claudeBinaries?: Record<string, string | null>;
 	/** The same for `codex` (F30). */
 	codexBinaries?: Record<string, string | null>;
+	opencodeBinaries?: Record<string, string | null>;
 	/** What the `sops` probe finds (F27). Omit for a machine with no `sops` on
 	 *  it — the browser-only default, and the state the disabled Decrypt
 	 *  control exists for. */

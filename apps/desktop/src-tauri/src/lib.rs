@@ -155,10 +155,19 @@ pub fn run() {
 			));
 			let attention_tap = attention.clone();
 			let statusline_dir = data_dir.join("usage").join("statusline");
+			let usage =
+				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
 			let terminals = TerminalManager::for_app(app.handle().clone(), cd.clone(), ui.clone())
 				.with_status_tap(move |e| attention_tap.on_status(e))
 				// Claude's limits, forwarded by each session's status line.
 				.with_usage_sink_dir(statusline_dir.clone())
+				.with_usage_limits({
+					let (db, usage) = (db.clone(), usage.clone());
+					let go = services::usage::mcp::GoUsage::default();
+					Arc::new(move |project, filter| {
+						services::usage::mcp::read(&db, &usage, &go, project, filter)
+					})
+				})
 				// Switchable: our status line hides Claude Code's footer hints for
 				// a user with none of their own. Unset = on.
 				.with_usage_statusline_enabled({
@@ -398,8 +407,6 @@ pub fn run() {
 
 			// The usage snapshot persists beside the database and tells the
 			// renderer whenever a source changes it.
-			let usage =
-				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
 			{
 				let handle = app.handle().clone();
 				usage.add_on_change(Arc::new(move |list| {
@@ -668,6 +675,7 @@ pub fn run() {
 			commands::settings::check_agent_cli,
 			commands::settings::validate_agent_binary,
 			commands::terminal::start_session,
+			commands::terminal::resolve_delegation,
 			commands::terminal::terminal_spawn,
 			commands::terminal::terminal_write,
 			commands::terminal::terminal_resize,

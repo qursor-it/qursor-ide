@@ -9,6 +9,7 @@ import {
 	TabsList,
 	TabsTrigger,
 } from '@factorai/ui';
+import { AGENTS, agentName } from '@lib/agents';
 import type { AgentId } from '@factorai/types';
 import { Terminal, sendToSession } from '@components/terminal/Terminal';
 import { useCanvasStore } from '@store/canvasStore';
@@ -23,7 +24,7 @@ import { buildFirstMessage, buildMessage, buildPrimer } from './contextLine';
 const RETRY_MS = 250;
 /** Sessions told about the canvas in this app run: new, linked or resumed. */
 const briefed = new Set<string>();
-const AGENT_NAME: Record<AgentId, string> = { claude: 'Claude', codex: 'Codex' };
+
 const GIVE_UP_MS = 20_000;
 
 /** Resolves true once the session's PTY took the message, false after 20 s. */
@@ -168,16 +169,15 @@ export function AgentPanel({
 				<div className="flex-1 space-y-3 p-4">
 					<Tabs value={agent} onValueChange={(v) => setAgent(v as AgentId)}>
 						<TabsList aria-label="Agent for this canvas">
-							<TabsTrigger value="claude" data-testid="canvas-agent-claude">
-								Claude
-							</TabsTrigger>
-							<TabsTrigger value="codex" data-testid="canvas-agent-codex">
-								Codex
-							</TabsTrigger>
+							{AGENTS.map(({ id, name }) => (
+								<TabsTrigger key={id} value={id} data-testid={`canvas-agent-${id}`}>
+									{id === 'claude' ? 'Claude' : name}
+								</TabsTrigger>
+							))}
 						</TabsList>
 					</Tabs>
 					<p className="text-muted-foreground text-sm">
-						The next message starts a new {AGENT_NAME[agent]} session for this canvas.
+						The next message starts a new {agentName(agent)} session for this canvas.
 					</p>
 					{existing.length > 0 && (
 						<div className="space-y-1.5">

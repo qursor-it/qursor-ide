@@ -1,3 +1,4 @@
+import { AGENTS } from '@lib/agents';
 import type {
 	AnalysisPreview,
 	AnalysisRequest,
@@ -506,6 +507,8 @@ export const cmd = {
 	/** The session id to open for a "new session" in this project — a fresh
 	 *  uuid, or a live one that has never been messaged. See ADR-0008.
 	 *  `fresh` skips that reuse for a caller bringing a first message (ADR-0078). */
+	resolveDelegation: (id: string, approve: boolean) =>
+		invoke<AgentSessionStartEvent | null>('resolve_delegation', { id, approve }),
 	startSession: (projectId: string, agent?: AgentId, fresh?: boolean) =>
 		invoke<string>('start_session', { projectId, agent, fresh }),
 	terminalSpawn: (opts: SpawnOpts) => invoke<Spawned>('terminal_spawn', { opts }),
@@ -1031,6 +1034,7 @@ interface TestFixture {
 	sessionsByProject?: Record<string, SessionSummary[]>;
 	sessionPages?: Record<string, SessionPage>;
 	terminalSpawnId?: TerminalId;
+	delegationRequest?: AgentSessionStartEvent;
 	/** Make `terminal_spawn` reject with this `AppError`, as a missing CLI does. */
 	terminalSpawnFails?: { kind: string; message: string };
 	/** The id `shell_spawn` hands back in the browser lane (F23). Distinct from
@@ -1130,6 +1134,7 @@ interface TestFixture {
 	/** The same for `codex` (F30). Absent means not installed, which hides the
 	 *  launch menu and the default-agent choice — the single-agent UI. */
 	codexCli?: ClaudeCliStatus;
+	opencodeCli?: ClaudeCliStatus;
 	/** Paths that are a working `claude`, mapped to the version they report — a
 	 *  null version being the "found it, couldn't run --version" state. Anything
 	 *  not listed validates as not installed, which is how a test reaches the
@@ -1137,6 +1142,7 @@ interface TestFixture {
 	claudeBinaries?: Record<string, string | null>;
 	/** The same for `codex` (F30). */
 	codexBinaries?: Record<string, string | null>;
+	opencodeBinaries?: Record<string, string | null>;
 	/** What the `sops` probe finds (F27). Absent means no `sops` on this
 	 *  machine, which is the honest browser-only answer and the state the
 	 *  disabled Decrypt control exists for. */
@@ -1242,7 +1248,11 @@ function agentStatusFor(
 	path: string,
 	fx: TestFixture | undefined,
 ): ClaudeCliStatus {
-	const known = agent === 'codex' ? fx?.codexBinaries : fx?.claudeBinaries;
+	const known = {
+		claude: fx?.claudeBinaries,
+		codex: fx?.codexBinaries,
+		opencode: fx?.opencodeBinaries,
+	}[agent];
 	if (!path || !known || !(path in known)) {
 		return { installed: false, binaryPath: null, version: null };
 	}
@@ -2442,11 +2452,12 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		case 'check_agent_cli': {
 			// Honours the override exactly as the real command does, so a fixture
 			// that sets one sees the settings page report it.
-			const agent = args?.agent === 'codex' ? 'codex' : 'claude';
-			const override =
-				agent === 'codex' ? fx?.settings?.codexBinaryPath : fx?.settings?.claudeBinaryPath;
-			if (override) return agentStatusFor(agent, override, fx) as unknown as T;
-			const detected = agent === 'codex' ? fx?.codexCli : fx?.claudeCli;
+			const entry = AGENTS.find((a) => a.id === args?.agent) ?? AGENTS[0];
+			const override = fx?.settings?.[entry.setting];
+			if (override) return agentStatusFor(entry.id, override, fx) as unknown as T;
+			const detected = { claude: fx?.claudeCli, codex: fx?.codexCli, opencode: fx?.opencodeCli }[
+				entry.id
+			];
 			return (detected ?? {
 				installed: false,
 				binaryPath: null,
@@ -2455,10 +2466,14 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 		}
 		case 'validate_agent_binary':
 			return agentStatusFor(
-				args?.agent === 'codex' ? 'codex' : 'claude',
+				AGENTS.find((a) => a.id === args?.agent)?.id ?? 'claude',
 				String(args?.path ?? ''),
 				fx,
 			) as unknown as T;
+		case 'resolve_delegation':
+			return (args?.approve && fx?.delegationRequest?.delegationId === args.id
+				? fx?.delegationRequest
+				: null) as unknown as T;
 		case 'start_session':
 			// The real command may hand back a live never-messaged session instead
 			// of a fresh id (it probes the transcript on disk). The mock always
@@ -2471,7 +2486,7 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			// mock has no profiles table to consult and no `agent.default` reader.
 			const opts = args?.opts as SpawnOpts | undefined;
 			const agent: AgentId =
-				opts?.agent ?? (fx?.settings?.agentDefault === 'codex' ? 'codex' : 'claude');
+				opts?.agent ?? AGENTS.find((a) => a.id === fx?.settings?.agentDefault)?.id ?? 'claude';
 			return { id: fx?.terminalSpawnId ?? 'mock-terminal-id', agent } as unknown as T;
 		}
 		case 'shell_spawn':

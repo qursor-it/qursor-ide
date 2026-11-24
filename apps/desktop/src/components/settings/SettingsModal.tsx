@@ -19,12 +19,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { type RefObject, useRef, useState } from 'react';
 import { AboutSection } from '@components/settings/AboutSection';
-import {
-	AgentsSection,
-	BINARY_KEY,
-	type BinaryProbe,
-	SETTING_KEY,
-} from '@components/settings/AgentsSection';
+import { AgentsSection, BINARY_KEY, type BinaryProbe } from '@components/settings/AgentsSection';
 import { IntelligenceSection } from '@components/settings/IntelligenceSection';
 import { KeyboardSection } from '@components/settings/KeyboardSection';
 import { ProfilesSection } from '@components/settings/ProfilesSection';
@@ -129,6 +124,7 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 		queryFn: async () => ({
 			claudeBinary: (await cmd.getSetting('claudeBinaryPath')) ?? '',
 			codexBinary: (await cmd.getSetting('codexBinaryPath')) ?? '',
+			opencodeBinary: (await cmd.getSetting('openCodeBinaryPath')) ?? '',
 			routinesCatchupHours: (await cmd.getSetting('routinesCatchupHours')) ?? '',
 			routinesMaxConcurrent: (await cmd.getSetting('routinesMaxConcurrent')) ?? '',
 			updateChannel: channelOf(await cmd.getSetting('updateChannel')),
@@ -191,6 +187,7 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 							sqlite.data ?? {
 								claudeBinary: '',
 								codexBinary: '',
+								opencodeBinary: '',
 								routinesCatchupHours: '',
 								routinesMaxConcurrent: '',
 								updateChannel: 'stable',
@@ -219,6 +216,7 @@ interface SettingsFormProps {
 		SettingsValues,
 		| 'claudeBinary'
 		| 'codexBinary'
+		| 'opencodeBinary'
 		| 'routinesCatchupHours'
 		| 'routinesMaxConcurrent'
 		| 'updateChannel'
@@ -296,10 +294,10 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 			// reason attached — rather than a half-apply where the renderer's
 			// preferences took and the Rust-readable one didn't, with no way to tell
 			// which (F11).
-			for (const { id } of AGENTS) {
+			for (const { id, setting } of AGENTS) {
 				const path = paths[id] ?? null;
 				if (path !== binaryOverride(saved[BINARY_KEY[id]])) {
-					await cmd.setSetting(SETTING_KEY[id], path);
+					await cmd.setSetting(setting, path);
 					// What the binary resolves to now depends on it.
 					await queryClient.invalidateQueries({ queryKey: queryKeys.agentCli(id) });
 				}
@@ -372,6 +370,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 			queryClient.setQueryData(queryKeys.setting('claudeBinaryPath'), {
 				claudeBinary: paths.claude ?? '',
 				codexBinary: paths.codex ?? '',
+				opencodeBinary: paths.opencode ?? '',
 				routinesCatchupHours: catchup ?? '',
 				routinesMaxConcurrent: concurrent ?? '',
 				updateChannel: draft.updateChannel,
@@ -431,7 +430,11 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 				<div className="min-w-0 flex-1 overflow-y-auto px-5 py-3">
 					{section === 'agents' && (
 						<AgentsSection
-							values={{ claude: draft.claudeBinary, codex: draft.codexBinary }}
+							values={{
+								claude: draft.claudeBinary,
+								codex: draft.codexBinary,
+								opencode: draft.opencodeBinary,
+							}}
 							onChange={(agent, next) => set(BINARY_KEY[agent], next)}
 							probes={probes}
 							onProbed={(agent, probe) => setProbes((prev) => ({ ...prev, [agent]: probe }))}
@@ -1017,6 +1020,7 @@ function prefsOf(values: SettingsValues): Prefs {
 	const {
 		claudeBinary: _binary,
 		codexBinary: _codex,
+		opencodeBinary: _opencode,
 		routinesCatchupHours: _catchup,
 		routinesMaxConcurrent: _concurrent,
 		updateChannel: _channel,

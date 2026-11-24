@@ -83,6 +83,7 @@ export interface SettingsValues extends Prefs {
 	/** The same for `codex` (F30). One field per agent, like one `SettingKey`
 	 *  variant per agent. */
 	codexBinary: string;
+	opencodeBinary: string;
 	/** Both are SQLite settings for the same reason the binary path is: **Rust**
 	 *  reads them — `RoutineRunner` does, on every tick (F22, ADR-0013). Held as
 	 *  the text of their fields, so a half-typed number is a draft rather than a
@@ -154,6 +155,7 @@ export function usageEndpointSetting(on: boolean): string | null {
 export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	claudeBinary: 'agents',
 	codexBinary: 'agents',
+	opencodeBinary: 'agents',
 	diffInline: 'editor',
 	frontmatterOpen: 'editor',
 	confirmCloseSession: 'confirmations',
@@ -246,7 +248,7 @@ function sameValue(
 	draft: SettingsValues,
 	key: keyof SettingsValues,
 ): boolean {
-	if (key === 'claudeBinary' || key === 'codexBinary') {
+	if (key === 'claudeBinary' || key === 'codexBinary' || key === 'opencodeBinary') {
 		return binaryOverride(saved[key]) === binaryOverride(draft[key]);
 	}
 	// Normalised for the same reason: `6 ` and `6` are the same setting, and a

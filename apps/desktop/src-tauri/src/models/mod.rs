@@ -938,6 +938,7 @@ pub enum SettingKey {
 	/// The same for `codex` (F30). One variant per agent rather than a
 	/// parameterised key: the column name is what an operator sees in `sqlite3`.
 	CodexBinaryPath,
+	OpenCodeBinaryPath,
 	/// Which agent a project with no assigned profile runs (F30, ADR-0061):
 	/// `claude` or `codex`. Unset → `claude`.
 	AgentDefault,
@@ -989,6 +990,7 @@ impl SettingKey {
 		match self {
 			SettingKey::ClaudeBinaryPath => "claude.binary",
 			SettingKey::CodexBinaryPath => "codex.binary",
+			SettingKey::OpenCodeBinaryPath => "opencode.binary",
 			SettingKey::AgentDefault => "agent.default",
 			SettingKey::RoutinesCatchupHours => "routines.catchup_hours",
 			SettingKey::RoutinesMaxConcurrent => "routines.max_concurrent",

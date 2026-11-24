@@ -114,8 +114,10 @@ pub fn check_agent_cli(agent: &AgentDescriptor, override_path: Option<&Path>) ->
 	match find_agent_binary(agent, override_path) {
 		Ok(p) => {
 			let version = version_for(&p);
+			let installed = agent.id != agents::OPENCODE
+				|| agents::opencode::supports_version(version.as_deref());
 			ClaudeCliStatus {
-				installed: true,
+				installed,
 				binary_path: Some(p.to_string_lossy().to_string()),
 				version,
 			}
@@ -393,7 +395,7 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
 /// binary behaving. Returns the first whitespace-separated token that looks
 /// like a semver (e.g. "0.2.34" out of "claude 0.2.34 (build abc)", "0.155.1"
 /// out of "codex-cli 0.155.1").
-fn version_for(bin: &Path) -> Option<String> {
+pub(crate) fn version_for(bin: &Path) -> Option<String> {
 	let (program, args) = launch_command(bin, &[OsString::from("--version")]).ok()?;
 	let mut command = Command::new(program);
 	command.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());

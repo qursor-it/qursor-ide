@@ -1,4 +1,4 @@
-import type { AgentId, ClaudeCliStatus, SettingKey } from '@factorai/types';
+import type { AgentId, ClaudeCliStatus } from '@factorai/types';
 import { Input, SettingRow } from '@factorai/ui';
 import { useQueries } from '@tanstack/react-query';
 import { Check, ChevronRight, TriangleAlert } from 'lucide-react';
@@ -19,13 +19,10 @@ export interface BinaryProbe {
 
 /** Which draft field and which SQLite key hold each agent's override — one of
  *  each per agent, mirroring one `SettingKey` variant per agent in Rust (F30). */
-export const BINARY_KEY: Record<AgentId, 'claudeBinary' | 'codexBinary'> = {
+export const BINARY_KEY: Record<AgentId, 'claudeBinary' | 'codexBinary' | 'opencodeBinary'> = {
 	claude: 'claudeBinary',
 	codex: 'codexBinary',
-};
-export const SETTING_KEY: Record<AgentId, SettingKey> = {
-	claude: 'claudeBinaryPath',
-	codex: 'codexBinaryPath',
+	opencode: 'opencodeBinary',
 };
 
 interface AgentsSectionProps {
@@ -133,6 +130,7 @@ function AgentCard({
 	// rather than leaving an answer about something else on screen.
 	const answer = probe && probe.path === current ? probe.status : null;
 	const inputId = `settings-${agent}-binary`;
+	const unsupported = agent === 'opencode' && detected?.binaryPath && !detected.installed;
 
 	return (
 		<section data-testid={`settings-agent-${agent}`} className="rounded-md border border-border">
@@ -170,7 +168,7 @@ function AgentCard({
 								: 'bg-secondary text-muted-foreground'
 						}`}
 					>
-						{detected?.installed ? 'Active' : 'Not detected'}
+						{detected?.installed ? 'Active' : unsupported ? 'Requires 1.x' : 'Not detected'}
 					</span>
 				)}
 			</button>
