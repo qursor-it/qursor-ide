@@ -9,7 +9,7 @@ pub const CONFIG_CONTENT_ENV: &str = "OPENCODE_CONFIG_CONTENT";
 pub const TOOLS_TOKEN_ENV: &str = "QURSOR_OPENCODE_MCP_TOKEN";
 
 pub fn supports_version(version: Option<&str>) -> bool {
-	version.is_some_and(|version| version.starts_with("1."))
+	version.is_none_or(|version| version.starts_with("1."))
 }
 
 pub fn argv(initial_prompt: Option<&str>) -> Vec<String> {
@@ -47,10 +47,10 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn inline_config_requires_the_one_x_cli() {
+	fn a_failed_version_probe_does_not_hide_a_resolved_binary() {
 		assert!(supports_version(Some("1.18.30")));
 		assert!(!supports_version(Some("2.0.0")));
-		assert!(!supports_version(None));
+		assert!(supports_version(None));
 	}
 
 	#[test]
