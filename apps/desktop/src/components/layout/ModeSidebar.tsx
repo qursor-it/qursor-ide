@@ -4,7 +4,8 @@ import { PanelEmpty } from '@components/layout/PanelEmpty';
 import { Brand } from '@components/brand/Brand';
 import { DevBadge } from '@components/layout/DevBadge';
 import { PanelResizer } from '@components/layout/PanelResizer';
-import { ServerBook, VaultFooter } from '@components/servers/ServerModeView';
+import { ServerBook } from '@components/servers/ServerModeView';
+import { VaultControls } from '@components/settings/VaultControls';
 import { Sidebar } from '@components/layout/Sidebar';
 import { UpdateBadge } from '@components/layout/UpdateBadge';
 import { ZoomControls } from '@components/layout/ZoomControls';
@@ -60,7 +61,7 @@ export function ModeSidebar() {
 						<ServerBook />
 					</div>
 				)}
-				<SidebarFooter extra={mode === 'servers' ? <VaultFooter /> : undefined} />
+				<SidebarFooter extra={mode === 'servers' ? <VaultControls /> : undefined} />
 			</aside>
 			{/* On the sidebar's right edge, so dragging right widens it. Not rendered
 			    while collapsed: a handle that resizes nothing lies (ADR-0038). */}

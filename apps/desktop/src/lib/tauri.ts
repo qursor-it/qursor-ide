@@ -59,6 +59,7 @@ import type {
 	Routine,
 	RoutineFireEvent,
 	AgentSessionStartEvent,
+	GoKeySource,
 	RoutinesChangedEvent,
 	RoutineInput,
 	RunNowResult,
@@ -445,6 +446,9 @@ export const cmd = {
 		invoke<ClaudeCliStatus>('validate_agent_binary', { agent, path }),
 	/** The latest known rate-limit windows per profile. */
 	getUsage: () => invoke<ProviderUsage[]>('get_usage'),
+	openCodeGoKeySource: () => invoke<GoKeySource | null>('open_code_go_key_source'),
+	setOpenCodeGoKey: (key: string | null) =>
+		invoke<GoKeySource | null>('set_open_code_go_key', { key }),
 	/** The taskbar widget's layout (Windows); the defaults when never saved. */
 	getTaskbarWidgetConfig: () => invoke<TaskbarWidgetConfig>('get_taskbar_widget_config'),
 	/** Save it and redraw the running widget. Rust brings values into range. */
@@ -1050,6 +1054,7 @@ interface TestFixture {
 	filePick?: string;
 	savePick?: string;
 	vaultStatus?: VaultStatus;
+	openCodeGoKeySource?: GoKeySource | null;
 	/** Session id `start_session` hands back for a new-session click. */
 	newSessionId?: string;
 	searchHits?: SearchHit[];
@@ -1447,7 +1452,9 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 	const fx = testFixture();
 	if (fx) {
 		window.__FACTORAI_TEST_CALLS__ ??= [];
-		window.__FACTORAI_TEST_CALLS__.push({ name, args });
+		window.__FACTORAI_TEST_CALLS__.push(
+			name === 'set_open_code_go_key' ? { name } : { name, args },
+		);
 	}
 	switch (name) {
 		case 'list_projects':
@@ -2499,6 +2506,13 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			return (fx?.serverBook ?? { folders: [], servers: [], problems: [] }) as unknown as T;
 		case 'ssh_config_hosts':
 			return (fx?.sshConfigHosts ?? []) as unknown as T;
+		case 'open_code_go_key_source':
+			return (fx?.openCodeGoKeySource ?? null) as T;
+		case 'set_open_code_go_key': {
+			const source = args?.key ? 'saved' : null;
+			if (fx) fx.openCodeGoKeySource = source;
+			return source as T;
+		}
 		case 'vault_status':
 		case 'vault_unlock':
 		case 'vault_lock':

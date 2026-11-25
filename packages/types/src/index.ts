@@ -1263,6 +1263,8 @@ export interface ModelLimit {
 }
 
 /** Where a reading came from. */
+export type GoKeySource = 'saved' | 'environment';
+
 export type UsageSource = 'statusLine' | 'codexLog' | 'codexAppServer' | 'claudeApi';
 
 /** The latest known limits for one profile. `usage:changed` carries the whole

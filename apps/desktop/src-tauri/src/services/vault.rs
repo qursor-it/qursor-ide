@@ -1,5 +1,5 @@
-//! The local vault for SSH secrets: passwords, private keys, passphrases
-//! (F45, ADR-0106).
+//! The encrypted vault for SSH secrets and the OpenCode Go usage key
+//! (ADR-0106, ADR-0120).
 //!
 //! **One encrypted file, one key.** Each entry is AES-256-GCM with its id as
 //! associated data, so an entry cannot be moved under another server's id.
@@ -8,8 +8,8 @@
 //! master password the human types at unlock and that is never stored.
 //!
 //! **Nothing here returns a secret to the renderer.** The commands report
-//! whether a server *has* a secret; only the SSH connect path reads one, into a
-//! `Zeroizing` buffer that is wiped when the connection has authenticated.
+//! whether a secret is stored. Only the backend consumer reads it into a
+//! `Zeroizing` buffer.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -79,7 +79,7 @@ pub enum VaultMode {
 	MasterPassword,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 struct VaultFile {
 	version: u32,
 	mode: VaultMode,
@@ -204,14 +204,20 @@ impl Vault {
 		}
 		let key = i.key.as_ref().ok_or_else(locked)?;
 		let sealed = seal(key, id, secret)?;
-		i.file.entries.insert(id.to_string(), sealed);
-		write(&self.path, &i.file)
+		let mut next = i.file.clone();
+		next.entries.insert(id.to_string(), sealed);
+		write(&self.path, &next)?;
+		i.file = next;
+		Ok(())
 	}
 
 	pub fn remove(&self, id: &str) -> AppResult<()> {
 		let mut i = self.inner.lock();
-		if i.file.entries.remove(id).is_some() {
-			write(&self.path, &i.file)?;
+		if i.file.entries.contains_key(id) {
+			let mut next = i.file.clone();
+			next.entries.remove(id);
+			write(&self.path, &next)?;
+			i.file = next;
 		}
 		Ok(())
 	}

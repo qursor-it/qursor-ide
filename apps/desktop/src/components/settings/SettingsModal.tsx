@@ -65,6 +65,7 @@ import { THEME_PREFS, themePrefOf } from '@lib/theme';
 import { currentPrefs, type Prefs, usePrefsStore } from '@store/prefsStore';
 import { useUpdater } from '@hooks/useUpdater';
 import type { AgentId, UpdateChannel } from '@factorai/types';
+import { OpenCodeGoKey } from './OpenCodeGoKey';
 import { AGENTS } from '@lib/agents';
 import { DEFAULT_PR_REVIEW_INSTRUCTIONS } from '@lib/prReviewPrompt';
 
@@ -833,6 +834,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 									onCheckedChange={(v) => set('showStatusBar', v)}
 								/>
 							</SettingRow>
+							<OpenCodeGoKey />
 							<SettingRow
 								label="Forward Claude limits through the status line"
 								htmlFor="settings-usage-status-line"

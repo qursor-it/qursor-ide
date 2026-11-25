@@ -8401,12 +8401,14 @@ Qursor resolves for the current project. Without an agent filter, it returns
 one entry per registered agent. Entries report available, stale, or
 unavailable and include the last observation time when known.
 
-Claude and Codex use the existing usage monitor. For the default OpenCode
-profile, the app may be started with `QURSOR_OPENCODE_GO_API_KEY` to read OpenCode
-Go's official usage endpoint. That reading belongs to the Go account bound
-to the provided key. Qursor caches it for five minutes and exposes the 5-hour,
-weekly and monthly windows. Other OpenCode backends can supply their own
-usage source. Keys are kept out of MCP responses.
+Claude and Codex use the existing usage monitor. To enable OpenCode Go limits
+for the default OpenCode profile, save the Go API key in Settings → Usage.
+The encrypted vault holds the key. Settings reports its source and allows
+replacement or removal, and MCP sees only usage. The environment variable
+`QURSOR_OPENCODE_GO_API_KEY` remains available as a fallback when the vault
+has no saved key. A key change invalidates the five-minute usage cache.
+Qursor exposes the 5-hour, weekly and monthly windows of the Go account
+that provided the key. See [ADR-0120](adr/0120-save-opencode-go-keys-in-the-vault.md).
 
 ## F35 — Git mode: a full-window git client per project, with agents for the hard parts
 
