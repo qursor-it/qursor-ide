@@ -1,4 +1,4 @@
-import type { IndexedAgentId } from '@lib/agents';
+import type { AgentId } from '@factorai/types';
 import { create } from 'zustand';
 
 /**
@@ -16,10 +16,10 @@ interface AddProjectState {
 	importOpen: boolean;
 	/** Whose store the import dialog reads. Kept after it closes, so the title
 	 *  does not change under the closing animation. */
-	importAgent: IndexedAgentId;
+	importAgent: AgentId;
 	setAdding: (adding: boolean) => void;
 	setError: (error: string | null) => void;
-	openImport: (agent: IndexedAgentId) => void;
+	openImport: (agent: AgentId) => void;
 	closeImport: () => void;
 }
 

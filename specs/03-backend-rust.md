@@ -199,6 +199,7 @@ remove_project(id: String) -> ()
 // Folders an agent has worked in, read straight from the store — the index only
 // covers the workspace, and the point is to show what isn't in it. One agent's
 // store per call (F1 § "Import dialog"); `agent` absent is `'claude'`.
+// agent accepts claude, codex or opencode.
 list_import_candidates(agent: Option<String>) -> Vec<ImportCandidate>
 resolve_project_path(id: String) -> Option<String>
 

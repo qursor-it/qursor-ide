@@ -1,4 +1,4 @@
-import type { ImportCandidate } from '@factorai/types';
+import type { AgentId, ImportCandidate } from '@factorai/types';
 import {
 	Button,
 	Checkbox,
@@ -12,7 +12,7 @@ import {
 	Label,
 } from '@factorai/ui';
 import { AgentMark } from '@components/layout/AgentMark';
-import { agentName, type IndexedAgentId } from '@lib/agents';
+import { agentName } from '@lib/agents';
 import { formatError } from '@lib/errors';
 import { formatRelative } from '@lib/format';
 import { queryKeys } from '@lib/queryKeys';
@@ -61,23 +61,23 @@ interface ImportProjectsProps {
 	onOpenChange: (open: boolean) => void;
 	/** Whose store the list is read from. One agent per dialog (F1 § "Import"):
 	 *  the rows and the empty state are that agent's, never a merge. */
-	agent: IndexedAgentId;
+	agent: AgentId;
 }
 
 /** How the dialog's prose names each agent and its store. */
-const STORE: Record<IndexedAgentId, { short: string; dir: string }> = {
+const STORE: Record<AgentId, { short: string; dir: string }> = {
 	claude: { short: 'Claude', dir: '~/.claude' },
 	codex: { short: 'Codex', dir: '~/.codex' },
+	opencode: { short: 'OpenCode', dir: 'the OpenCode session database' },
 };
 
 /**
- * "Import from Claude Code" and "Import from Codex" (specs/05-features.md F1).
+ * Imports a folder with history from one agent (specs/05-features.md F1).
  *
  * The list is read from the agent's store directly rather than from our index —
  * since ADR-0011 nothing outside the workspace is indexed, so the index is
  * precisely the wrong place to ask what *isn't* in it. Importing a row is the
- * same `add_project` the folder picker calls; there is one concept here, with
- * two doors.
+ * same `add_project` the folder picker calls.
  */
 export function ImportProjects({ open, onOpenChange, agent }: ImportProjectsProps) {
 	const store = STORE[agent];
@@ -163,8 +163,8 @@ export function ImportProjects({ open, onOpenChange, agent }: ImportProjectsProp
 						Import from {agentName(agent)}
 					</DialogTitle>
 					<DialogDescription>
-						Folders {store.short} has worked in. Importing one adds it to your workspace and indexes
-						its sessions so you can search them.
+						Folders {store.short} has worked in. Import a folder to see its sessions in your
+						workspace.
 					</DialogDescription>
 				</DialogHeader>
 

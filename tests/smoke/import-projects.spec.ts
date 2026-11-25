@@ -159,3 +159,28 @@ test.describe('import from Claude Code', () => {
 		await expect(codex).toBeEnabled();
 	});
 });
+
+test('@smoke importing OpenCode history opens its folder in the workspace', async ({ page }) => {
+	const fx = fixtureImportCandidates();
+	const folder = '/home/alice/code/opencode-work';
+	fx.importCandidates?.push({
+		agent: 'opencode',
+		key: folder,
+		realPath: folder,
+		displayName: 'opencode-work',
+		sessionCount: 2,
+		lastActivityAt: Date.now(),
+		missing: false,
+		alreadyOpen: false,
+	});
+	await installMockBridge(page, fx);
+	await page.goto('/');
+	await page.getByTestId('add-project-menu').click();
+	await page.getByTestId('open-import-opencode').click();
+	const dialog = page.getByTestId('import-projects');
+	await expect(dialog.getByRole('heading', { name: 'Import from OpenCode' })).toBeVisible();
+	await expect(dialog.getByText(folder)).toBeVisible();
+	await dialog.getByRole('checkbox', { name: 'Select all' }).click();
+	await page.getByTestId('import-confirm').click();
+	await expect(page.locator('aside').getByText('opencode-work')).toBeVisible();
+});

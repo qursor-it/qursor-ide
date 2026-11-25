@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection, OptionalExtension};
 use tauri::State;
 
-use crate::agents::{self, claude, codex};
+use crate::agents::{self, claude, codex, opencode};
 use crate::commands::off_main;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -229,7 +229,19 @@ fn normalized_missing_path(raw: &Path) -> PathBuf {
 /// it, with progress, from the transcripts that never moved.
 #[tauri::command]
 pub fn remove_project(state: State<'_, AppState>, id: String) -> AppResult<()> {
-	remove_project_in(&state.db, &id)
+	let had_opencode = state.db.read(|conn| {
+		Ok(conn.query_row(
+			"SELECT EXISTS (SELECT 1 FROM discovered_projects d JOIN profiles p ON p.id = d.profile_id
+			 WHERE d.project_id = ?1 AND p.agent = ?2)",
+			params![id, agents::OPENCODE],
+			|r| r.get::<_, bool>(0),
+		)?)
+	})?;
+	remove_project_in(&state.db, &id)?;
+	if had_opencode {
+		crate::services::indexer::spawn_initial_scan(state.indexer.clone());
+	}
+	Ok(())
 }
 
 pub fn remove_project_in(db: &Db, id: &str) -> AppResult<()> {
@@ -269,9 +281,7 @@ pub async fn list_import_candidates(
 	state: State<'_, AppState>,
 	agent: Option<String>,
 ) -> AppResult<Vec<ImportCandidate>> {
-	// One agent's store per call (F1 § "Import"): the dialog opens for Claude
-	// Code or for Codex, never both. Absent is Claude, the renderer that
-	// predates the Codex door.
+	// One agent's store per call (F1 § "Import"). Absent is Claude for compatibility.
 	let agent = agent.as_deref().unwrap_or(agents::CLAUDE);
 	let (agent, dir) = match agent {
 		agents::CLAUDE => (agents::CLAUDE, state.claude_dir.clone()),
@@ -279,6 +289,18 @@ pub async fn list_import_candidates(
 			let desc = agents::descriptor(agents::CODEX)
 				.ok_or_else(|| AppError::InvalidInput("unknown agent: codex".into()))?;
 			(agents::CODEX, agents::ambient_dir(desc))
+		}
+		agents::OPENCODE => {
+			let desc = agents::descriptor(agents::OPENCODE)
+				.ok_or_else(|| AppError::InvalidInput("unknown agent: opencode".into()))?;
+			let root = state
+				.db
+				.read(|conn| crate::services::profiles::default_for(conn, desc.id))?
+				.map_or_else(
+					|| agents::ambient_dir(desc),
+					|profile| PathBuf::from(profile.config_dir),
+				);
+			(agents::OPENCODE, root)
 		}
 		other => return Err(AppError::InvalidInput(format!("unknown agent: {other}"))),
 	};
@@ -314,6 +336,26 @@ pub fn import_candidates(
 		codex::folder_stats(store)
 			.into_iter()
 			.map(|(cwd, stats)| candidate(cwd.clone(), cwd, stats))
+			.collect()
+	} else if agent == agents::OPENCODE {
+		if !opencode::database_path(store).is_file() {
+			return Ok(Vec::new());
+		}
+		let mut folders = HashMap::new();
+		for session in opencode::sessions(store)? {
+			if !Path::new(&session.directory).is_absolute() {
+				continue;
+			}
+			let directory = agents::path_identity::display_path(&session.directory);
+			let (_, (count, last)) = folders
+				.entry(agents::path_identity::key(&directory))
+				.or_insert((directory, (0, Some(session.updated_at))));
+			*count += 1;
+			*last = (*last).max(Some(session.updated_at));
+		}
+		folders
+			.into_iter()
+			.map(|(key, (directory, stats))| candidate(key, directory, stats))
 			.collect()
 	} else {
 		claude::discover(store)
@@ -353,16 +395,14 @@ pub fn resolve_project_path(state: State<'_, AppState>, id: String) -> AppResult
 
 /// Link every discovered directory to the workspace folder it describes.
 ///
-/// **Two passes, and the order is the compatibility story.** Exact path first,
+/// Exact path first,
 /// exactly as it always was; the repository roll-up only ever touches what the
 /// first pass left unlinked.
 pub fn reconcile(conn: &Connection, owners: &CheckoutOwners) -> AppResult<()> {
 	// Pass 1 — exact canonical path, and nothing else: an agent's own naming
 	// scheme is its business. A session recorded in `/repo/apps/web` belongs to
 	// `/repo/apps/web`, not to `/repo`, even when only the latter is open.
-	// Rolling up to the nearest open *ancestor* was considered and rejected
-	// (ADR-0011): it turns every session lookup into a prefix scan and needs a
-	// tie-break the moment both a folder and its parent are open.
+	// The OpenCode-specific ancestor fallback runs after both exact passes (ADR-0123).
 	#[cfg(windows)]
 	{
 		let project_paths: HashMap<String, String> = {
@@ -407,7 +447,42 @@ pub fn reconcile(conn: &Connection, owners: &CheckoutOwners) -> AppResult<()> {
 			[],
 		)?;
 	}
-	link_worktrees(conn, owners)
+	link_worktrees(conn, owners)?;
+	link_opencode_subdirectories(conn, owners)
+}
+
+fn link_opencode_subdirectories(conn: &Connection, owners: &CheckoutOwners) -> AppResult<()> {
+	let mut unlinked = conn.prepare(
+		"SELECT d.id, d.real_path FROM discovered_projects d JOIN profiles p ON p.id = d.profile_id
+		 WHERE p.agent = ?1 AND d.project_id IS NULL AND d.real_path IS NOT NULL",
+	)?;
+	let unlinked = unlinked
+		.query_map([agents::OPENCODE], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+		.collect::<rusqlite::Result<Vec<_>>>()?;
+	if unlinked.is_empty() {
+		return Ok(());
+	}
+
+	let mut projects = conn.prepare("SELECT real_path, id FROM projects")?;
+	let roots = projects
+		.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+		.map(|row| row.map(|(path, id)| (checkout_key(Path::new(&path)), id)))
+		.collect::<rusqlite::Result<HashMap<_, _>>>()?;
+	let mut update =
+		conn.prepare("UPDATE discovered_projects SET project_id = ?2 WHERE id = ?1")?;
+	for (id, directory) in unlinked {
+		let directory = agents::path_identity::display_path(&directory);
+		let path = Path::new(&directory);
+		if !path.is_absolute() || path.components().any(|c| c == std::path::Component::ParentDir) {
+			continue;
+		}
+		if let Some(owner) = path.ancestors().skip(1).find_map(|ancestor| {
+			roots.get(&checkout_key(ancestor)).or_else(|| owners.get(ancestor))
+		}) {
+			update.execute(params![id, owner])?;
+		}
+	}
+	Ok(())
 }
 
 /// Every checkout of every workspace project, mapped to the project that owns

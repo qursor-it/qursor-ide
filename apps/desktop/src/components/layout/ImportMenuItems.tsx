@@ -20,7 +20,7 @@ import { useAddProjectStore } from '@store/addProjectStore';
 export function ImportMenuItems({ label }: { label: (name: string) => string }) {
 	const installed = useInstalledAgents();
 	const openImport = useAddProjectStore((s) => s.openImport);
-	return AGENTS.filter((a) => a.indexesSessions).map(({ id, name }) => {
+	return AGENTS.map(({ id, name }) => {
 		const present = installed.includes(id);
 		return (
 			<DropdownMenuItem

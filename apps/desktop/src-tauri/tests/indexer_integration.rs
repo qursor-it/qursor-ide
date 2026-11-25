@@ -1364,13 +1364,15 @@ fn a_codex_image_title_uses_the_users_words_and_tracks_index_only_renames() {
 #[test]
 fn opencode_indexes_saved_titles_and_removes_archived_sessions_without_writing_its_store() {
 	use factorai_lib::agents::opencode;
-	use factorai_lib::commands::sessions::list_sessions_in;
+	use factorai_lib::commands::{projects::import_candidates, sessions::list_sessions_in};
 	use factorai_lib::services::{profiles, sessions};
 
 	let tmp = TempDir::new().expect("temp");
 	let db = open_db(tmp.path());
-	let cwd = make_folder(tmp.path(), "open code");
-	let project = add_project_in(&db, cwd.to_str().expect("path")).expect("add project");
+	let workspace = make_folder(tmp.path(), "open code");
+	let project = add_project_in(&db, workspace.to_str().expect("path")).expect("add project");
+	let cwd = make_folder(tmp.path(), "open code/tools/scripts");
+	let outside = make_folder(tmp.path(), "open code-other");
 	let root = tmp.path().join("profile");
 	let profile = profiles::ensure_default_for(&db, "opencode", &root).expect("profile");
 	let path = opencode::database_path(&root);
@@ -1384,8 +1386,9 @@ fn opencode_indexes_saved_titles_and_removes_archived_sessions_without_writing_i
 	provider
 		.execute(
 			"INSERT INTO session VALUES ('ses_existing', ?1, 'Saved title', 1, 2, NULL, NULL),
-		 ('ses_child', ?1, 'Child', 1, 2, 'ses_existing', NULL)",
-			[&cwd],
+		 ('ses_child', ?1, 'Child', 1, 2, 'ses_existing', NULL),
+		 ('ses_outside', ?2, 'Outside', 1, 3, NULL, NULL)",
+			params![cwd, outside.to_str().expect("outside path")],
 		)
 		.expect("saved sessions");
 	let (indexer, events) = make_indexer(db.clone(), tmp.path().join("claude"));
@@ -1399,7 +1402,7 @@ fn opencode_indexes_saved_titles_and_removes_archived_sessions_without_writing_i
 	assert_eq!(first[0].profile_name.as_deref(), Some(profile.name.as_str()));
 	let resolved = profiles::config_dir_for_spawn(&db, "opencode", &project.id, Some(&first[0].id));
 	assert_eq!(resolved.as_deref(), Some(root.as_path()));
-	assert_eq!(opencode::session_directory(&root, &first[0].id), Some(cwd));
+	assert_eq!(opencode::session_directory(&root, &first[0].id), Some(cwd.clone()));
 	assert_eq!(opencode::argv(Some(&first[0].id), None), ["--session=ses_existing"]);
 	assert!(sessions::delete(&db, tmp.path(), &first[0].id, false).is_err());
 	let original: String = provider
@@ -1421,4 +1424,23 @@ fn opencode_indexes_saved_titles_and_removes_archived_sessions_without_writing_i
 	indexer.scan_opencode(true).expect("rescan archive");
 	assert!(rows().is_empty());
 	assert_eq!(events.lock().expect("events").len(), 3);
+	let candidates = import_candidates("opencode", &root, &[]).expect("import candidates");
+	assert_eq!(candidates.len(), 1);
+	assert_eq!(candidates[0].display_name, "open code-other");
+	assert_eq!(candidates[0].session_count, 1);
+	assert!(!candidates[0].already_open);
+	let imported = add_project_in(&db, &candidates[0].real_path).expect("import outside");
+	indexer.scan_project(&imported.id).expect("scan imported project");
+	let imported_rows =
+		db.read(|conn| list_sessions_in(conn, &imported.id)).expect("imported rows");
+	assert_eq!(imported_rows[0].id, "ses_outside");
+
+	provider
+		.execute("UPDATE session SET time_archived = NULL WHERE id = 'ses_existing'", [])
+		.expect("unarchive");
+	let nested = add_project_in(&db, &cwd).expect("open nested folder");
+	indexer.scan_project(&nested.id).expect("index explicit nested project");
+	assert!(rows().is_empty(), "an explicit project wins over its ancestor");
+	let nested_rows = db.read(|conn| list_sessions_in(conn, &nested.id)).expect("nested rows");
+	assert_eq!(nested_rows[0].id, "ses_existing");
 }

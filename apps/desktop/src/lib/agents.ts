@@ -35,8 +35,6 @@ export const AGENTS = [
 	indexesSessions: boolean;
 }[];
 
-export type IndexedAgentId = Extract<(typeof AGENTS)[number], { indexesSessions: true }>['id'];
-
 export function agentIndexesSessions(id: AgentId | null | undefined): boolean {
 	return AGENTS.find((a) => a.id === id)?.indexesSessions ?? true;
 }

@@ -325,7 +325,7 @@ which go stale when a directory is deleted, a project id stays valid.
 
 **Adding a folder — two doors, one action.** The `FolderPlus` in the section
 header is a **menu**: **Add Project…** opens the native directory picker, and
-**Import from Claude Code…** / **Import from Codex…** open the dialog below on
+**Import from Claude Code…** / **Import from Codex…** / **Import from OpenCode…** open the dialog below on
 that agent's store. All of them call `add_project` with a path; there is one
 concept in the data model and nothing special about an agent-derived project
 once it is in. Every agent factorai knows has its item whether or not it is
@@ -7368,11 +7368,15 @@ OpenCode starts in the same PTY as the other agents and receives the first
 message through its prompt argument. Qursor registers its per-session MCP
 server through OpenCode's inline configuration and scopes it to the running
 session and project. Qursor reads OpenCode's SQLite session metadata for
-workspace projects, including sessions already stored on disk. The sidebar
+workspace projects, including sessions already stored on disk. An OpenCode
+folder with no exact project or checkout match attaches to its closest open
+project or checkout ancestor. Use **Import from OpenCode…** to add other folders.
+The sidebar
 shows the persisted title and opens the same OpenCode session and profile
 after a restart. Fresh terminals adopt the ID reported by their own OpenCode
 process. OpenCode keeps the transcript and manages its deletion.
-See [ADR-0122](adr/0122-opencode-session-metadata-is-read-only.md).
+See [ADR-0122](adr/0122-opencode-session-metadata-is-read-only.md) and
+[ADR-0123](adr/0123-open-code-sessions-follow-workspace-folders.md).
 
 ## F31 — Pull requests from the project's remote, through `gh`
 
