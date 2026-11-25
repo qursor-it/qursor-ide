@@ -1745,9 +1745,12 @@ binary that spawns sessions perfectly well, which is the same class of mistake a
   killed through `child_guard`), and the opt-in Claude endpoint at most every
   5 minutes per profile.
 - **OpenCode Go credentials** (ADR-0120). `open_code_go_key_source` returns
-  `saved`, `environment` or null. `set_open_code_go_key` stores a replacement
+  the configured source (`saved`, `environment` or null) and the quota check
+  status. `set_open_code_go_key` stores a replacement
   in the vault, or removes the saved key when called with null. Either edit
-  clears the Go quota cache used by `getUsageLimits`.
+  clears the previous Go reading and refreshes the usage monitor. The
+  poller refreshes Go at most once every five minutes. The setter reports
+  the result of the quota check alongside the credential source.
 - **`TaskbarWidget`** (`platform/taskbar_widget`) is started from `setup()`
   unless `usage.taskbar_widget` is `off`, started or stopped by `set_setting`
   for that key, and stopped on the quit paths (`CloseRequested` when the close

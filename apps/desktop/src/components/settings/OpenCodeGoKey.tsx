@@ -1,3 +1,4 @@
+import type { GoQuotaStatus } from '@factorai/types';
 import {
 	Button,
 	Dialog,
@@ -16,6 +17,12 @@ import { queryKeys } from '@lib/queryKeys';
 import { cmd } from '@lib/tauri';
 import { VaultControls } from './VaultControls';
 
+const quotaErrors: Partial<Record<GoQuotaStatus, string>> = {
+	rejectedKey: 'OpenCode rejected this key. Use a valid key from your OpenCode Go account.',
+	missingEntitlement: 'The account for this key lacks access to OpenCode Go usage.',
+	unavailable: 'OpenCode Go usage is temporarily unavailable.',
+};
+
 export function OpenCodeGoKey() {
 	const queryClient = useQueryClient();
 	const source = useQuery({
@@ -32,8 +39,8 @@ export function OpenCodeGoKey() {
 		setSaving(true);
 		setFailure(null);
 		try {
-			const nextSource = await cmd.setOpenCodeGoKey(value);
-			queryClient.setQueryData(queryKeys.openCodeGoKey(), nextSource);
+			const result = await cmd.setOpenCodeGoKey(value);
+			queryClient.setQueryData(queryKeys.openCodeGoKey(), result);
 			setKey('');
 			setConfirmRemoval(false);
 		} catch (error) {
@@ -44,20 +51,23 @@ export function OpenCodeGoKey() {
 		}
 	}
 
+	const quotaError = source.data && quotaErrors[source.data.status];
 	const disabled = saving || vault.isPending || Boolean(vault.data?.locked);
 	return (
 		<>
 			<SettingRow
 				label="OpenCode Go API key"
 				htmlFor="settings-opencode-go-key"
-				description="Reads plan limits for the default OpenCode profile. The key is stored in the encrypted vault."
+				description="Shows remaining Go limits in the status bar details. The key is stored in the encrypted vault."
 			>
 				<div className="flex w-64 flex-col gap-2">
 					<Input
 						id="settings-opencode-go-key"
 						type="password"
 						autoComplete="off"
-						placeholder={source.data === 'saved' ? 'Enter a replacement key' : 'Enter a key'}
+						placeholder={
+							source.data?.source === 'saved' ? 'Enter a replacement key' : 'Enter a key'
+						}
 						value={key}
 						maxLength={4096}
 						disabled={disabled}
@@ -69,13 +79,13 @@ export function OpenCodeGoKey() {
 								? 'Checking…'
 								: source.isError
 									? 'Unavailable'
-									: source.data === 'saved'
+									: source.data?.source === 'saved'
 										? 'Saved in vault'
-										: source.data === 'environment'
+										: source.data?.source === 'environment'
 											? 'Using environment'
 											: 'No key saved'}
 						</span>
-						{source.data === 'saved' && (
+						{source.data?.source === 'saved' && (
 							<Button
 								size="sm"
 								variant="outline"
@@ -95,9 +105,9 @@ export function OpenCodeGoKey() {
 						</Button>
 					</div>
 					<VaultControls />
-					{failure && (
+					{(failure || quotaError) && (
 						<p role="alert" className="text-destructive text-xs">
-							{failure}
+							{failure ?? quotaError}
 						</p>
 					)}
 				</div>

@@ -119,6 +119,8 @@ export function sourceLabel(source: UsageSource): string {
 			return 'Anthropic usage endpoint';
 		case 'codexAppServer':
 			return 'Codex app-server';
+		case 'openCodeGo':
+			return 'OpenCode Go usage endpoint';
 		case 'codexLog':
 			return 'Codex session log';
 	}

@@ -1,12 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
+
+use parking_lot::Mutex;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use tauri::{AppHandle, Emitter};
 use tracing::{debug, info, warn};
 
-use crate::agents::{claude, codex};
+use crate::agents::{self, claude, codex, opencode};
 use crate::commands::projects::reconcile;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -123,6 +126,9 @@ pub type LiveIdsCb = Arc<dyn Fn() -> HashSet<String> + Send + Sync>;
 /// kill does not.
 pub type ReapShellsCb = Arc<dyn Fn() + Send + Sync>;
 
+type OpenCodeStamp = [Option<(SystemTime, u64)>; 2];
+type OpenCodeDirs = HashMap<String, (i64, Option<String>)>;
+
 /// Owns the scan + watcher. Cheap to clone (Arc internals). Emit is wired
 /// via callbacks so tests can construct an Indexer without a Tauri runtime.
 ///
@@ -137,6 +143,7 @@ pub struct Indexer {
 	on_changed: ChangedCb,
 	live_ids: LiveIdsCb,
 	reap_shells: ReapShellsCb,
+	opencode_stamps: Arc<Mutex<HashMap<PathBuf, OpenCodeStamp>>>,
 }
 
 /// One agent directory that belongs to a folder in the workspace: everything
@@ -235,6 +242,7 @@ impl Indexer {
 			}),
 			live_ids: Arc::new(HashSet::new),
 			reap_shells: Arc::new(|| {}),
+			opencode_stamps: Arc::default(),
 		}
 	}
 
@@ -263,6 +271,7 @@ impl Indexer {
 			on_changed,
 			live_ids: Arc::new(HashSet::new),
 			reap_shells: Arc::new(|| {}),
+			opencode_stamps: Arc::default(),
 		}
 	}
 
@@ -274,6 +283,7 @@ impl Indexer {
 	/// index every folder in the workspace.
 	pub fn full_scan(&self) -> AppResult<()> {
 		self.discover()?;
+		self.scan_opencode(true)?;
 		self.refresh_missing()?;
 		// After the stat pass, not before: a folder that came back this scan
 		// should not have its shells reaped on the strength of the last one.
@@ -301,6 +311,7 @@ impl Indexer {
 	/// Called when a project is added, since nothing was parsed for it before.
 	pub fn scan_project(&self, project_id: &str) -> AppResult<()> {
 		self.discover()?;
+		self.scan_opencode(true)?;
 		let dirs = self.db.with(|conn| linked_dirs(conn, Some(project_id)))?;
 		self.emit_progress(0, dirs.len() as u32, IndexerPhase::Scanning);
 		let mut processed = 0u32;
@@ -364,6 +375,128 @@ impl Indexer {
 			reconcile(&tx, &owners)?;
 			tx.commit()?;
 			Ok(())
+		})
+	}
+
+	/// OpenCode's SQLite store is independent of the JSONL watcher (ADR-0122).
+	pub fn scan_opencode(&self, force: bool) -> AppResult<()> {
+		let mut stamps = self.opencode_stamps.lock();
+		let profiles = self.db.read(crate::services::profiles::list)?;
+		stamps.retain(|root, _| {
+			profiles.iter().any(|p| p.agent == agents::OPENCODE && Path::new(&p.config_dir) == root)
+		});
+		for profile in profiles.into_iter().filter(|p| p.agent == agents::OPENCODE) {
+			let root = Path::new(&profile.config_dir);
+			let db = opencode::database_path(root);
+			let stamp = [db.clone(), db.with_file_name("opencode.db-wal")].map(|path| {
+				let meta = std::fs::metadata(path).ok()?;
+				Some((meta.modified().ok()?, meta.len()))
+			});
+			if stamp[0].is_none() || (!force && stamps.get(root) == Some(&stamp)) {
+				continue;
+			}
+			let sessions = match opencode::sessions(root) {
+				Ok(rows) => rows,
+				Err(e) => {
+					debug!(error = %e, "OpenCode store could not be read");
+					continue;
+				}
+			};
+			let mut directories = HashMap::<String, Vec<opencode::SessionMeta>>::new();
+			for session in sessions {
+				if Path::new(&session.directory).is_absolute() {
+					directories
+						.entry(agents::path_identity::key(&session.directory))
+						.or_default()
+						.push(session);
+				}
+			}
+			let known = self.opencode_dirs(&profile.id)?;
+			if directories.keys().any(|key| !known.contains_key(key)) {
+				let owners = self.db.read(crate::commands::projects::checkout_owners)?;
+				self.db.with_mut(|conn| {
+					let tx = conn.transaction()?;
+					for (key, sessions) in &directories {
+						let directory = &sessions[0].directory;
+						tx.execute(
+							"INSERT INTO discovered_projects(profile_id, key, real_path) VALUES(?1, ?2, ?3)
+							 ON CONFLICT(profile_id, key) DO NOTHING",
+							params![profile.id, key, agents::path_identity::display_path(directory)],
+						)?;
+					}
+					reconcile(&tx, &owners)?;
+					tx.commit()?;
+					Ok(())
+				})?;
+			}
+			let mut indexed = Vec::new();
+			for (key, (discovered_id, project_id)) in self.opencode_dirs(&profile.id)? {
+				let Some(project_id) = project_id else { continue };
+				let sessions = directories.remove(&key).unwrap_or_default();
+				let changed = self.index_opencode_dir(discovered_id, &profile.id, &sessions)?;
+				let on_disk = sessions.into_iter().map(|s| s.id).collect::<HashSet<_>>();
+				indexed.push((discovered_id, project_id, on_disk, changed));
+			}
+			let mut reap_pending = false;
+			for (discovered_id, project_id, on_disk, mut changed) in indexed {
+				changed.extend(self.reap_deleted(discovered_id, &on_disk)?);
+				if !changed.is_empty() {
+					(self.on_changed)(SessionsChanged { project_id, session_ids: changed });
+				}
+				reap_pending |= self.db.read(|conn| {
+					let indexed: usize = conn.query_row(
+						"SELECT COUNT(*) FROM sessions WHERE discovered_id = ?1",
+						[discovered_id],
+						|r| r.get(0),
+					)?;
+					Ok(indexed > on_disk.len())
+				})?;
+			}
+			if !reap_pending {
+				stamps.insert(root.to_path_buf(), stamp);
+			}
+		}
+		Ok(())
+	}
+
+	fn opencode_dirs(&self, profile_id: &str) -> AppResult<OpenCodeDirs> {
+		self.db.read(|conn| {
+			let mut stmt = conn.prepare(
+				"SELECT key, id, project_id FROM discovered_projects WHERE profile_id = ?1",
+			)?;
+			let rows = stmt.query_map([profile_id], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
+			Ok(rows.collect::<rusqlite::Result<_>>()?)
+		})
+	}
+
+	fn index_opencode_dir(
+		&self,
+		discovered_id: i64,
+		profile_id: &str,
+		sessions: &[opencode::SessionMeta],
+	) -> AppResult<Vec<String>> {
+		self.db.with_mut(|conn| {
+			let tx = conn.transaction()?;
+			let mut changed = Vec::new();
+			{
+				let mut stmt = tx.prepare(
+					"INSERT INTO sessions(id, discovered_id, title, created_at, updated_at, file_mtime, file_size, cwd)
+					 VALUES(?1, ?2, ?3, ?4, ?5, 0, 0, ?6)
+					 ON CONFLICT(id) DO UPDATE SET discovered_id = excluded.discovered_id,
+					   title = excluded.title, updated_at = excluded.updated_at, cwd = excluded.cwd
+					 WHERE (SELECT profile_id FROM discovered_projects WHERE id = sessions.discovered_id) = ?7
+					   AND (sessions.discovered_id != excluded.discovered_id
+					     OR sessions.title IS NOT excluded.title OR sessions.updated_at != excluded.updated_at
+					     OR sessions.cwd IS NOT excluded.cwd)",
+				)?;
+				for s in sessions {
+					if stmt.execute(params![s.id, discovered_id, s.title, s.created_at, s.updated_at, s.directory, profile_id])? > 0 {
+						changed.push(s.id.clone());
+					}
+				}
+			}
+			tx.commit()?;
+			Ok(changed)
 		})
 	}
 
@@ -990,7 +1123,7 @@ impl Indexer {
 const LINKED_SELECT: &str = "SELECT d.id, d.project_id, p.agent, p.config_dir, d.key
 	FROM discovered_projects d
 	JOIN profiles p ON p.id = d.profile_id
-	WHERE d.project_id IS NOT NULL";
+	WHERE d.project_id IS NOT NULL AND p.agent != 'opencode'";
 
 fn map_linked(row: &rusqlite::Row<'_>) -> rusqlite::Result<LinkedDir> {
 	Ok(LinkedDir {

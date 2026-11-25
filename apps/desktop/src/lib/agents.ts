@@ -41,6 +41,15 @@ export function agentIndexesSessions(id: AgentId | null | undefined): boolean {
 	return AGENTS.find((a) => a.id === id)?.indexesSessions ?? true;
 }
 
+export function canRestoreSessionTab(
+	agent: AgentId | null | undefined,
+	sessionId: string,
+): boolean {
+	return agent === 'opencode'
+		? /^ses_[a-z0-9]{1,64}$/i.test(sessionId)
+		: agentIndexesSessions(agent);
+}
+
 export function agentName(id: AgentId | string | null | undefined): string {
 	return AGENTS.find((a) => a.id === id)?.name ?? String(id ?? '');
 }

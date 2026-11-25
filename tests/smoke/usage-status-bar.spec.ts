@@ -90,6 +90,41 @@ test.describe('usage status bar', () => {
 		await expect(page.getByTestId('usage-group-codex')).toContainText('92%');
 	});
 
+	test('@smoke OpenCode Go shows all three remaining quota windows', async ({ page }) => {
+		const base = fixtureWithUsage();
+		await installMockBridge(page, {
+			...base,
+			usage: [
+				...(base.usage ?? []),
+				{
+					agent: 'opencode',
+					profileId: 'go-default',
+					profileName: 'Go',
+					isDefault: true,
+					fiveHour: { usedPercent: 30, resetsAt: null },
+					weekly: { usedPercent: 100, resetsAt: null },
+					perModel: [{ label: 'Monthly', window: { usedPercent: 50, resetsAt: null } }],
+					source: 'openCodeGo',
+					updatedAt: Date.now(),
+				},
+			],
+		});
+		await page.goto('/');
+		await expect(page.getByTestId('usage-group-opencode')).toBeVisible();
+		await page.getByTestId('status-bar').click();
+		const go = page
+			.getByTestId('usage-popover')
+			.locator('section')
+			.filter({
+				has: page.getByRole('heading', { name: 'OpenCode', exact: true }),
+			});
+		await expect(go).toContainText('70%');
+		await expect(go.getByText('0%', { exact: true })).toBeVisible();
+		await expect(go).toContainText('Monthly');
+		await expect(go).toContainText('50%');
+		await expect(go).toContainText('percentages remaining');
+	});
+
 	test('@smoke usage status bar is absent when turned off', async ({ page }) => {
 		await page.addInitScript(() => {
 			window.localStorage.setItem(

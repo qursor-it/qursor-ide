@@ -656,6 +656,7 @@ struct PtyRequest {
 /// What [`TerminalManager::attach`] registers: a live PTY and everything the
 /// handle keeps alongside it.
 struct Attach {
+	opencode_signal: Option<opencode::SessionSignal>,
 	req: PtyRequest,
 	master: Box<dyn MasterPty + Send>,
 	child: Box<dyn Child + Send + Sync>,
@@ -697,6 +698,7 @@ impl TerminalHandle {
 }
 
 struct TerminalHandle {
+	opencode_signal: Option<opencode::SessionSignal>,
 	/// **`None` for a shell** (ADR-0032). Every pass that means "the session" is
 	/// therefore asked what it means for a shell instead of being trusted to
 	/// filter on [`TerminalKind`] — see that type.
@@ -1787,7 +1789,8 @@ impl TerminalManager {
 			{
 				return Err(AppError::InvalidInput("Qursor requires OpenCode 1.x".into()));
 			}
-			v.extend(opencode::argv(initial_prompt));
+			let resume = opencode::is_session_id(session_id).then_some(session_id);
+			v.extend(opencode::argv(resume, initial_prompt));
 			return Ok(v);
 		}
 		// **Codex takes no id for a new thread** (ADR-0062): it mints one, and
@@ -1859,8 +1862,11 @@ impl TerminalManager {
 		opts: SpawnOpts,
 		argv_override: Option<Vec<String>>,
 	) -> AppResult<TerminalId> {
-		let agent =
-			self.resolve_agent(opts.agent.as_deref(), &opts.project_id, Some(&opts.session_id))?;
+		let requested = opts
+			.agent
+			.as_deref()
+			.or_else(|| opencode::is_session_id(&opts.session_id).then_some(agents::OPENCODE));
+		let agent = self.resolve_agent(requested, &opts.project_id, Some(&opts.session_id))?;
 		self.spawn_inner(
 			PtyRequest {
 				session_id: Some(opts.session_id),
@@ -1925,6 +1931,9 @@ impl TerminalManager {
 					.and_then(|p| codex::read_meta(&p))
 					.map(|m| PathBuf::from(m.cwd)),
 				agents::CLAUDE => self.resume_cwd(sid, &claude_dir),
+				agents::OPENCODE => {
+					opencode::session_directory(&claude_dir, sid).map(PathBuf::from)
+				}
 				_ => None,
 			})
 			.or_else(|| req.cwd.as_deref().map(PathBuf::from))
@@ -1953,6 +1962,7 @@ impl TerminalManager {
 			}
 		};
 
+		let uses_agent_binary = argv_override.is_none();
 		let argv = match (argv_override, req.session_id.as_deref()) {
 			(Some(v), _) => v,
 			(None, Some(session_id)) => self.argv_for(
@@ -2091,13 +2101,31 @@ impl TerminalManager {
 			}
 		}
 
-		if let (Some(tools), agents::OPENCODE) = (&agent_tools, env_agent.id) {
+		let mut opencode_signal = None;
+		cmd.env_remove(opencode::TOOLS_TOKEN_ENV);
+		cmd.env_remove(opencode::SESSION_SIGNAL_ENV);
+		if env_agent.id == agents::OPENCODE {
+			if uses_agent_binary
+				&& req.session_id.as_deref().is_some_and(|id| !opencode::is_session_id(id))
+			{
+				match opencode::SessionSignal::create() {
+					Ok(signal) => {
+						cmd.env(opencode::SESSION_SIGNAL_ENV, signal.path());
+						opencode_signal = Some(signal);
+					}
+					Err(e) => warn!(error = %e, "could not track this OpenCode session"),
+				}
+			}
 			let inherited = std::env::var(opencode::CONFIG_CONTENT_ENV).ok();
-			let config = opencode::mcp_config(inherited.as_deref(), tools.port())?;
+			let config = opencode::launch_config(
+				inherited.as_deref(),
+				agent_tools.as_ref().map(AgentToolsServer::port),
+				opencode_signal.as_ref().map(|signal| signal.plugin.as_str()),
+			)?;
 			cmd.env(opencode::CONFIG_CONTENT_ENV, config);
-			cmd.env(opencode::TOOLS_TOKEN_ENV, tools.token());
-		} else {
-			cmd.env_remove(opencode::TOOLS_TOKEN_ENV);
+			if let Some(tools) = &agent_tools {
+				cmd.env(opencode::TOOLS_TOKEN_ENV, tools.token());
+			}
 		}
 
 		// **Withheld means absent, not inherited.** factorai itself may be
@@ -2159,6 +2187,7 @@ impl TerminalManager {
 		drop(pair.slave); // close slave end in the parent so EOF works
 		info!(binary = %argv[0], cwd = ?cwd_path, "spawning terminal");
 		self.attach(Attach {
+			opencode_signal,
 			req,
 			master: pair.master,
 			child,
@@ -2178,6 +2207,7 @@ impl TerminalManager {
 	/// (F45), which arrives as the same `MasterPty` / `Child` pair.
 	fn attach(&self, a: Attach) -> AppResult<TerminalId> {
 		let Attach {
+			opencode_signal,
 			req,
 			master,
 			child,
@@ -2220,6 +2250,7 @@ impl TerminalManager {
 			kind,
 			client_key: req.client_key.clone(),
 			agent: req.agent,
+			opencode_signal,
 			adopted: Mutex::new(None),
 			thread_prefix: Mutex::new(None),
 			store_dir,
@@ -2333,6 +2364,7 @@ impl TerminalManager {
 	) -> AppResult<TerminalId> {
 		let size = master.get_size().map_err(|e| AppError::Process(e.to_string()))?;
 		self.attach(Attach {
+			opencode_signal: None,
 			req: PtyRequest {
 				session_id: None,
 				client_key: Some(client_key),
@@ -2612,6 +2644,7 @@ fn spawn_reader(
 	// The flusher asks this which session it is serving, per tick.
 	let handle_f = handle.clone();
 	let id_r = id.clone();
+	let on_reader_adopted = on_adopted.clone();
 	std::thread::Builder::new()
 		.name(format!("term-reader-{id}"))
 		.spawn(move || {
@@ -2640,7 +2673,7 @@ fn spawn_reader(
 									if let Some(next) = codex::classify_title(&payload) {
 										set_status(&id_r, &handle_r, next, &on_status);
 									}
-									try_adopt(&id_r, &handle_r, &payload, &on_adopted);
+									try_adopt(&id_r, &handle_r, &payload, &on_reader_adopted);
 								}
 							}
 							Some(agents::CLAUDE) if handle_r.kind == TerminalKind::Agent => {
@@ -2678,6 +2711,28 @@ fn spawn_reader(
 				// background when it started is the common case for the one you
 				// switch to (PERF-14).
 				std::thread::sleep(flush_window(&ui, handle_f.session_id.as_deref()));
+				if let Some(signal) = &handle_f.opencode_signal {
+					let mut last = handle_f.last_probe.lock();
+					if handle_f.adopted.lock().is_none()
+						&& (eof.load(Ordering::Acquire)
+							|| last.is_none_or(|t| t.elapsed() >= ADOPT_PROBE_EVERY))
+					{
+						*last = Some(Instant::now());
+						drop(last);
+						if let Some(adopted) = signal.read().filter(|session| {
+							opencode::session_directory(&handle_f.store_dir, session).is_some_and(
+								|path| {
+									agents::path_identity::same(
+										&path,
+										&handle_f.cwd.to_string_lossy(),
+									)
+								},
+							)
+						}) {
+							adopt_session(&id, &handle_f, adopted, &on_adopted);
+						}
+					}
+				}
 				let chunk = {
 					let mut buf = buffer.lock();
 					if buf.is_empty() {
@@ -2758,12 +2813,22 @@ fn try_adopt(id: &TerminalId, handle: &Arc<TerminalHandle>, payload: &str, on_ad
 		}
 		*last = Some(Instant::now());
 	}
-	let Some((adopted, path)) = codex::find_by_prefix(&handle.store_dir, &prefix, &handle.cwd)
-	else {
+	let Some((adopted, _)) = codex::find_by_prefix(&handle.store_dir, &prefix, &handle.cwd) else {
 		return;
 	};
+	adopt_session(id, handle, adopted, on_adopted);
+}
+
+fn adopt_session(
+	id: &TerminalId,
+	handle: &TerminalHandle,
+	adopted: String,
+	on_adopted: &AdoptedCb,
+) {
+	let Some(provisional) = handle.session_id.as_deref() else { return };
+
 	*handle.adopted.lock() = Some(adopted.clone());
-	info!(%id, %provisional, %adopted, ?path, "session adopted its agent's id");
+	info!(%id, %provisional, %adopted, "session adopted its agent's id");
 	on_adopted(SessionAdoptedEvent {
 		id: id.clone(),
 		provisional: provisional.to_string(),

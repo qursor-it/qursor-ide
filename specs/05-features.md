@@ -7367,9 +7367,12 @@ OpenCode data and configuration.
 OpenCode starts in the same PTY as the other agents and receives the first
 message through its prompt argument. Qursor registers its per-session MCP
 server through OpenCode's inline configuration and scopes it to the running
-session and project. OpenCode sessions appear under their project while
-running. They have no Qursor transcript, imported projects, or Qursor resume.
-See [ADR-0118](adr/0118-opencode-uses-the-local-agent-registry.md).
+session and project. Qursor reads OpenCode's SQLite session metadata for
+workspace projects, including sessions already stored on disk. The sidebar
+shows the persisted title and opens the same OpenCode session and profile
+after a restart. Fresh terminals adopt the ID reported by their own OpenCode
+process. OpenCode keeps the transcript and manages its deletion.
+See [ADR-0122](adr/0122-opencode-session-metadata-is-read-only.md).
 
 ## F31 — Pull requests from the project's remote, through `gh`
 
@@ -8406,9 +8409,11 @@ for the default OpenCode profile, save the Go API key in Settings → Usage.
 The encrypted vault holds the key. Settings reports its source and allows
 replacement or removal, and MCP sees only usage. The environment variable
 `QURSOR_OPENCODE_GO_API_KEY` remains available as a fallback when the vault
-has no saved key. A key change invalidates the five-minute usage cache.
-Qursor exposes the 5-hour, weekly and monthly windows of the Go account
-that provided the key. See [ADR-0120](adr/0120-save-opencode-go-keys-in-the-vault.md).
+has no saved key. A key change clears the previous Go reading and refreshes
+usage. The status bar shows the 5-hour and weekly windows, and its detail
+popover includes the monthly window. Settings reports a rejected key,
+missing Go entitlement or an unavailable reading. MCP exposes the same
+provider windows as remaining percentages. See [ADR-0120](adr/0120-save-opencode-go-keys-in-the-vault.md).
 
 ## F35 — Git mode: a full-window git client per project, with agents for the hard parts
 

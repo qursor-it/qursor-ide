@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::{PlanItem, ProviderUsage, SessionUsage};
 use crate::platform::taskbar_widget::config::WidgetConfig;
 use crate::services::session_plan;
-use crate::services::usage::{mcp::GoKeySource, session_cost};
+use crate::services::usage::{mcp::GoKeyUpdate, session_cost};
 use crate::state::AppState;
 
 /// The latest known limits per profile, with any window that has passed its
@@ -25,18 +25,27 @@ pub fn get_usage(state: State<'_, AppState>) -> AppResult<Vec<ProviderUsage>> {
 
 /// Which credential source is configured. The key stays in the backend.
 #[tauri::command]
-pub fn open_code_go_key_source(state: State<'_, AppState>) -> Option<GoKeySource> {
-	state.go_usage.key_source()
+pub async fn open_code_go_key_source(state: State<'_, AppState>) -> AppResult<GoKeyUpdate> {
+	let (db, store, go) = (state.db.clone(), state.usage.clone(), state.go_usage.clone());
+	crate::commands::off_main(move || {
+		Ok(GoKeyUpdate { source: go.key_source(), status: go.sync(&db, &store) })
+	})
+	.await
 }
 
 #[tauri::command]
 pub async fn set_open_code_go_key(
 	state: State<'_, AppState>,
 	key: Option<String>,
-) -> AppResult<Option<GoKeySource>> {
+) -> AppResult<GoKeyUpdate> {
+	let (db, store) = (state.db.clone(), state.usage.clone());
 	let go = state.go_usage.clone();
 	let key = key.map(Zeroizing::new);
-	crate::commands::off_main(move || go.set_key(key.as_deref().map(String::as_str))).await
+	crate::commands::off_main(move || {
+		let source = go.set_key(key.as_deref().map(String::as_str), &store)?;
+		Ok(GoKeyUpdate { source, status: go.sync(&db, &store) })
+	})
+	.await
 }
 
 /// How the taskbar widget is laid out, or the defaults when nothing was saved.
@@ -129,6 +138,9 @@ fn transcript_of(
 		.map_err(AppError::from)
 	})?;
 	let Some((key, parent, recorded, agent, config_dir)) = row else { return Ok(None) };
+	if agent == agents::OPENCODE {
+		return Ok(None);
+	}
 	let path = resolve_path(
 		&config_dir,
 		claude_dir,

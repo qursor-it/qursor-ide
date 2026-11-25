@@ -60,6 +60,7 @@ import type {
 	RoutineFireEvent,
 	AgentSessionStartEvent,
 	GoKeySource,
+	GoKeyUpdate,
 	RoutinesChangedEvent,
 	RoutineInput,
 	RunNowResult,
@@ -446,9 +447,8 @@ export const cmd = {
 		invoke<ClaudeCliStatus>('validate_agent_binary', { agent, path }),
 	/** The latest known rate-limit windows per profile. */
 	getUsage: () => invoke<ProviderUsage[]>('get_usage'),
-	openCodeGoKeySource: () => invoke<GoKeySource | null>('open_code_go_key_source'),
-	setOpenCodeGoKey: (key: string | null) =>
-		invoke<GoKeySource | null>('set_open_code_go_key', { key }),
+	openCodeGoKeySource: () => invoke<GoKeyUpdate>('open_code_go_key_source'),
+	setOpenCodeGoKey: (key: string | null) => invoke<GoKeyUpdate>('set_open_code_go_key', { key }),
 	/** The taskbar widget's layout (Windows); the defaults when never saved. */
 	getTaskbarWidgetConfig: () => invoke<TaskbarWidgetConfig>('get_taskbar_widget_config'),
 	/** Save it and redraw the running widget. Rust brings values into range. */
@@ -2506,12 +2506,14 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 			return (fx?.serverBook ?? { folders: [], servers: [], problems: [] }) as unknown as T;
 		case 'ssh_config_hosts':
 			return (fx?.sshConfigHosts ?? []) as unknown as T;
-		case 'open_code_go_key_source':
-			return (fx?.openCodeGoKeySource ?? null) as T;
+		case 'open_code_go_key_source': {
+			const source = fx?.openCodeGoKeySource ?? null;
+			return { source, status: source ? 'unavailable' : 'noKey' } as T;
+		}
 		case 'set_open_code_go_key': {
 			const source = args?.key ? 'saved' : null;
 			if (fx) fx.openCodeGoKeySource = source;
-			return source as T;
+			return { source, status: source ? 'unavailable' : 'noKey' } as T;
 		}
 		case 'vault_status':
 		case 'vault_unlock':

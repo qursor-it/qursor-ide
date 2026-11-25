@@ -10,7 +10,7 @@ use parking_lot::Mutex;
 use tracing::warn;
 
 use super::now_ms;
-use crate::models::{Profile, ProviderUsage, UsageReading, UsageWindow};
+use crate::models::{Profile, ProviderUsage, UsageReading, UsageSource, UsageWindow};
 
 type OnChange = Arc<dyn Fn(Vec<ProviderUsage>) + Send + Sync>;
 
@@ -79,6 +79,21 @@ impl UsageStore {
 		true
 	}
 
+	/// A Go reading belongs to the currently configured key and default profile.
+	pub fn clear_go_except(&self, profile_id: Option<&str>) {
+		let changed = {
+			let mut map = self.entries.lock();
+			let before = map.len();
+			map.retain(|(_, id), usage| {
+				usage.source != UsageSource::OpenCodeGo || profile_id == Some(id.as_str())
+			});
+			map.len() != before
+		};
+		if changed {
+			self.persist_and_notify();
+		}
+	}
+
 	/// Bring the stored profile names and default flags in line with
 	/// `profiles`, and drop entries whose profile is gone, so a rename or a new
 	/// default shows at once rather than at that profile's next reading. An
@@ -137,10 +152,12 @@ impl UsageStore {
 	/// Temp file then rename, so a crash mid-write leaves the old file whole.
 	fn write(&self, list: &[ProviderUsage]) {
 		let tmp = self.path.with_extension("json.tmp");
-		let result = serde_json::to_vec(list)
-			.map_err(std::io::Error::other)
-			.and_then(|b| std::fs::write(&tmp, b))
-			.and_then(|_| std::fs::rename(&tmp, &self.path));
+		let result = serde_json::to_vec(
+			&list.iter().filter(|u| u.source != UsageSource::OpenCodeGo).collect::<Vec<_>>(),
+		)
+		.map_err(std::io::Error::other)
+		.and_then(|b| std::fs::write(&tmp, b))
+		.and_then(|_| std::fs::rename(&tmp, &self.path));
 		if let Err(e) = result {
 			warn!(error = %e, "could not persist usage");
 		}

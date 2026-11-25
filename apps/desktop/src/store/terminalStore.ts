@@ -1,4 +1,4 @@
-import { agentIndexesSessions } from '@lib/agents';
+import { canRestoreSessionTab } from '@lib/agents';
 import type { AgentId, TerminalId, TerminalStatus, TerminalStatusDto } from '@factorai/types';
 import { usePrefsStore } from '@store/prefsStore';
 import { create } from 'zustand';
@@ -410,7 +410,7 @@ export const useTerminalStore = create<TerminalState>()(
 					// The tab stays. It goes grey and clicking it restarts the session
 					// — the same thing the session header's Restart does, on the surface
 					// your pointer is already on.
-					const tabs = agentIndexesSessions(s.bySession[sessionId].agent)
+					const tabs = canRestoreSessionTab(s.bySession[sessionId].agent, sessionId)
 						? s.tabs
 						: s.tabs.filter((t) => t.sessionId !== sessionId);
 					return { bySession: next, tabs };
@@ -439,7 +439,9 @@ export const useTerminalStore = create<TerminalState>()(
 			// is what makes a restored tab `stopped` by construction rather than by
 			// a rule somebody has to remember to apply.
 			partialize: (s) => ({
-				tabs: s.tabs.filter((t) => agentIndexesSessions(s.bySession[t.sessionId]?.agent)),
+				tabs: s.tabs.filter((t) =>
+					canRestoreSessionTab(s.bySession[t.sessionId]?.agent, t.sessionId),
+				),
 			}),
 			/**
 			 * **The restore switch is honoured here, at hydration** (F11, F16).

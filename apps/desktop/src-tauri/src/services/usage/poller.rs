@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::AppHandle;
 
 use super::claude_api::{self, Backoff, TokenState};
+use super::mcp::GoUsage;
 use super::store::UsageStore;
 use super::{codex_app_server, codex_log, now_ms, statusline};
 use crate::agents::{CLAUDE, CODEX};
@@ -31,7 +32,13 @@ const SINK_SLACK: Duration = Duration::from_secs(10);
 
 /// `statusline_dir` is where Claude sessions' status-line helpers drop their
 /// readings (`services::usage::statusline`).
-pub fn spawn(app: AppHandle, store: Arc<UsageStore>, db: Db, statusline_dir: PathBuf) {
+pub fn spawn(
+	app: AppHandle,
+	store: Arc<UsageStore>,
+	db: Db,
+	statusline_dir: PathBuf,
+	go: Arc<GoUsage>,
+) {
 	let _ = app;
 	let (poll_store, poll_db) = (store.clone(), db.clone());
 	let spawned = std::thread::Builder::new().name("usage-poller".into()).spawn(move || {
@@ -49,6 +56,9 @@ pub fn spawn(app: AppHandle, store: Arc<UsageStore>, db: Db, statusline_dir: Pat
 				&mut unmatched,
 				&mut backoff,
 			);
+			guarded("OpenCode Go", || {
+				go.sync(&poll_db, &poll_store);
+			});
 			std::thread::sleep(TICK);
 		}
 	});

@@ -49,6 +49,10 @@ function StatusBarRow() {
 	const open = useUsageStore((s) => s.detailsOpen);
 	const setOpen = useUsageStore((s) => s.setDetailsOpen);
 	const installed = useInstalledAgents();
+	const visibleAgents =
+		!installed.includes('opencode') && usage.some((row) => row.source === 'openCodeGo')
+			? [...installed, 'opencode' as const]
+			: installed;
 	const sessionId = useAttentionStore((s) => s.activeSessionId);
 	const clock24 = usePrefsStore((s) => s.clock24);
 	const now = useMinuteClock();
@@ -61,7 +65,7 @@ function StatusBarRow() {
 	});
 	const sessionUsage = sessionId !== null ? session.data : null;
 
-	const rows = barRows(usage, installed);
+	const rows = barRows(usage, visibleAgents);
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
@@ -99,7 +103,7 @@ function StatusBarRow() {
 			>
 				<UsagePopover
 					usage={usage}
-					installed={installed}
+					installed={visibleAgents}
 					session={sessionUsage}
 					clock24={clock24}
 					now={now}

@@ -1267,7 +1267,18 @@ export interface ModelLimit {
 /** Where a reading came from. */
 export type GoKeySource = 'saved' | 'environment';
 
-export type UsageSource = 'statusLine' | 'codexLog' | 'codexAppServer' | 'claudeApi';
+export type GoQuotaStatus =
+	| 'noKey'
+	| 'available'
+	| 'rejectedKey'
+	| 'missingEntitlement'
+	| 'unavailable';
+export interface GoKeyUpdate {
+	source: GoKeySource | null;
+	status: GoQuotaStatus;
+}
+
+export type UsageSource = 'statusLine' | 'codexLog' | 'codexAppServer' | 'claudeApi' | 'openCodeGo';
 
 /** The latest known limits for one profile. `usage:changed` carries the whole
  *  list, and `get_usage` returns the same. */

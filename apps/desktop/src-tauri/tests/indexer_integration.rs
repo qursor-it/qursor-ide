@@ -1360,3 +1360,65 @@ fn a_codex_image_title_uses_the_users_words_and_tracks_index_only_renames() {
 	idx.full_scan().expect("scan after marker-only title");
 	assert_eq!(title(), ("Reply with exactly the word: pong".into(), "derived".into()));
 }
+
+#[test]
+fn opencode_indexes_saved_titles_and_removes_archived_sessions_without_writing_its_store() {
+	use factorai_lib::agents::opencode;
+	use factorai_lib::commands::sessions::list_sessions_in;
+	use factorai_lib::services::{profiles, sessions};
+
+	let tmp = TempDir::new().expect("temp");
+	let db = open_db(tmp.path());
+	let cwd = make_folder(tmp.path(), "open code");
+	let project = add_project_in(&db, cwd.to_str().expect("path")).expect("add project");
+	let root = tmp.path().join("profile");
+	let profile = profiles::ensure_default_for(&db, "opencode", &root).expect("profile");
+	let path = opencode::database_path(&root);
+	std::fs::create_dir_all(path.parent().expect("data directory")).expect("mkdir");
+	let provider = rusqlite::Connection::open(&path).expect("OpenCode store");
+	provider.execute_batch(
+		"CREATE TABLE session(id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT NOT NULL,
+		 time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, parent_id TEXT, time_archived INTEGER)"
+	).expect("schema");
+	let cwd = factorai_lib::agents::path_identity::display_path(cwd.to_str().expect("cwd"));
+	provider
+		.execute(
+			"INSERT INTO session VALUES ('ses_existing', ?1, 'Saved title', 1, 2, NULL, NULL),
+		 ('ses_child', ?1, 'Child', 1, 2, 'ses_existing', NULL)",
+			[&cwd],
+		)
+		.expect("saved sessions");
+	let (indexer, events) = make_indexer(db.clone(), tmp.path().join("claude"));
+	let rows = || db.read(|conn| list_sessions_in(conn, &project.id)).expect("sessions");
+	indexer.full_scan().expect("initial scan");
+	let first = rows();
+	assert_eq!(first.len(), 1);
+	assert_eq!(first[0].id, "ses_existing");
+	assert_eq!(first[0].title, "Saved title");
+	assert_eq!(first[0].agent, "opencode");
+	assert_eq!(first[0].profile_name.as_deref(), Some(profile.name.as_str()));
+	let resolved = profiles::config_dir_for_spawn(&db, "opencode", &project.id, Some(&first[0].id));
+	assert_eq!(resolved.as_deref(), Some(root.as_path()));
+	assert_eq!(opencode::session_directory(&root, &first[0].id), Some(cwd));
+	assert_eq!(opencode::argv(Some(&first[0].id), None), ["--session=ses_existing"]);
+	assert!(sessions::delete(&db, tmp.path(), &first[0].id, false).is_err());
+	let original: String = provider
+		.query_row("SELECT title FROM session WHERE id = 'ses_existing'", [], |r| r.get(0))
+		.expect("provider title");
+	assert_eq!(original, "Saved title");
+
+	provider
+		.execute(
+			"UPDATE session SET title = 'Renamed', time_updated = 3 WHERE id = 'ses_existing'",
+			[],
+		)
+		.expect("rename");
+	indexer.scan_opencode(true).expect("rescan title");
+	assert_eq!(rows()[0].title, "Renamed");
+	provider
+		.execute("UPDATE session SET time_archived = 4 WHERE id = 'ses_existing'", [])
+		.expect("archive");
+	indexer.scan_opencode(true).expect("rescan archive");
+	assert!(rows().is_empty());
+	assert_eq!(events.lock().expect("events").len(), 3);
+}

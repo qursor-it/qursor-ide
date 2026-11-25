@@ -96,8 +96,15 @@ pub fn spawn(indexer: Arc<Indexer>, control: Arc<Control>) {
 			// stores as we arm them.
 			let mut pending = reconcile(&indexer, &mut debouncer, &mut watched).pending;
 			let mut last_try = Instant::now();
+			let mut last_opencode = Instant::now();
 
 			loop {
+				if last_opencode.elapsed() >= RETRY {
+					if let Err(e) = indexer.scan_opencode(false) {
+						warn!(error = %e, "OpenCode reindex failed");
+					}
+					last_opencode = Instant::now();
+				}
 				match rx.recv_timeout(IDLE_TICK) {
 					Ok(Ok(events)) => {
 						// Root → the project directories under it that changed. Keyed by

@@ -103,6 +103,18 @@ pub fn run() {
 				"default claude profile"
 			);
 
+			// A previous OpenCode install can already have history before binary probing (ADR-0122).
+			let opencode =
+				agents::descriptor(agents::OPENCODE).expect("OpenCode is in the registry");
+			let opencode_root = agents::ambient_dir(opencode);
+			if agents::opencode::database_path(&opencode_root).is_file() {
+				if let Err(error) =
+					services::profiles::ensure_default_for(&db, opencode.id, &opencode_root)
+				{
+					warn!(%error, "could not seed the OpenCode profile");
+				}
+			}
+
 			// Ask the user's login shell what their PATH is, on its own thread.
 			// A GUI process has never run an rc file, so ours has no Homebrew and
 			// no version-manager shims in it, and a session handed that PATH
@@ -226,6 +238,16 @@ pub fn run() {
 					let db = db.clone();
 					Arc::new(move |agent, project_id, session_id| {
 						services::profiles::config_dir_for_spawn(&db, agent, project_id, session_id)
+							.or_else(|| {
+								if agent != agents::OPENCODE {
+									return None;
+								}
+								let descriptor = agents::descriptor(agent)?;
+								let root = agents::ambient_dir(descriptor);
+								services::profiles::ensure_default_for(&db, agent, &root)
+									.ok()
+									.map(|profile| PathBuf::from(profile.config_dir))
+							})
 					})
 				})
 				// Which checkout each session is working in (F21). Written by the
@@ -471,7 +493,7 @@ pub fn run() {
 				attention,
 				intelligence,
 				usage: usage.clone(),
-				go_usage,
+				go_usage: go_usage.clone(),
 				taskbar_widget: taskbar_widget.clone(),
 				vault,
 				ssh,
@@ -490,6 +512,7 @@ pub fn run() {
 				usage_poll_store,
 				usage_db,
 				statusline_dir,
+				go_usage,
 			);
 			spawn_initial_scan(indexer.clone());
 			watcher::spawn(indexer, watch.clone());

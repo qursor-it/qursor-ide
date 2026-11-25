@@ -933,29 +933,33 @@ function SessionRow({ session, projectId, mark, subagentCount, clock24, pad }: S
 						{session.pinned ? <PinOff /> : <Pin />}
 						{session.pinned ? 'Unpin session' : 'Pin session'}
 					</ContextMenuItem>
-					{/* The transcript file, not the session id. It is what you hand to
+					{session.agent !== 'opencode' && (
+						<>
+							{/* The transcript file, not the session id. It is what you hand to
 					    another agent, to `jq`, or to a bug report, and finding it by
 					    hand means knowing how Claude encodes a project path into a
 					    directory name. */}
-					<ContextMenuItem
-						data-testid={`copy-session-path-${session.id}`}
-						onSelect={() => void copyTranscriptPath()}
-					>
-						<Route />
-						Copy transcript path
-					</ContextMenuItem>
-					<ContextMenuSeparator />
-					<ContextMenuItem
-						variant="destructive"
-						data-testid={`delete-session-${session.id}`}
-						onSelect={() => {
-							setError(null);
-							setConfirming(true);
-						}}
-					>
-						<Trash2 />
-						Delete session
-					</ContextMenuItem>
+							<ContextMenuItem
+								data-testid={`copy-session-path-${session.id}`}
+								onSelect={() => void copyTranscriptPath()}
+							>
+								<Route />
+								Copy transcript path
+							</ContextMenuItem>
+							<ContextMenuSeparator />
+							<ContextMenuItem
+								variant="destructive"
+								data-testid={`delete-session-${session.id}`}
+								onSelect={() => {
+									setError(null);
+									setConfirming(true);
+								}}
+							>
+								<Trash2 />
+								Delete session
+							</ContextMenuItem>
+						</>
+					)}
 				</ContextMenuContent>
 			</ContextMenu>
 

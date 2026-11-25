@@ -392,8 +392,9 @@ fn lookup_store_key_and_total(
 			"SELECT d.key, s.subagent_of, s.turn_count
 			 FROM sessions s
 			 JOIN discovered_projects d ON d.id = s.discovered_id
-			 WHERE s.id = ?1",
-			params![session_id],
+			 JOIN profiles pr ON pr.id = d.profile_id
+			 WHERE s.id = ?1 AND pr.agent != ?2",
+			params![session_id, crate::agents::OPENCODE],
 			|row| {
 				Ok((
 					row.get::<_, String>(0)?,

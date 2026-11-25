@@ -1468,6 +1468,7 @@ pub enum UsageSource {
 	CodexLog,
 	CodexAppServer,
 	ClaudeApi,
+	OpenCodeGo,
 }
 
 /// The latest known limits for one profile. Mirrors `@factorai/types`

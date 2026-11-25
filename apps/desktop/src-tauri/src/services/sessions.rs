@@ -226,11 +226,12 @@ pub fn delete(
 	session_id: &str,
 	is_live: bool,
 ) -> AppResult<Option<String>> {
-	let (key, project_id, subagent_of, recorded_path) = db.with(|conn| {
+	let (key, project_id, subagent_of, recorded_path, agent) = db.with(|conn| {
 		conn.query_row(
-			"SELECT d.key, d.project_id, s.subagent_of, s.transcript_path
+			"SELECT d.key, d.project_id, s.subagent_of, s.transcript_path, pr.agent
 			 FROM sessions s
 			 JOIN discovered_projects d ON d.id = s.discovered_id
+			 JOIN profiles pr ON pr.id = d.profile_id
 			 WHERE s.id = ?1",
 			rusqlite::params![session_id],
 			|row| {
@@ -239,6 +240,7 @@ pub fn delete(
 					row.get::<_, Option<String>>(1)?,
 					row.get::<_, Option<String>>(2)?,
 					row.get::<_, Option<String>>(3)?,
+					row.get::<_, String>(4)?,
 				))
 			},
 		)
@@ -252,6 +254,10 @@ pub fn delete(
 			other => AppError::from(other),
 		})
 	})?;
+
+	if agent == crate::agents::OPENCODE {
+		return Err(AppError::InvalidInput("Delete OpenCode sessions from OpenCode".into()));
+	}
 
 	// A sub-agent's transcript lives inside its parent's directory and its parent's
 	// transcript still references it, so deleting one alone leaves a hole in a
