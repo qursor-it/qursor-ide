@@ -169,10 +169,12 @@ impl AgentTools {
 			"read only the nodes you need, find an empty spot for new cards, and send small ",
 			"patches with that revision. The open board reloads by itself.",
 		);
-		const HANDOFF: &str = concat!(
-			"To hand a part of the work to a new session in this project, use `startSession` ",
-			"once the human agrees.",
-		);
+		let handoff = match &self.delegations {
+			Some(tools) if tools.state.is_child(&tools.caller) =>
+				"You are a Qursor delegate. Publish your result with completeDelegation before you finish.",
+			Some(_) => "To delegate to another installed agent, pass its id as agent to startSession. Qursor asks for approval and returns a delegation id. Retrieve its result with getDelegation. For a same-agent hand-off without an explicit agent, ask the human first.",
+			None => "To hand a part of the work to a new session in this project, use startSession once the human agrees.",
+		};
 		format!(
 			"This session is running inside Qursor IDE, in the project at {}.
 
@@ -180,18 +182,10 @@ impl AgentTools {
 
 {CANVAS}
 
-{HANDOFF}
-
-{}
+{handoff}
 
 {}",
 			self.routines.project_path,
-			match &self.delegations {
-				Some(tools) if tools.state.is_child(&tools.caller) =>
-					"You are a Qursor delegate. Publish your result with completeDelegation before you finish.",
-				Some(_) => "To delegate to another installed agent, pass its id as agent to startSession. Qursor asks for approval and returns a delegation id. Retrieve its result with getDelegation.",
-				None => "",
-			},
 			super::terminals::INSTRUCTIONS
 		)
 	}
@@ -1210,6 +1204,31 @@ mod tests {
 		// lines and leaves the source's tabs in the literal, which is how this
 		// text first shipped reading "It runs only while\t\t\tQursor IDE is open".
 		assert!(!instructions.contains('\t'), "{instructions:?}");
+	}
+
+	#[test]
+	fn a_delegate_is_guided_to_report_its_result() {
+		let state = Arc::new(Delegations::default());
+		let child = state
+			.request(
+				"parent",
+				crate::services::terminal::SessionStart {
+					delegation_id: None,
+					project_id: "project".into(),
+					agent: "opencode".into(),
+					prompt: "Review the diff".into(),
+					cwd: "/project".into(),
+				},
+			)
+			.expect("request");
+		let tools = fixture().tools.with_delegations(DelegationTools {
+			caller: child.delegation_id.expect("delegate id"),
+			state,
+			request: Arc::new(|_, _| panic!("not callable from a delegate")),
+		});
+		let instructions = tools.instructions();
+		assert!(instructions.contains("completeDelegation"));
+		assert!(!instructions.contains("startSession"));
 	}
 
 	#[test]
