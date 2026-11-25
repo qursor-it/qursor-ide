@@ -96,6 +96,7 @@ export interface SettingsValues extends Prefs {
 	/** Desktop notifications for a session that wants you (F32). SQLite for the
 	 *  same reason as the channel: Rust sends them and reads it there. */
 	desktopNotifications: boolean;
+	confirmAgentDelegations: boolean;
 	/** The usage monitor's three Rust-read switches. The endpoint is opt-in;
 	 *  the taskbar widget and the status-line forwarding are on by default. */
 	usageClaudeEndpoint: boolean;
@@ -160,6 +161,7 @@ export const SECTION_FOR: Record<keyof SettingsValues, SettingsSection> = {
 	frontmatterOpen: 'editor',
 	confirmCloseSession: 'confirmations',
 	confirmCloseMiddleClick: 'confirmations',
+	confirmAgentDelegations: 'confirmations',
 	restoreTabs: 'sessions',
 	desktopNotifications: 'sessions',
 	routinesCatchupHours: 'routines',

@@ -958,6 +958,7 @@ pub enum SettingKey {
 	/// window is in the background (F32, ADR-0081). Unset → on; `off` → off.
 	/// Rust reads it because Rust sends the notification.
 	DesktopNotifications,
+	ConfirmAgentDelegations,
 	/// Whether Project Intelligence (F33, ADR-0084) may analyse this workspace's
 	/// sessions. The string `on` enables it; unset, or anything else, is off —
 	/// and off means every intelligence command refuses and no analysis process
@@ -996,6 +997,7 @@ impl SettingKey {
 			SettingKey::RoutinesMaxConcurrent => "routines.max_concurrent",
 			SettingKey::UpdateChannel => "updates.channel",
 			SettingKey::DesktopNotifications => "notifications.desktop",
+			SettingKey::ConfirmAgentDelegations => "agent.confirm_delegations",
 			SettingKey::ProjectIntelligence => "intelligence.enabled",
 			SettingKey::UsageClaudeEndpoint => "usage.claude_endpoint",
 			SettingKey::UsageTaskbarWidget => "usage.taskbar_widget",

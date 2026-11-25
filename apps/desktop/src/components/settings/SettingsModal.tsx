@@ -130,6 +130,7 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 			routinesMaxConcurrent: (await cmd.getSetting('routinesMaxConcurrent')) ?? '',
 			updateChannel: channelOf(await cmd.getSetting('updateChannel')),
 			desktopNotifications: desktopNotificationsOf(await cmd.getSetting('desktopNotifications')),
+			confirmAgentDelegations: (await cmd.getSetting('confirmAgentDelegations')) !== 'off',
 			usageClaudeEndpoint: usageEndpointOf(await cmd.getSetting('usageClaudeEndpoint')),
 			usageTaskbarWidget: usageOnByDefault(await cmd.getSetting('usageTaskbarWidget')),
 			usageStatusLine: usageOnByDefault(await cmd.getSetting('usageStatusLine')),
@@ -193,6 +194,7 @@ export function SettingsModal({ section, onSection, onClose }: SettingsModalProp
 								routinesMaxConcurrent: '',
 								updateChannel: 'stable',
 								desktopNotifications: true,
+								confirmAgentDelegations: true,
 								usageClaudeEndpoint: false,
 								usageTaskbarWidget: true,
 								usageStatusLine: true,
@@ -222,6 +224,7 @@ interface SettingsFormProps {
 		| 'routinesMaxConcurrent'
 		| 'updateChannel'
 		| 'desktopNotifications'
+		| 'confirmAgentDelegations'
 		| 'usageClaudeEndpoint'
 		| 'usageTaskbarWidget'
 		| 'usageStatusLine'
@@ -330,6 +333,12 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 					desktopNotificationsSetting(draft.desktopNotifications),
 				);
 			}
+			if (draft.confirmAgentDelegations !== saved.confirmAgentDelegations) {
+				await cmd.setSetting(
+					'confirmAgentDelegations',
+					draft.confirmAgentDelegations ? null : 'off',
+				);
+			}
 			// The usage monitor's switches. Rust reads them when it next polls or
 			// starts a session, so a status line change reaches new sessions only.
 			if (draft.usageClaudeEndpoint !== saved.usageClaudeEndpoint) {
@@ -376,6 +385,7 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 				routinesMaxConcurrent: concurrent ?? '',
 				updateChannel: draft.updateChannel,
 				desktopNotifications: draft.desktopNotifications,
+				confirmAgentDelegations: draft.confirmAgentDelegations,
 				usageClaudeEndpoint: draft.usageClaudeEndpoint,
 				usageTaskbarWidget: draft.usageTaskbarWidget,
 				usageStatusLine: draft.usageStatusLine,
@@ -508,6 +518,17 @@ function SettingsForm({ section, onSection, onClose, savedSqlite, dirtyRef }: Se
 									data-testid="settings-confirm-middle-click"
 									checked={draft.confirmCloseMiddleClick}
 									onCheckedChange={(v) => set('confirmCloseMiddleClick', v)}
+								/>
+							</SettingRow>
+							<SettingRow
+								label="Ask before starting a delegated session"
+								htmlFor="settings-confirm-delegation"
+								description="Turn off to let orchestrators start subagents in the background across all projects."
+							>
+								<Switch
+									id="settings-confirm-delegation"
+									checked={draft.confirmAgentDelegations}
+									onCheckedChange={(v) => set('confirmAgentDelegations', v)}
 								/>
 							</SettingRow>
 							{/* What `needsQuitConfirm` does (ADR-0020): it asks only while an
@@ -1027,6 +1048,7 @@ function prefsOf(values: SettingsValues): Prefs {
 		routinesMaxConcurrent: _concurrent,
 		updateChannel: _channel,
 		desktopNotifications: _notifications,
+		confirmAgentDelegations: _confirmDelegations,
 		usageClaudeEndpoint: _usageEndpoint,
 		usageTaskbarWidget: _usageTaskbar,
 		usageStatusLine: _usageStatusLine,

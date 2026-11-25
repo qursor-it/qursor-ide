@@ -113,7 +113,7 @@ services/
     tools.rs          # listRoutines, createRoutine, updateRoutine,
                       #   setRoutineEnabled, and the canvas tools canvasOutline,
                       #   canvasRead, canvasFreeSpot, canvasPatch (F44, ADR-0104)
-                      #   startSession, getDelegation, completeDelegation (F50, ADR-0119)
+                      #   startSession, getDelegation, completeDelegation (F50, ADR-0119, ADR-0121)
                       #   and getUsageLimits (F34)
                       #   — reaching the agent as mcp__factorai__*
   canvas_tools.rs     # pure functions behind the canvas tools: outline, read_part,

@@ -172,7 +172,7 @@ impl AgentTools {
 		let handoff = match &self.delegations {
 			Some(tools) if tools.state.is_child(&tools.caller) =>
 				"You are a Qursor delegate. Publish your result with completeDelegation before you finish.",
-			Some(_) => "To delegate to another installed agent, pass its id as agent to startSession. Qursor asks for approval and returns a delegation id. Retrieve its result with getDelegation. For a same-agent hand-off without an explicit agent, ask the human first.",
+			Some(_) => "To delegate to another installed agent, pass its id as agent to startSession. Qursor follows the user's delegation confirmation setting and returns a delegation id. Retrieve its result with getDelegation. For a same-agent hand-off without an explicit agent, ask the human first.",
 			None => "To hand a part of the work to a new session in this project, use startSession once the human agrees.",
 		};
 		format!(
@@ -685,7 +685,7 @@ fn tools_list(delegations: Option<&DelegationTools>, usage_limits: bool) -> Valu
 				}));
 			} else {
 				if let Some(start) = list.iter_mut().find(|tool| tool["name"] == "startSession") {
-					start["description"] = json!("Open a new session in this project. Pass agent to request a delegation, which Qursor asks the user to approve and whose result you can retrieve with getDelegation. With agent omitted, ask the user in chat before opening a session of the same agent.");
+					start["description"] = json!("Open a new session in this project. Pass agent to request a delegation, which follows the user's confirmation setting. Retrieve the result with getDelegation. With agent omitted, ask the user in chat before opening a session of the same agent.");
 					start["inputSchema"]["properties"]["agent"] = json!({
 						"type": "string",
 						"description": "The id of the installed agent to delegate to.",
@@ -1214,6 +1214,7 @@ mod tests {
 				"parent",
 				crate::services::terminal::SessionStart {
 					delegation_id: None,
+					auto_approved: false,
 					project_id: "project".into(),
 					agent: "opencode".into(),
 					prompt: "Review the diff".into(),

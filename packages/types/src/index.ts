@@ -408,6 +408,7 @@ export type SettingKey =
 	| 'routinesMaxConcurrent'
 	| 'updateChannel'
 	| 'desktopNotifications'
+	| 'confirmAgentDelegations'
 	| 'projectIntelligence'
 	| 'usageClaudeEndpoint'
 	| 'usageTaskbarWidget'
@@ -1181,6 +1182,7 @@ export interface RoutineFireEvent {
  *  (`startSession`). Project and folder come from the caller. */
 export interface AgentSessionStartEvent {
 	delegationId?: string | null;
+	autoApproved?: boolean;
 	projectId: string;
 	agent: AgentId;
 	prompt: string;

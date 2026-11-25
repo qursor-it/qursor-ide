@@ -51,7 +51,7 @@ pub fn resolve_delegation(
 	state
 		.terminals
 		.delegations
-		.decide(&id, approve, |parent| state.terminals.live_session_ids().contains(parent))
+		.decide(&id, approve, |parent| state.terminals.can_start_delegate(parent))
 }
 
 /// Spawn the PTY for a session.
@@ -78,7 +78,8 @@ pub async fn terminal_spawn(state: State<'_, AppState>, opts: SpawnOpts) -> AppR
 	let routines = state.routines.clone();
 	off_main(move || {
 		let session_id = opts.session_id.clone();
-		let delegated = terminals.delegations.begin(&opts)?;
+		let delegated =
+			terminals.delegations.begin(&opts, |parent| terminals.can_start_delegate(parent))?;
 		let result = terminals.spawn(opts);
 		if delegated {
 			terminals.delegations.started(&session_id, result.is_ok());

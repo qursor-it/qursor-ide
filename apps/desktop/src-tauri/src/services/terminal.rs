@@ -270,6 +270,7 @@ pub struct SessionWorktreeEvent {
 #[serde(rename_all = "camelCase")]
 pub struct SessionStart {
 	pub delegation_id: Option<String>,
+	pub auto_approved: bool,
 	pub project_id: String,
 	pub agent: String,
 	pub prompt: String,
@@ -790,6 +791,7 @@ struct TerminalHandle {
 #[derive(Clone)]
 pub struct TerminalManager {
 	pub delegations: Arc<Delegations>,
+	confirm_delegations: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 	usage_limits: Option<agent_tools::ReadUsageLimits>,
 	terminals: Arc<DashMap<TerminalId, Arc<TerminalHandle>>>,
 	on_data: DataCb,
@@ -905,6 +907,7 @@ impl TerminalManager {
 				let _ = app_status.emit("terminal:status", e);
 			}),
 			delegations: Arc::default(),
+			confirm_delegations: None,
 			usage_limits: None,
 			on_exit: Arc::new(move |e| {
 				let _ = app_exit.emit("terminal:exit", e);
@@ -945,6 +948,7 @@ impl TerminalManager {
 			on_data,
 			on_status,
 			delegations: Arc::default(),
+			confirm_delegations: None,
 			usage_limits: None,
 			on_exit,
 			claude_dir,
@@ -1081,6 +1085,14 @@ impl TerminalManager {
 		self
 	}
 
+	pub fn with_delegation_confirmation(
+		mut self,
+		confirm: Arc<dyn Fn() -> bool + Send + Sync>,
+	) -> Self {
+		self.confirm_delegations = Some(confirm);
+		self
+	}
+
 	pub fn with_user_binary(mut self, cb: BinaryOverrideCb) -> Self {
 		self.user_binary = Some(cb);
 		self
@@ -1175,6 +1187,15 @@ impl TerminalManager {
 			.filter(|e| e.value().kind == TerminalKind::Agent)
 			.filter(|e| *e.value().status.lock() == TerminalStatus::Working)
 			.count()
+	}
+
+	/// Check the PTY that originated this request, including before its exit is emitted.
+	pub fn can_start_delegate(&self, parent: &str) -> bool {
+		self.terminals.iter().any(|entry| {
+			let handle = entry.value();
+			handle.session_id.as_deref() == Some(parent)
+				&& *handle.status.lock() != TerminalStatus::Stopped
+		})
 	}
 
 	/// The session ids with a PTY behind them right now. The indexer's reap
@@ -1486,6 +1507,7 @@ impl TerminalManager {
 		let (target_binary, dispatch) = (self.user_binary.clone(), self.on_session_start.clone());
 		let (state, caller) = (self.delegations.clone(), session_id.to_string());
 		let (project, folder) = (project_id.to_string(), cwd.to_string_lossy().into_owned());
+		let confirm_delegations = self.confirm_delegations.clone();
 		let delegation_tools = DelegationTools {
 			caller: caller.clone(),
 			state: state.clone(),
@@ -1494,18 +1516,20 @@ impl TerminalManager {
 					.ok_or_else(|| AppError::InvalidInput(format!("unknown agent {target}")))?;
 				let binary = target_binary.as_ref().and_then(|resolve| resolve(target.id));
 				find_agent_binary(target, binary.as_deref())?;
+				let auto_approved = confirm_delegations.as_ref().is_some_and(|confirm| !confirm());
 				let launch = state.request(
 					&caller,
 					SessionStart {
 						delegation_id: None,
+						auto_approved,
 						project_id: project.clone(),
 						agent: target.id.into(),
 						prompt: prompt.into(),
 						cwd: folder.clone(),
 					},
 				)?;
-				let result =
-					serde_json::json!({ "id": launch.delegation_id, "status": "pendingApproval" });
+				let status = if auto_approved { "starting" } else { "pendingApproval" };
+				let result = serde_json::json!({ "id": launch.delegation_id, "status": status });
 				dispatch(launch);
 				Ok(result)
 			}),
@@ -1516,6 +1540,7 @@ impl TerminalManager {
 		let start_session: agent_tools::StartSession = Arc::new(move |prompt| {
 			(on_session_start)(SessionStart {
 				delegation_id: None,
+				auto_approved: false,
 				project_id: start_project.clone(),
 				agent: start_agent.clone(),
 				prompt: prompt.to_string(),

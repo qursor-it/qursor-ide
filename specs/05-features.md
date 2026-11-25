@@ -9295,16 +9295,20 @@ answers at once, and the caller neither waits for the new session nor reads its
 result.
 
 **Events.** `agent-session:start` (`projectId`, `agent`, `prompt`, `cwd`,
-optional `delegationId`).
+optional `delegationId` and `autoApproved`).
 
 ### Delegation to another agent
 
 A session can pass `agent` to `startSession` to request a delegated session.
 Qursor binds the caller, project and start folder at the MCP endpoint. It
-returns a delegation id. The user reviews the target, folder and brief in a Qursor
-dialog before the new process starts. Pending requests expire after ten minutes. The delegate uses the target's resolved
-project profile, or that agent's default. Omitting `agent` retains the
-same-agent hand-off described above.
+returns a delegation id. By default the user reviews the target, folder and
+brief in a Qursor dialog. With **Ask before starting a delegated session**
+off in Settings → Confirmations, explicit-agent requests start immediately in
+the background. The setting applies app-wide to new requests. A request can
+only start while its parent session is live. Unstarted requests expire after
+ten minutes. The delegate uses the target's resolved project profile, or that
+agent's default. Omitting `agent` retains the same-agent hand-off described
+above. See [ADR-0121](adr/0121-delegation-approval-can-be-disabled.md).
 
 The child can call `completeDelegation({ summary })` once. Its parent reads
 the state and result with `getDelegation({ id })`. The result is available to the parent while the app is running. A delegated session cannot start further Qursor

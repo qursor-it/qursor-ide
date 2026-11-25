@@ -27,7 +27,11 @@ export function AgentSessionStarts() {
 	useEffect(() => {
 		const listener = events.onAgentSessionStart((event) => {
 			if (event.delegationId) {
-				setRequests((items) => [...items, event]);
+				if (event.autoApproved) {
+					startAgentSession(event.delegationId, event);
+				} else {
+					setRequests((items) => [...items, event]);
+				}
 				return;
 			}
 			void cmd

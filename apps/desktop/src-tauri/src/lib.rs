@@ -185,6 +185,21 @@ pub fn run() {
 						value.as_deref() != Some("off")
 					})
 				})
+				.with_delegation_confirmation({
+					let db = db.clone();
+					Arc::new(move || {
+						db.with(|conn| {
+							services::settings::get(
+								conn,
+								models::SettingKey::ConfirmAgentDelegations,
+							)
+						})
+						.ok()
+						.flatten()
+						.as_deref()
+							!= Some("off")
+					})
+				})
 				.with_user_binary(Arc::new(move |agent| {
 					services::settings::binary_override(&settings_db, agent)
 				}))

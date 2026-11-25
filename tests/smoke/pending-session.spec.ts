@@ -167,3 +167,41 @@ test('@smoke an OpenCode delegate starts only after the user approves its brief'
 	await expect(row.getByRole('img', { name: 'OpenCode' })).toBeVisible();
 	await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(0);
 });
+
+test('@smoke starts OpenCode in the background when delegation confirmation is off', async ({
+	page,
+}) => {
+	await installMockBridge(page, fixture());
+	await page.goto('/?settings=confirmations');
+	const confirmation = page.getByRole('switch', {
+		name: 'Ask before starting a delegated session',
+	});
+	await expect(confirmation).toBeChecked();
+	await confirmation.click();
+	await page.getByTestId('settings-save').click();
+	await expect(confirmation).toHaveCount(0);
+	const calls = () => page.evaluate(() => window.__FACTORAI_TEST_CALLS__ ?? []);
+	expect(await calls()).toContainEqual({
+		name: 'set_setting',
+		args: { key: 'confirmAgentDelegations', value: 'off' },
+	});
+
+	await page.getByRole('button', { name: 'Expand alpha' }).click();
+	await page.evaluate(
+		({ projectId, id }) =>
+			window.__FACTORAI_EMIT__?.('agent-session:start', {
+				delegationId: id,
+				autoApproved: true,
+				projectId,
+				agent: 'opencode',
+				cwd: '/workspace/alpha',
+				prompt: 'Review the fixture diff',
+			}),
+		{ projectId: ALPHA_ID, id: NEW_ID },
+	);
+	const row = page.getByTestId(`sidebar-sessions-${ALPHA_ID}`).getByRole('link').first();
+	await expect(row.getByRole('img', { name: 'OpenCode' })).toBeVisible();
+	await expect(page.getByRole('dialog', { name: 'Delegate to OpenCode' })).toHaveCount(0);
+	await expect(page.getByTestId('session-tabs').getByRole('tab')).toHaveCount(0);
+	expect((await calls()).some((call) => call.name === 'resolve_delegation')).toBe(false);
+});

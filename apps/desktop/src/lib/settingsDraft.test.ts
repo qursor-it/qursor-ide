@@ -34,6 +34,7 @@ const SAVED: SettingsValues = {
 	frontmatterOpen: true,
 	restoreTabs: true,
 	desktopNotifications: true,
+	confirmAgentDelegations: true,
 	keymapOverrides: {},
 	prReviewInstructions: '',
 	terminalFont: 'jetbrains',

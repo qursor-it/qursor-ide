@@ -870,7 +870,8 @@ credential (F34).
 The standard dialog shows the target agent and working folder above the exact
 brief. Long briefs scroll within the muted surface. Focus starts on Decline,
 and Start session is the primary action. The new session opens in the
-background when approved (F50).
+background when approved. Settings → Confirmations has a switch for starting
+future delegations automatically (F50).
 
 ### Command Palette
 
