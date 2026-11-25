@@ -7356,6 +7356,21 @@ project runs"); `start_session` returns `{ id, provisional: bool }`;
 
 **Roadmap.** Item 38, rewritten as slices.
 
+### OpenCode
+
+OpenCode 1.x is available in Settings → Agents and in the local new-session
+picker when its binary is found. The card flags other major versions. The first run uses OpenCode's own provider
+login and the model selected in OpenCode. The default profile inherits
+OpenCode's normal login. Other profiles use their directory as the root for
+OpenCode data and configuration.
+
+OpenCode starts in the same PTY as the other agents and receives the first
+message through its prompt argument. Qursor registers its per-session MCP
+server through OpenCode's inline configuration and scopes it to the running
+session and project. OpenCode sessions appear under their project while
+running. They have no Qursor transcript, imported projects, or Qursor resume.
+See [ADR-0118](adr/0118-opencode-uses-the-local-agent-registry.md).
+
 ## F31 — Pull requests from the project's remote, through `gh`
 
 **Specified 2026-10-13; decision in
@@ -8379,6 +8394,22 @@ widget floating outside the taskbar, a right-click menu on the widget,
 anything while factorai is closed, notifications or sounds near a limit, and
 daily or per-block cost reports.
 
+### Limits over MCP (F50)
+
+`getUsageLimits({ agent? })` returns available plan windows for the profiles
+Qursor resolves for the current project. Without an agent filter, it returns
+one entry per registered agent. Entries report available, stale, or
+unavailable and include the last observation time when known.
+
+Claude and Codex use the existing usage monitor. To enable OpenCode Go limits
+for the default OpenCode profile, save the Go API key in Settings → Usage.
+The encrypted vault holds the key. Settings reports its source and allows
+replacement or removal, and MCP sees only usage. The environment variable
+`QURSOR_OPENCODE_GO_API_KEY` remains available as a fallback when the vault
+has no saved key. A key change invalidates the five-minute usage cache.
+Qursor exposes the 5-hour, weekly and monthly windows of the Go account
+that provided the key. See [ADR-0120](adr/0120-save-opencode-go-keys-in-the-vault.md).
+
 ## F35 — Git mode: a full-window git client per project, with agents for the hard parts
 
 **Specified and built 2026-11-12; decisions in
@@ -9263,4 +9294,22 @@ the sidebar, no tab opens and focus does not move. Fire-and-forget: the tool
 answers at once, and the caller neither waits for the new session nor reads its
 result.
 
-**Events.** `agent-session:start` (`projectId`, `agent`, `prompt`, `cwd`).
+**Events.** `agent-session:start` (`projectId`, `agent`, `prompt`, `cwd`,
+optional `delegationId` and `autoApproved`).
+
+### Delegation to another agent
+
+A session can pass `agent` to `startSession` to request a delegated session.
+Qursor binds the caller, project and start folder at the MCP endpoint. It
+returns a delegation id. By default the user reviews the target, folder and
+brief in a Qursor dialog. With **Ask before starting a delegated session**
+off in Settings → Confirmations, explicit-agent requests start immediately in
+the background. The setting applies app-wide to new requests. A request can
+only start while its parent session is live. Unstarted requests expire after
+ten minutes. The delegate uses the target's resolved project profile, or that
+agent's default. Omitting `agent` retains the same-agent hand-off described
+above. See [ADR-0121](adr/0121-delegation-approval-can-be-disabled.md).
+
+The child can call `completeDelegation({ summary })` once. Its parent reads
+the state and result with `getDelegation({ id })`. The result is available to the parent while the app is running. A delegated session cannot start further Qursor
+sessions. If it exits before reporting, the parent sees an ended delegation.

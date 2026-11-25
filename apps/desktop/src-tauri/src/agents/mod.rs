@@ -2,7 +2,7 @@
 //!
 //! A project is a folder in the workspace (`projects`); an agent store is a
 //! **discovery source** we read to find out which folders an agent has worked
-//! in. Two agents are known: Claude Code and Codex CLI. Each is an
+//! in. Each supported CLI is an
 //! [`AgentDescriptor`] plus four capabilities — spawn, discovery, transcripts,
 //! status — of which only spawn is required (ADR-0060). A capability an agent
 //! lacks is rendered as absent by the UI, never defaulted.
@@ -14,6 +14,7 @@ use std::path::Path;
 
 pub mod claude;
 pub mod codex;
+pub mod opencode;
 
 /// Path identity shared by agent discovery, indexing, and workspace linking.
 ///
@@ -174,6 +175,7 @@ pub mod path_identity {
 pub const CLAUDE: &str = "claude";
 /// The same for Codex CLI (F30).
 pub const CODEX: &str = "codex";
+pub const OPENCODE: &str = "opencode";
 
 /// What an agent *is* to factorai before any capability is asked of it
 /// (ADR-0060). Everything the settings card, the binary probe and the spawn
@@ -205,9 +207,11 @@ pub enum IdSource {
 	/// The CLI mints it; factorai starts under a provisional id and adopts the
 	/// agent's once it appears in the terminal title.
 	Agent,
+	/// Qursor tracks the live PTY only (ADR-0118).
+	LiveOnly,
 }
 
-const REGISTRY: [AgentDescriptor; 2] = [
+const REGISTRY: [AgentDescriptor; 3] = [
 	AgentDescriptor {
 		id: CLAUDE,
 		display_name: "Claude Code",
@@ -223,6 +227,14 @@ const REGISTRY: [AgentDescriptor; 2] = [
 		config_dir_env: "CODEX_HOME",
 		config_dir_must_exist: true,
 		id_source: IdSource::Agent,
+	},
+	AgentDescriptor {
+		id: OPENCODE,
+		display_name: "OpenCode",
+		binary_name: "opencode",
+		config_dir_env: "XDG_DATA_HOME",
+		config_dir_must_exist: false,
+		id_source: IdSource::LiveOnly,
 	},
 ];
 
@@ -247,7 +259,7 @@ pub fn default_id() -> &'static str {
 /// The directory an agent reads when no profile is passed: its own variable if
 /// exported in the environment factorai was launched from, else its home
 /// directory. For Claude that is `CLAUDE_CONFIG_DIR`, then `CLAUDE_HOME`, then
-/// `~/.claude` (Q3); for Codex `CODEX_HOME`, then `~/.codex`.
+/// `~/.claude` (Q3); for Codex `CODEX_HOME`, then `~/.codex`. OpenCode uses the XDG data root.
 pub fn ambient_dir(agent: &AgentDescriptor) -> std::path::PathBuf {
 	let vars: &[&str] = match agent.id {
 		CLAUDE => &["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"],
@@ -263,6 +275,7 @@ pub fn ambient_dir(agent: &AgentDescriptor) -> std::path::PathBuf {
 	let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"));
 	match agent.id {
 		CODEX => home.join(".codex"),
+		OPENCODE => home.join(".local/share"),
 		_ => home.join(".claude"),
 	}
 }
@@ -307,9 +320,9 @@ mod tests {
 	}
 
 	#[test]
-	fn the_registry_names_both_agents_once() {
+	fn the_registry_names_each_agent_once() {
 		let ids: Vec<&str> = registry().iter().map(|d| d.id).collect();
-		assert_eq!(ids, vec![CLAUDE, CODEX]);
+		assert_eq!(ids, vec![CLAUDE, CODEX, OPENCODE]);
 		assert_eq!(descriptor(CODEX).unwrap().binary_name, "codex");
 		assert_eq!(descriptor("gemini"), None);
 	}
@@ -322,5 +335,6 @@ mod tests {
 		assert!(codex.config_dir_must_exist);
 		assert_eq!(claude.id_source, IdSource::Ours);
 		assert_eq!(codex.id_source, IdSource::Agent);
+		assert_eq!(descriptor(OPENCODE).expect("OpenCode").id_source, IdSource::LiveOnly);
 	}
 }

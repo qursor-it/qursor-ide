@@ -3,6 +3,7 @@ import { cn } from '@factorai/ui';
 import type { SVGProps } from 'react';
 import IconClaude from '~icons/simple-icons/claude';
 import IconOpenAI from '~icons/simple-icons/openai';
+import IconOpenCode from '~icons/simple-icons/opencode';
 import { agentName } from '@lib/agents';
 
 /**
@@ -19,7 +20,7 @@ export function AgentMark({
 	className,
 	...rest
 }: { agent: AgentId } & Omit<SVGProps<SVGSVGElement>, 'ref'>) {
-	const Icon = agent === 'codex' ? IconOpenAI : IconClaude;
+	const Icon = { claude: IconClaude, codex: IconOpenAI, opencode: IconOpenCode }[agent];
 	return (
 		<Icon
 			aria-label={agentName(agent)}

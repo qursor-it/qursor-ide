@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use rusqlite::OptionalExtension;
 use tauri::State;
+use zeroize::Zeroizing;
 
 use crate::agents;
 use crate::commands::sessions::transcript_path;
@@ -12,7 +13,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::{PlanItem, ProviderUsage, SessionUsage};
 use crate::platform::taskbar_widget::config::WidgetConfig;
 use crate::services::session_plan;
-use crate::services::usage::session_cost;
+use crate::services::usage::{mcp::GoKeySource, session_cost};
 use crate::state::AppState;
 
 /// The latest known limits per profile, with any window that has passed its
@@ -20,6 +21,22 @@ use crate::state::AppState;
 #[tauri::command]
 pub fn get_usage(state: State<'_, AppState>) -> AppResult<Vec<ProviderUsage>> {
 	Ok(state.usage.snapshot(crate::services::usage::now_ms()))
+}
+
+/// Which credential source is configured. The key stays in the backend.
+#[tauri::command]
+pub fn open_code_go_key_source(state: State<'_, AppState>) -> Option<GoKeySource> {
+	state.go_usage.key_source()
+}
+
+#[tauri::command]
+pub async fn set_open_code_go_key(
+	state: State<'_, AppState>,
+	key: Option<String>,
+) -> AppResult<Option<GoKeySource>> {
+	let go = state.go_usage.clone();
+	let key = key.map(Zeroizing::new);
+	crate::commands::off_main(move || go.set_key(key.as_deref().map(String::as_str))).await
 }
 
 /// How the taskbar widget is laid out, or the defaults when nothing was saved.

@@ -3,7 +3,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::commands::off_main;
 use crate::commands::projects::project_path;
 use crate::error::AppResult;
-use crate::services::terminal::{ShellSpawnOpts, SpawnOpts, TerminalStatusDto};
+use crate::services::terminal::{SessionStart, ShellSpawnOpts, SpawnOpts, TerminalStatusDto};
 use crate::state::AppState;
 
 /// The session id to open for a "new session" in this project.
@@ -41,6 +41,19 @@ pub async fn start_session(
 	.await
 }
 
+/// Confirm or decline a model's delegation request in Qursor (F50).
+#[tauri::command]
+pub fn resolve_delegation(
+	state: State<'_, AppState>,
+	id: String,
+	approve: bool,
+) -> AppResult<Option<SessionStart>> {
+	state
+		.terminals
+		.delegations
+		.decide(&id, approve, |parent| state.terminals.can_start_delegate(parent))
+}
+
 /// Spawn the PTY for a session.
 ///
 /// **Also where a routine's fire becomes a run** (F22, ADR-0030). This is the
@@ -65,7 +78,13 @@ pub async fn terminal_spawn(state: State<'_, AppState>, opts: SpawnOpts) -> AppR
 	let routines = state.routines.clone();
 	off_main(move || {
 		let session_id = opts.session_id.clone();
-		let terminal_id = terminals.spawn(opts)?;
+		let delegated =
+			terminals.delegations.begin(&opts, |parent| terminals.can_start_delegate(parent))?;
+		let result = terminals.spawn(opts);
+		if delegated {
+			terminals.delegations.started(&session_id, result.is_ok());
+		}
+		let terminal_id = result?;
 		let agent = terminals.agent_of_terminal(&terminal_id);
 		routines.mark_started(&session_id, crate::epoch_ms());
 		Ok(Spawned { id: terminal_id, agent })

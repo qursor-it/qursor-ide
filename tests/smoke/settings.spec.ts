@@ -236,3 +236,25 @@ test.describe('terminal settings', () => {
 		await expect(page.getByTestId('settings-terminal-cursor')).toHaveText(/Block/);
 	});
 });
+
+test('@smoke saves and removes the OpenCode Go key from Usage settings', async ({ page }) => {
+	await installMockBridge(page, fixtureOneProjectOneSession());
+	await page.goto('/?settings=usage');
+	const key = page.getByLabel('OpenCode Go API key');
+	const save = page.getByRole('button', { name: 'Save key', exact: true });
+	await expect(key).toHaveAttribute('type', 'password');
+	await key.fill('synthetic-go-key');
+	await save.click();
+	await expect(key).toHaveValue('');
+	await expect(page.getByText('Saved in vault')).toBeVisible();
+
+	await page.keyboard.press('Escape');
+	await page.getByTestId('open-settings').click();
+	await page.getByTestId('settings-nav-usage').click();
+	await expect(page.getByText('Saved in vault')).toBeVisible();
+	await expect(key).toHaveValue('');
+	await page.getByRole('button', { name: 'Remove', exact: true }).click();
+	const confirmation = page.getByRole('dialog', { name: 'Remove OpenCode Go API key?' });
+	await confirmation.getByRole('button', { name: 'Remove key' }).click();
+	await expect(page.getByText('No key saved')).toBeVisible();
+});

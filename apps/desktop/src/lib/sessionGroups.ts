@@ -1,3 +1,4 @@
+import type { AgentId } from '@factorai/types';
 import type { SessionSummary, TerminalStatus } from '@factorai/types';
 
 export interface SessionGroup {
@@ -104,6 +105,7 @@ export function projectUnseen(
  *  Not exported — both call sites infer it, and a named export nothing imports
  *  is what knip is for. */
 interface PendingSession {
+	agent?: AgentId;
 	sessionId: string;
 	status: TerminalStatus;
 }
@@ -125,7 +127,7 @@ interface PendingSession {
  * this file stays free of store imports like the rest of `lib/`.
  */
 export function pendingSessions(
-	bySession: Record<string, { projectId: string; status: TerminalStatus }>,
+	bySession: Record<string, { projectId: string; status: TerminalStatus; agent?: AgentId | null }>,
 	projectId: string,
 	indexed: SessionSummary[] | undefined,
 ): PendingSession[] {
@@ -133,7 +135,11 @@ export function pendingSessions(
 	const known = new Set(indexed.map((s) => s.id));
 	return Object.entries(bySession)
 		.filter(([sessionId, live]) => live.projectId === projectId && !known.has(sessionId))
-		.map(([sessionId, live]) => ({ sessionId, status: live.status }));
+		.map(([sessionId, live]) => ({
+			sessionId,
+			status: live.status,
+			...(live.agent ? { agent: live.agent } : {}),
+		}));
 }
 
 /**

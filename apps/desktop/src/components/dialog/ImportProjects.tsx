@@ -1,4 +1,4 @@
-import type { AgentId, ImportCandidate } from '@factorai/types';
+import type { ImportCandidate } from '@factorai/types';
 import {
 	Button,
 	Checkbox,
@@ -12,7 +12,7 @@ import {
 	Label,
 } from '@factorai/ui';
 import { AgentMark } from '@components/layout/AgentMark';
-import { agentName } from '@lib/agents';
+import { agentName, type IndexedAgentId } from '@lib/agents';
 import { formatError } from '@lib/errors';
 import { formatRelative } from '@lib/format';
 import { queryKeys } from '@lib/queryKeys';
@@ -61,11 +61,11 @@ interface ImportProjectsProps {
 	onOpenChange: (open: boolean) => void;
 	/** Whose store the list is read from. One agent per dialog (F1 § "Import"):
 	 *  the rows and the empty state are that agent's, never a merge. */
-	agent: AgentId;
+	agent: IndexedAgentId;
 }
 
 /** How the dialog's prose names each agent and its store. */
-const STORE: Record<AgentId, { short: string; dir: string }> = {
+const STORE: Record<IndexedAgentId, { short: string; dir: string }> = {
 	claude: { short: 'Claude', dir: '~/.claude' },
 	codex: { short: 'Codex', dir: '~/.codex' },
 };

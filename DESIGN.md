@@ -858,6 +858,21 @@ question glyph, the question at 14px medium, and its options as small buttons
 (the first primary) each carrying its number in a `kbd`. There is no reply
 box under the terminal: the agent's prompt is the one input (ADR-0097).
 
+### Usage Credentials
+
+Settings → Usage uses a masked input and a status label for the saved
+OpenCode Go key. Saving has a dedicated action, and removal uses the
+standard confirmation dialog. The shared vault controls sit beside the
+credential (F34).
+
+### Delegation Confirmation
+
+The standard dialog shows the target agent and working folder above the exact
+brief. Long briefs scroll within the muted surface. Focus starts on Decline,
+and Start session is the primary action. The new session opens in the
+background when approved. Settings → Confirmations has a switch for starting
+future delegations automatically (F50).
+
 ### Command Palette
 
 A dialog (16px radius, `shadow-popover`) pinned 14% from the top rather than

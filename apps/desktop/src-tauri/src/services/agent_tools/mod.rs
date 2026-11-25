@@ -11,12 +11,13 @@
 //! One component, one lifetime: this listener is started beside the bridge in
 //! `TerminalManager::spawn` and dropped with the PTY.
 
+pub mod delegations;
 mod server;
 pub mod terminals;
 mod tools;
 
 pub use server::AgentToolsServer;
 pub use tools::{
-	AgentTools, Canvases, CreateRoutine, ListRoutines, Routines, StartSession, UpdateRoutine,
-	SERVER_NAME,
+	AgentTools, Canvases, CreateRoutine, DelegationTools, ListRoutines, ReadUsageLimits, Routines,
+	StartSession, UpdateRoutine, SERVER_NAME,
 };

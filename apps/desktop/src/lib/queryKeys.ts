@@ -6,6 +6,7 @@ export const queryKeys = {
 	servers: () => ['servers'] as const,
 	/** Whether the SSH vault is locked, and how it is keyed (ADR-0106). */
 	vault: () => ['vault'] as const,
+	openCodeGoKey: () => ['open-code-go-key'] as const,
 	/** The sidebar's tree — groups and the projects in them, in order (ADR-0025).
 	 *  Its own key rather than a `projects` variant: this one is the *arrangement*
 	 *  and only the sidebar reads it, while `projects` is the flat membership list

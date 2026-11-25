@@ -111,7 +111,12 @@ impl UsageStore {
 
 	/// Every entry, with a window whose reset time has passed shown as reset.
 	pub fn snapshot(&self, now_ms: i64) -> Vec<ProviderUsage> {
-		apply_resets(sorted(self.entries.lock().values().cloned().collect()), now_ms)
+		apply_resets(self.observed_snapshot(), now_ms)
+	}
+
+	/// Actual observations for MCP consumers, with original usage after a reset.
+	pub fn observed_snapshot(&self) -> Vec<ProviderUsage> {
+		sorted(self.entries.lock().values().cloned().collect())
 	}
 
 	/// Write the store, then tell every subscriber. Both happen under the

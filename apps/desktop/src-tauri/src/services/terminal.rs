@@ -48,10 +48,12 @@ use windows_sys::Win32::System::Threading::{
 	OpenProcess, CREATE_NO_WINDOW, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
 };
 
-use crate::agents::{self, claude, codex, AgentDescriptor, IdSource};
+use crate::agents::{self, claude, codex, opencode, AgentDescriptor, IdSource};
 use crate::error::{AppError, AppResult};
 use crate::services::agent_cli::find_agent_binary;
-use crate::services::agent_tools::{self, AgentTools, AgentToolsServer};
+use crate::services::agent_tools::{
+	self, delegations::Delegations, AgentTools, AgentToolsServer, DelegationTools,
+};
 use crate::services::ide::protocol::{self, Mcp, Mention};
 use crate::services::ide::scope;
 use crate::services::ide::server::IdeServer;
@@ -263,10 +265,12 @@ pub struct SessionWorktreeEvent {
 }
 
 /// An agent asking for a new session in its own project (`startSession`).
-/// Project, agent and folder are the caller's own, bound at spawn.
+/// Project and folder are the caller's own, bound at spawn (F50).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStart {
+	pub delegation_id: Option<String>,
+	pub auto_approved: bool,
 	pub project_id: String,
 	pub agent: String,
 	pub prompt: String,
@@ -786,6 +790,9 @@ struct TerminalHandle {
 
 #[derive(Clone)]
 pub struct TerminalManager {
+	pub delegations: Arc<Delegations>,
+	confirm_delegations: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+	usage_limits: Option<agent_tools::ReadUsageLimits>,
 	terminals: Arc<DashMap<TerminalId, Arc<TerminalHandle>>>,
 	on_data: DataCb,
 	on_status: StatusCb,
@@ -797,6 +804,7 @@ pub struct TerminalManager {
 	/// a Codex session runs under until Codex profiles land (roadmap 38 slice
 	/// 4), and what "no variable at all" compares against for that agent.
 	codex_dir: PathBuf,
+	opencode_dir: PathBuf,
 	/// Override for tests. None → resolve the binary at spawn time.
 	///
 	/// A test seam, deliberately *not* overloaded to carry the user's F11
@@ -881,6 +889,7 @@ impl TerminalManager {
 			terminals: Arc::new(DashMap::new()),
 			claude_dir,
 			codex_dir: agents::ambient_dir(codex_desc()),
+			opencode_dir: agents::ambient_dir(opencode_desc()),
 			ui,
 			on_ide_open: Arc::new(move |e| {
 				let _ = app_ide.emit("ide:open-file", e);
@@ -897,6 +906,9 @@ impl TerminalManager {
 			on_status: Arc::new(move |e| {
 				let _ = app_status.emit("terminal:status", e);
 			}),
+			delegations: Arc::default(),
+			confirm_delegations: None,
+			usage_limits: None,
 			on_exit: Arc::new(move |e| {
 				let _ = app_exit.emit("terminal:exit", e);
 			}),
@@ -935,9 +947,13 @@ impl TerminalManager {
 			terminals: Arc::new(DashMap::new()),
 			on_data,
 			on_status,
+			delegations: Arc::default(),
+			confirm_delegations: None,
+			usage_limits: None,
 			on_exit,
 			claude_dir,
 			codex_dir: agents::ambient_dir(codex_desc()),
+			opencode_dir: agents::ambient_dir(opencode_desc()),
 			binary_override: None,
 			user_binary: None,
 			agent_of: None,
@@ -1064,6 +1080,19 @@ impl TerminalManager {
 
 	/// Where to read the user's configured binary path from, per spawn (F11).
 	/// Wired to the `settings` table in `lib.rs`.
+	pub fn with_usage_limits(mut self, limits: agent_tools::ReadUsageLimits) -> Self {
+		self.usage_limits = Some(limits);
+		self
+	}
+
+	pub fn with_delegation_confirmation(
+		mut self,
+		confirm: Arc<dyn Fn() -> bool + Send + Sync>,
+	) -> Self {
+		self.confirm_delegations = Some(confirm);
+		self
+	}
+
 	pub fn with_user_binary(mut self, cb: BinaryOverrideCb) -> Self {
 		self.user_binary = Some(cb);
 		self
@@ -1115,6 +1144,7 @@ impl TerminalManager {
 	fn ambient_dir_for(&self, agent: &AgentDescriptor) -> &Path {
 		match agent.id {
 			agents::CODEX => &self.codex_dir,
+			agents::OPENCODE => &self.opencode_dir,
 			_ => &self.claude_dir,
 		}
 	}
@@ -1157,6 +1187,15 @@ impl TerminalManager {
 			.filter(|e| e.value().kind == TerminalKind::Agent)
 			.filter(|e| *e.value().status.lock() == TerminalStatus::Working)
 			.count()
+	}
+
+	/// Check the PTY that originated this request, including before its exit is emitted.
+	pub fn can_start_delegate(&self, parent: &str) -> bool {
+		self.terminals.iter().any(|entry| {
+			let handle = entry.value();
+			handle.session_id.as_deref() == Some(parent)
+				&& *handle.status.lock() != TerminalStatus::Stopped
+		})
 	}
 
 	/// The session ids with a PTY behind them right now. The indexer's reap
@@ -1379,7 +1418,7 @@ impl TerminalManager {
 		fresh: bool,
 	) -> AppResult<String> {
 		let agent = self.resolve_agent(agent, project_id, None)?;
-		if fresh {
+		if fresh || agent.id_source == IdSource::LiveOnly {
 			return Ok(Uuid::new_v4().to_string());
 		}
 		for entry in self.terminals.iter() {
@@ -1464,11 +1503,44 @@ impl TerminalManager {
 				)
 			}),
 		};
+
+		let (target_binary, dispatch) = (self.user_binary.clone(), self.on_session_start.clone());
+		let (state, caller) = (self.delegations.clone(), session_id.to_string());
+		let (project, folder) = (project_id.to_string(), cwd.to_string_lossy().into_owned());
+		let confirm_delegations = self.confirm_delegations.clone();
+		let delegation_tools = DelegationTools {
+			caller: caller.clone(),
+			state: state.clone(),
+			request: Arc::new(move |target, prompt| {
+				let target = agents::descriptor(target)
+					.ok_or_else(|| AppError::InvalidInput(format!("unknown agent {target}")))?;
+				let binary = target_binary.as_ref().and_then(|resolve| resolve(target.id));
+				find_agent_binary(target, binary.as_deref())?;
+				let auto_approved = confirm_delegations.as_ref().is_some_and(|confirm| !confirm());
+				let launch = state.request(
+					&caller,
+					SessionStart {
+						delegation_id: None,
+						auto_approved,
+						project_id: project.clone(),
+						agent: target.id.into(),
+						prompt: prompt.into(),
+						cwd: folder.clone(),
+					},
+				)?;
+				let status = if auto_approved { "starting" } else { "pendingApproval" };
+				let result = serde_json::json!({ "id": launch.delegation_id, "status": status });
+				dispatch(launch);
+				Ok(result)
+			}),
+		};
 		let on_session_start = self.on_session_start.clone();
 		let (start_project, start_agent, start_cwd) =
 			(project_id.to_string(), agent.to_string(), cwd.to_string_lossy().into_owned());
 		let start_session: agent_tools::StartSession = Arc::new(move |prompt| {
 			(on_session_start)(SessionStart {
+				delegation_id: None,
+				auto_approved: false,
 				project_id: start_project.clone(),
 				agent: start_agent.clone(),
 				prompt: prompt.to_string(),
@@ -1477,7 +1549,9 @@ impl TerminalManager {
 			Ok(())
 		});
 		let tools = AgentTools::new(routines, canvases, start_session)
-			.with_terminals(Arc::new(self.session_terminals(session_id)));
+			.with_terminals(Arc::new(self.session_terminals(session_id)))
+			.with_delegations(delegation_tools)
+			.with_usage_limits(self.usage_limits.clone());
 		AgentToolsServer::start(Arc::new(move |text| tools.handle(text)))
 	}
 
@@ -1708,6 +1782,14 @@ impl TerminalManager {
 			}
 		};
 		let mut v = vec![bin.to_string_lossy().to_string()];
+		if agent.id == agents::OPENCODE {
+			if !opencode::supports_version(crate::services::agent_cli::version_for(&bin).as_deref())
+			{
+				return Err(AppError::InvalidInput("Qursor requires OpenCode 1.x".into()));
+			}
+			v.extend(opencode::argv(initial_prompt));
+			return Ok(v);
+		}
 		// **Codex takes no id for a new thread** (ADR-0062): it mints one, and
 		// the id is adopted from the title. An id with a rollout is a resume.
 		// factorai's tools ride in as `-c mcp_servers.factorai.*` (F30 § "Spawn").
@@ -1842,7 +1924,8 @@ impl TerminalManager {
 				agents::CODEX => codex::transcript_path(&claude_dir, sid)
 					.and_then(|p| codex::read_meta(&p))
 					.map(|m| PathBuf::from(m.cwd)),
-				_ => self.resume_cwd(sid, &claude_dir),
+				agents::CLAUDE => self.resume_cwd(sid, &claude_dir),
+				_ => None,
 			})
 			.or_else(|| req.cwd.as_deref().map(PathBuf::from))
 			.or_else(dirs::home_dir)
@@ -1895,6 +1978,7 @@ impl TerminalManager {
 		let (program, process_args) =
 			crate::services::agent_cli::launch_command(Path::new(&argv[0]), &process_args)?;
 		let mut cmd = CommandBuilder::new(program);
+		cmd.env_remove("QURSOR_OPENCODE_GO_API_KEY");
 		for arg in process_args {
 			cmd.arg(arg);
 		}
@@ -1952,7 +2036,12 @@ impl TerminalManager {
 		// **The variable is the agent's** (F30): `CLAUDE_CONFIG_DIR` for Claude
 		// and the shell, `CODEX_HOME` for Codex, compared against that agent's
 		// own ambient directory.
-		if claude_dir == self.ambient_dir_for(env_agent) {
+		if env_agent.id == agents::OPENCODE {
+			if claude_dir != self.opencode_dir {
+				cmd.env(env_agent.config_dir_env, &claude_dir);
+				cmd.env("OPENCODE_CONFIG_DIR", &claude_dir);
+			}
+		} else if claude_dir == self.ambient_dir_for(env_agent) {
 			cmd.env_remove(env_agent.config_dir_env);
 		} else {
 			cmd.env(env_agent.config_dir_env, &claude_dir);
@@ -2000,6 +2089,15 @@ impl TerminalManager {
 			_ => {
 				cmd.env_remove(codex::TOOLS_TOKEN_ENV);
 			}
+		}
+
+		if let (Some(tools), agents::OPENCODE) = (&agent_tools, env_agent.id) {
+			let inherited = std::env::var(opencode::CONFIG_CONTENT_ENV).ok();
+			let config = opencode::mcp_config(inherited.as_deref(), tools.port())?;
+			cmd.env(opencode::CONFIG_CONTENT_ENV, config);
+			cmd.env(opencode::TOOLS_TOKEN_ENV, tools.token());
+		} else {
+			cmd.env_remove(opencode::TOOLS_TOKEN_ENV);
 		}
 
 		// **Withheld means absent, not inherited.** factorai itself may be
@@ -2059,7 +2157,7 @@ impl TerminalManager {
 			}
 		};
 		drop(pair.slave); // close slave end in the parent so EOF works
-		info!(argv = ?argv, cwd = ?cwd_path, "spawning terminal");
+		info!(binary = %argv[0], cwd = ?cwd_path, "spawning terminal");
 		self.attach(Attach {
 			req,
 			master: pair.master,
@@ -2214,7 +2312,7 @@ impl TerminalManager {
 			handle.clone(),
 			self.on_status.clone(),
 			self.on_exit.clone(),
-			self.terminals.clone(),
+			(self.terminals.clone(), self.delegations.clone()),
 		);
 
 		Ok(id)
@@ -2545,7 +2643,7 @@ fn spawn_reader(
 									try_adopt(&id_r, &handle_r, &payload, &on_adopted);
 								}
 							}
-							Some(_) if handle_r.kind == TerminalKind::Agent => {
+							Some(agents::CLAUDE) if handle_r.kind == TerminalKind::Agent => {
 								if let Some((next, topic)) = titles.push_title(&tmp[..n]) {
 									// Before the status, so a notifier woken by this status reads
 									// this title's topic, not the previous one (F32).
@@ -2719,7 +2817,7 @@ fn spawn_waiter(
 	handle: Arc<TerminalHandle>,
 	on_status: StatusCb,
 	on_exit: ExitCb,
-	terminals: Arc<DashMap<TerminalId, Arc<TerminalHandle>>>,
+	(terminals, delegations): (Arc<DashMap<TerminalId, Arc<TerminalHandle>>>, Arc<Delegations>),
 ) {
 	std::thread::Builder::new()
 		.name(format!("term-wait-{id}"))
@@ -2737,6 +2835,9 @@ fn spawn_waiter(
 				status: TerminalStatus::Stopped,
 				last_activity,
 			});
+			if let Some(session_id) = handle.session_id.as_deref() {
+				delegations.exited(session_id);
+			}
 			(on_exit)(TerminalExitEvent {
 				id: id.clone(),
 				code: exit_code,
@@ -2787,6 +2888,10 @@ fn claude_desc() -> &'static AgentDescriptor {
 /// The registry's Codex entry.
 fn codex_desc() -> &'static AgentDescriptor {
 	agents::descriptor(agents::CODEX).expect("codex is in the registry")
+}
+
+fn opencode_desc() -> &'static AgentDescriptor {
+	agents::descriptor(agents::OPENCODE).expect("OpenCode is in the registry")
 }
 
 fn now_ms() -> i64 {

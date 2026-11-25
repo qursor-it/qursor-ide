@@ -113,7 +113,8 @@ services/
     tools.rs          # listRoutines, createRoutine, updateRoutine,
                       #   setRoutineEnabled, and the canvas tools canvasOutline,
                       #   canvasRead, canvasFreeSpot, canvasPatch (F44, ADR-0104)
-                      #   and startSession (F50, ADR-0114)
+                      #   startSession, getDelegation, completeDelegation (F50, ADR-0119, ADR-0121)
+                      #   and getUsageLimits (F34)
                       #   — reaching the agent as mcp__factorai__*
   canvas_tools.rs     # pure functions behind the canvas tools: outline, read_part,
                       #   free_spot, apply_ops over the JSON Canvas document
@@ -1743,6 +1744,10 @@ binary that spawns sessions perfectly well, which is the same class of mistake a
   Codex rollouts, `codex app-server` every 5 minutes (15 s timeout, process tree
   killed through `child_guard`), and the opt-in Claude endpoint at most every
   5 minutes per profile.
+- **OpenCode Go credentials** (ADR-0120). `open_code_go_key_source` returns
+  `saved`, `environment` or null. `set_open_code_go_key` stores a replacement
+  in the vault, or removes the saved key when called with null. Either edit
+  clears the Go quota cache used by `getUsageLimits`.
 - **`TaskbarWidget`** (`platform/taskbar_widget`) is started from `setup()`
   unless `usage.taskbar_widget` is `off`, started or stopped by `set_setting`
   for that key, and stopped on the quit paths (`CloseRequested` when the close

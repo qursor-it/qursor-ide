@@ -22,6 +22,7 @@ import {
 const SAVED: SettingsValues = {
 	claudeBinary: '',
 	codexBinary: '',
+	opencodeBinary: '',
 	routinesCatchupHours: '',
 	routinesMaxConcurrent: '',
 	updateChannel: 'stable',
@@ -33,6 +34,7 @@ const SAVED: SettingsValues = {
 	frontmatterOpen: true,
 	restoreTabs: true,
 	desktopNotifications: true,
+	confirmAgentDelegations: true,
 	keymapOverrides: {},
 	prReviewInstructions: '',
 	terminalFont: 'jetbrains',
@@ -149,6 +151,7 @@ describe('dirtySections', () => {
 			// Flip whatever it is: booleans invert, the text fields get a value.
 			if (key === 'claudeBinary') draft.claudeBinary = '/usr/local/bin/claude';
 			else if (key === 'codexBinary') draft.codexBinary = '/usr/local/bin/codex';
+			else if (key === 'opencodeBinary') draft.opencodeBinary = '/usr/local/bin/opencode';
 			else if (key === 'routinesCatchupHours') draft.routinesCatchupHours = '12';
 			else if (key === 'routinesMaxConcurrent') draft.routinesMaxConcurrent = '4';
 			else if (key === 'keymapOverrides') draft.keymapOverrides = { openSettings: null };

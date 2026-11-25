@@ -278,7 +278,7 @@ export type TerminalStatus = 'working' | 'waiting_input' | 'stopped' | 'unknown'
  * Which CLI a session runs (F30, ADR-0060). The value of every `agent` column.
  * A union rather than a string for the reason `SettingKey` is one.
  */
-export type AgentId = 'claude' | 'codex';
+export type AgentId = 'claude' | 'codex' | 'opencode';
 
 /** What `terminal_spawn` hands back (F30): the PTY, and which agent Rust
  *  resolved for it — from the launch override, the profile, or `agent.default`.
@@ -402,11 +402,13 @@ export interface ClaudeCliStatus {
 export type SettingKey =
 	| 'claudeBinaryPath'
 	| 'codexBinaryPath'
+	| 'openCodeBinaryPath'
 	| 'agentDefault'
 	| 'routinesCatchupHours'
 	| 'routinesMaxConcurrent'
 	| 'updateChannel'
 	| 'desktopNotifications'
+	| 'confirmAgentDelegations'
 	| 'projectIntelligence'
 	| 'usageClaudeEndpoint'
 	| 'usageTaskbarWidget'
@@ -1177,8 +1179,10 @@ export interface RoutineFireEvent {
 }
 
 /** `agent-session:start` — an agent asked for a new session in its own project
- *  (`startSession`). Project, agent and folder are the caller's own. */
+ *  (`startSession`). Project and folder come from the caller. */
 export interface AgentSessionStartEvent {
+	delegationId?: string | null;
+	autoApproved?: boolean;
 	projectId: string;
 	agent: AgentId;
 	prompt: string;
@@ -1261,6 +1265,8 @@ export interface ModelLimit {
 }
 
 /** Where a reading came from. */
+export type GoKeySource = 'saved' | 'environment';
+
 export type UsageSource = 'statusLine' | 'codexLog' | 'codexAppServer' | 'claudeApi';
 
 /** The latest known limits for one profile. `usage:changed` carries the whole

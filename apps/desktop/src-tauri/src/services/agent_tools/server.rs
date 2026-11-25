@@ -145,6 +145,12 @@ async fn serve(mut stream: TcpStream, token: String, handler: Handler) -> std::i
 			return Ok(());
 		}
 
+		// This endpoint has no SSE stream (ADR-0118).
+		if !request.is_post {
+			write_response(&mut stream, 405, "").await?;
+			continue;
+		}
+
 		// A frame with no `id` is a notification: acknowledged with 202 and no
 		// body, which is what the MCP HTTP binding asks for.
 		// Off the runtime's workers: a terminal tool waits for a remote command to
@@ -163,16 +169,12 @@ async fn serve(mut stream: TcpStream, token: String, handler: Handler) -> std::i
 }
 
 struct Request {
+	is_post: bool,
 	authorization: String,
 	body: String,
 }
 
 /// Read one HTTP/1.1 request. `None` at a clean end of stream.
-///
-/// Deliberately incurious: the method and the path are not checked, because
-/// there is one route and the token is what decides whether a request is
-/// answered. Everything it *does* parse is the part that could otherwise make us
-/// read the wrong number of bytes.
 async fn read_request(
 	stream: &mut TcpStream,
 	buf: &mut Vec<u8>,
@@ -220,7 +222,7 @@ async fn read_request(
 	let body = String::from_utf8_lossy(&buf[body_start..body_start + length]).to_string();
 	// Keep whatever the client pipelined behind this request.
 	buf.drain(..body_start + length);
-	Ok(Some(Request { authorization, body }))
+	Ok(Some(Request { is_post: head.starts_with("POST "), authorization, body }))
 }
 
 fn find_headers_end(buf: &[u8]) -> Option<usize> {
@@ -232,13 +234,15 @@ async fn write_response(stream: &mut TcpStream, status: u16, body: &str) -> std:
 		200 => "OK",
 		202 => "Accepted",
 		401 => "Unauthorized",
+		405 => "Method Not Allowed",
 		_ => "Error",
 	};
 	// `Content-Length` on every response including the empty ones, so the client
 	// can keep the connection and does not wait for a close that is not coming.
+	let allow = if status == 405 { "Allow: POST\r\n" } else { "" };
 	let head = format!(
 		"HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n\
-		 Content-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+		 Content-Length: {}\r\nConnection: keep-alive\r\n{allow}\r\n",
 		body.len()
 	);
 	stream.write_all(head.as_bytes()).await?;
@@ -376,6 +380,18 @@ mod tests {
 			}
 		}))
 		.expect("bind")
+	}
+
+	#[tokio::test(flavor = "multi_thread")]
+	async fn an_sse_probe_gets_method_not_allowed() {
+		let server = echo_server();
+		let mut stream = StdStream::connect(("127.0.0.1", server.port())).expect("connect");
+		let mut replies = Replies::on(&mut stream);
+		replies.send(&format!(
+			"GET /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\n\r\n",
+			server.token()
+		));
+		assert_eq!(replies.next().0, 405);
 	}
 
 	#[tokio::test]

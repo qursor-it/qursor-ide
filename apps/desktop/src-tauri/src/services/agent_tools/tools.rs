@@ -20,6 +20,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
 
+use super::delegations::Delegations;
 use crate::error::AppResult;
 use crate::models::{Routine, RoutineInput};
 use crate::services::canvas::{self, WriteOutcome};
@@ -83,22 +84,51 @@ pub struct Canvases {
 /// closure, like [`Routines`]: the tool has no way to name another.
 pub type StartSession = Arc<dyn Fn(&str) -> AppResult<()> + Send + Sync>;
 
+pub type ReadUsageLimits = Arc<dyn Fn(&str, Option<&str>) -> AppResult<Value> + Send + Sync>;
+
+type RequestDelegation = Arc<dyn Fn(&str, &str) -> AppResult<Value> + Send + Sync>;
+
+pub struct DelegationTools {
+	pub caller: String,
+	pub state: Arc<Delegations>,
+	pub request: RequestDelegation,
+}
+
 /// One session's view of Qursor IDE's tools.
 pub struct AgentTools {
 	routines: Routines,
 	canvases: Canvases,
 	start_session: StartSession,
+	delegations: Option<DelegationTools>,
+	usage_limits: Option<ReadUsageLimits>,
 	/// The terminals the human lent this session (ADR-0111). `None` only in tests.
 	terminals: Option<Arc<dyn super::terminals::TerminalUse>>,
 }
 
 impl AgentTools {
 	pub fn new(routines: Routines, canvases: Canvases, start_session: StartSession) -> Self {
-		Self { routines, canvases, start_session, terminals: None }
+		Self {
+			routines,
+			canvases,
+			start_session,
+			terminals: None,
+			delegations: None,
+			usage_limits: None,
+		}
 	}
 
 	pub fn with_terminals(mut self, t: Arc<dyn super::terminals::TerminalUse>) -> Self {
 		self.terminals = Some(t);
+		self
+	}
+
+	pub fn with_usage_limits(mut self, read: Option<ReadUsageLimits>) -> Self {
+		self.usage_limits = read;
+		self
+	}
+
+	pub fn with_delegations(mut self, delegations: DelegationTools) -> Self {
+		self.delegations = Some(delegations);
 		self
 	}
 
@@ -139,10 +169,12 @@ impl AgentTools {
 			"read only the nodes you need, find an empty spot for new cards, and send small ",
 			"patches with that revision. The open board reloads by itself.",
 		);
-		const HANDOFF: &str = concat!(
-			"To hand a part of the work to a new session in this project, use `startSession` ",
-			"once the human agrees.",
-		);
+		let handoff = match &self.delegations {
+			Some(tools) if tools.state.is_child(&tools.caller) =>
+				"You are a Qursor delegate. Publish your result with completeDelegation before you finish.",
+			Some(_) => "To delegate to another installed agent, pass its id as agent to startSession. Qursor follows the user's delegation confirmation setting and returns a delegation id. Retrieve its result with getDelegation. For a same-agent hand-off without an explicit agent, ask the human first.",
+			None => "To hand a part of the work to a new session in this project, use startSession once the human agrees.",
+		};
 		format!(
 			"This session is running inside Qursor IDE, in the project at {}.
 
@@ -150,7 +182,7 @@ impl AgentTools {
 
 {CANVAS}
 
-{HANDOFF}
+{handoff}
 
 {}",
 			self.routines.project_path,
@@ -180,7 +212,7 @@ impl AgentTools {
 			"initialize" => {
 				Ok(mcp_wire::initialize_result(&params, SERVER_NAME, Some(&self.instructions())))
 			}
-			"tools/list" => Ok(tools_list()),
+			"tools/list" => Ok(tools_list(self.delegations.as_ref(), self.usage_limits.is_some())),
 			"tools/call" => self.tools_call(&params),
 			other => {
 				// `server/discover` arrives first and is optional; answering
@@ -211,6 +243,8 @@ impl AgentTools {
 			"canvasFreeSpot" => Ok(self.canvas_free_spot(&args)),
 			"canvasPatch" => Ok(self.canvas_patch(&args)),
 			"startSession" => Ok(self.start_session(&args)),
+			"getUsageLimits" => Ok(self.get_usage_limits(&args)),
+			"getDelegation" | "completeDelegation" => Ok(self.delegation(name, &args)),
 			t if super::terminals::is_terminal_tool(t) => match &self.terminals {
 				Some(backend) => Ok(super::terminals::call(backend.as_ref(), t, &args)),
 				None => Ok(tool_error("no terminals can be lent to this session")),
@@ -343,11 +377,67 @@ impl AgentTools {
 		}
 	}
 
-	/// Hand a part of the work to a new session, fire and forget.
+	fn get_usage_limits(&self, args: &Value) -> Value {
+		let Some(read) = &self.usage_limits else {
+			return tool_error("usage limits are unavailable");
+		};
+		let agent = match args.get("agent") {
+			None => None,
+			Some(Value::String(agent)) => Some(agent.as_str()),
+			Some(_) => return tool_error("agent must be an id"),
+		};
+		match read(&self.routines.project_id, agent) {
+			Ok(value) => tool_text(&value.to_string()),
+			Err(e) => tool_error(&e.to_string()),
+		}
+	}
+
+	fn delegation(&self, name: &str, args: &Value) -> Value {
+		let Some(tools) = &self.delegations else { return tool_error("delegation is unavailable") };
+		let (key, max) = if name == "getDelegation" { ("id", 36) } else { ("summary", 8192) };
+		let Some(value) = args
+			.get(key)
+			.and_then(Value::as_str)
+			.map(str::trim)
+			.filter(|s| !s.is_empty() && s.len() <= max)
+		else {
+			return tool_error(&format!("provide {key} (1–{max} bytes)"));
+		};
+		let result = if name == "getDelegation" {
+			tools.state.get(&tools.caller, value)
+		} else {
+			tools.state.complete(&tools.caller, value)
+		};
+		match result {
+			Ok(value) => tool_text(&value.to_string()),
+			Err(e) => tool_error(&e.to_string()),
+		}
+	}
+
+	/// Hand a part of the work to a new session.
 	fn start_session(&self, args: &Value) -> Value {
 		let prompt = args.get("prompt").and_then(Value::as_str).map(str::trim).unwrap_or_default();
 		if prompt.is_empty() {
 			return tool_error("startSession needs a prompt");
+		}
+		if let Some(tools) = &self.delegations {
+			if tools.state.is_child(&tools.caller) {
+				return tool_error("delegated sessions cannot start other sessions");
+			}
+			if let Some(target) = args.get("agent") {
+				let Some(target) = target.as_str() else {
+					return tool_error("agent must be an id");
+				};
+				if prompt.len() > 8192 {
+					return tool_error("the delegation prompt must not exceed 8192 bytes");
+				}
+				return match (tools.request)(target, prompt) {
+					Ok(value) => tool_text(&value.to_string()),
+					Err(e) => tool_error(&e.to_string()),
+				};
+			}
+		} else if args.get("agent").is_some() {
+			return tool_error("delegation is unavailable");
 		}
 		match (self.start_session)(prompt) {
 			Ok(()) => {
@@ -567,10 +657,52 @@ fn stamp(ms: i64) -> String {
 ///   false of the rest. The CLI reads it for `isReadOnly()` and
 ///   `isConcurrencySafe()`. Nothing here sets `destructiveHint`, because nothing
 ///   here destroys anything — that is what leaving `deleteRoutine` out bought.
-fn tools_list() -> Value {
+fn tools_list(delegations: Option<&DelegationTools>, usage_limits: bool) -> Value {
 	let mut v = routine_tools();
 	if let Some(list) = v.get_mut("tools").and_then(Value::as_array_mut) {
 		list.extend(super::terminals::definitions());
+		if usage_limits {
+			list.push(json!({
+				"name": "getUsageLimits",
+				"description": "Read Qursor's latest known subscription limits for this project's agent profiles. Optionally filter by agent id.",
+				"inputSchema": {
+					"type": "object",
+					"properties": { "agent": { "type": "string" } }
+				},
+				"annotations": { "readOnlyHint": true }
+			}));
+		}
+		if let Some(tools) = delegations {
+			if tools.state.is_child(&tools.caller) {
+				list.retain(|tool| tool["name"] != "startSession");
+				list.push(json!({
+					"name": "completeDelegation",
+					"description": "Send your final summary to the session that delegated this task.",
+					"inputSchema": {
+						"type": "object", "required": ["summary"],
+						"properties": { "summary": { "type": "string" } }
+					}
+				}));
+			} else {
+				if let Some(start) = list.iter_mut().find(|tool| tool["name"] == "startSession") {
+					start["description"] = json!("Open a new session in this project. Pass agent to request a delegation, which follows the user's confirmation setting. Retrieve the result with getDelegation. With agent omitted, ask the user in chat before opening a session of the same agent.");
+					start["inputSchema"]["properties"]["agent"] = json!({
+						"type": "string",
+						"description": "The id of the installed agent to delegate to.",
+						"enum": crate::agents::registry().iter().map(|agent| agent.id).collect::<Vec<_>>(),
+					});
+				}
+				list.push(json!({
+					"name": "getDelegation",
+					"description": "Read the current state and reported summary of a delegation you requested.",
+					"inputSchema": {
+						"type": "object", "required": ["id"],
+						"properties": { "id": { "type": "string" } }
+					},
+					"annotations": { "readOnlyHint": true }
+				}));
+			}
+		}
 	}
 	v
 }
@@ -1075,6 +1207,32 @@ mod tests {
 	}
 
 	#[test]
+	fn a_delegate_is_guided_to_report_its_result() {
+		let state = Arc::new(Delegations::default());
+		let child = state
+			.request(
+				"parent",
+				crate::services::terminal::SessionStart {
+					delegation_id: None,
+					auto_approved: false,
+					project_id: "project".into(),
+					agent: "opencode".into(),
+					prompt: "Review the diff".into(),
+					cwd: "/project".into(),
+				},
+			)
+			.expect("request");
+		let tools = fixture().tools.with_delegations(DelegationTools {
+			caller: child.delegation_id.expect("delegate id"),
+			state,
+			request: Arc::new(|_, _| panic!("not callable from a delegate")),
+		});
+		let instructions = tools.instructions();
+		assert!(instructions.contains("completeDelegation"));
+		assert!(!instructions.contains("startSession"));
+	}
+
+	#[test]
 	fn createroutine_is_always_loaded_and_the_others_are_searchable() {
 		// A tool nobody can see is a tool nobody calls. `anthropic/alwaysLoad`
 		// keeps `createRoutine` out of the deferred set so it exists at the moment
@@ -1113,13 +1271,12 @@ mod tests {
 	#[test]
 	fn startsession_hands_the_prompt_to_this_session_and_says_so() {
 		let f = fixture();
-		// Only `prompt` is read: the closure has no room for another project, folder
-		// or agent, whatever an argument says.
+		// Project and folder always come from the live caller.
 		let reply = call(
 			&f.tools,
 			"tools/call",
 			json!({ "name": "startSession", "arguments": {
-				"prompt": "Fix the flaky test", "projectId": "other", "cwd": "/elsewhere", "agent": "codex",
+				"prompt": "Fix the flaky test", "projectId": "other", "cwd": "/elsewhere",
 			} }),
 		);
 		let (text, is_error) = tool_result(&reply);

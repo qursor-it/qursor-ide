@@ -5,6 +5,7 @@ pub mod child_guard;
 pub mod claude_api;
 pub mod codex_app_server;
 pub mod codex_log;
+pub mod mcp;
 pub mod poller;
 pub mod prices;
 pub mod session_cost;

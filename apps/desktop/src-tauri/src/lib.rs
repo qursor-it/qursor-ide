@@ -155,10 +155,22 @@ pub fn run() {
 			));
 			let attention_tap = attention.clone();
 			let statusline_dir = data_dir.join("usage").join("statusline");
+			let usage =
+				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
+			let vault =
+				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
+			let go_usage = Arc::new(services::usage::mcp::GoUsage::new(vault.clone()));
 			let terminals = TerminalManager::for_app(app.handle().clone(), cd.clone(), ui.clone())
 				.with_status_tap(move |e| attention_tap.on_status(e))
 				// Claude's limits, forwarded by each session's status line.
 				.with_usage_sink_dir(statusline_dir.clone())
+				.with_usage_limits({
+					let (db, usage) = (db.clone(), usage.clone());
+					let go = go_usage.clone();
+					Arc::new(move |project, filter| {
+						services::usage::mcp::read(&db, &usage, &go, project, filter)
+					})
+				})
 				// Switchable: our status line hides Claude Code's footer hints for
 				// a user with none of their own. Unset = on.
 				.with_usage_statusline_enabled({
@@ -171,6 +183,21 @@ pub fn run() {
 							.ok()
 							.flatten();
 						value.as_deref() != Some("off")
+					})
+				})
+				.with_delegation_confirmation({
+					let db = db.clone();
+					Arc::new(move || {
+						db.with(|conn| {
+							services::settings::get(
+								conn,
+								models::SettingKey::ConfirmAgentDelegations,
+							)
+						})
+						.ok()
+						.flatten()
+						.as_deref()
+							!= Some("off")
 					})
 				})
 				.with_user_binary(Arc::new(move |agent| {
@@ -294,8 +321,6 @@ pub fn run() {
 				});
 			let mut terminals = terminals;
 			let tunnels = Arc::new(services::ssh::tunnel::Tunnels::default());
-			let vault =
-				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
 			let ssh = Arc::new(services::ssh::pool::Pool::new(
 				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
 			));
@@ -398,8 +423,6 @@ pub fn run() {
 
 			// The usage snapshot persists beside the database and tells the
 			// renderer whenever a source changes it.
-			let usage =
-				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
 			{
 				let handle = app.handle().clone();
 				usage.add_on_change(Arc::new(move |list| {
@@ -448,6 +471,7 @@ pub fn run() {
 				attention,
 				intelligence,
 				usage: usage.clone(),
+				go_usage,
 				taskbar_widget: taskbar_widget.clone(),
 				vault,
 				ssh,
@@ -668,6 +692,7 @@ pub fn run() {
 			commands::settings::check_agent_cli,
 			commands::settings::validate_agent_binary,
 			commands::terminal::start_session,
+			commands::terminal::resolve_delegation,
 			commands::terminal::terminal_spawn,
 			commands::terminal::terminal_write,
 			commands::terminal::terminal_resize,
@@ -694,6 +719,8 @@ pub fn run() {
 			commands::terminal::app_quit_confirmed,
 			commands::webview::webview_crash_notice,
 			commands::usage::get_usage,
+			commands::usage::open_code_go_key_source,
+			commands::usage::set_open_code_go_key,
 			commands::usage::get_taskbar_widget_config,
 			commands::usage::set_taskbar_widget_config,
 			commands::usage::session_usage,
