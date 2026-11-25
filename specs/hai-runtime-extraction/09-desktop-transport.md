@@ -1,0 +1,4 @@
+# E5 — Desktop and transport
+Depends on E1/E3/E4. Inspect frontend src/lib/tauri.ts, hooks/stores, terminal components, packages/types, Rust commands and lib.rs. Inventory invoke/listen, dialogs, clipboard, notifications, updater and native integrations. Existing mocked Tauri bridge is a contract seam.
+Keep current Tauri production IPC; composition root consumes shared runtime. Preserve command names, payloads, error semantics, paths, desktop UI and PTY streaming outside React state. Separate shared runtime operations from desktop capabilities. Do not implement public HTTP service or login.
+Design future versioned remote protocol: environment-scoped IDs, authz, attach/read/write/resize/stop, control ownership, bounded replay/resync, backpressure and failure semantics. Acceptance: frontend checks/e2e, real desktop smoke, adapter conformance and no broken native features.

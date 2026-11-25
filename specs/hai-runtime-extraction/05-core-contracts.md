@@ -1,0 +1,3 @@
+# E1 — Core contracts
+Depends on E0. Inspect models, error.rs, agents/mod.rs, state.rs, lib.rs, commands/ and db/. Establish reusable Cargo library without Tauri; extract pure domain types/functions first. Framework-specific error/serialization adapters stay at edge. Explicit data/config roots, environment identity, event sink, lifecycle ownership. Use clock/executor injection only where needed. Preserve serde field names and packages/types shapes; avoid speculative traits.
+Deliverables: core crate, migration map, typed contract tests, desktop consumer, cargo dependency proof. Acceptance: no Tauri/GUI in core normal/build graph, no duplicate authoritative models, unchanged desktop observable behaviour, stable interfaces for E2–E5.

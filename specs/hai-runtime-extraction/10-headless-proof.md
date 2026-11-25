@@ -1,0 +1,5 @@
+# E6 — Headless Linux proof
+Depends on E2–E5. Create minimal headless binary/test harness as second composition root consuming same runtime. Explicit temporary roots, fake offline CLI; no GUI, credentials, external calls, isx or public network listener. Prefer in-process/local test interface. Not production daemon.
+Scenario: initialize runtime, project/profile, spawn fake CLI, observe terminal/events, detach client, confirm process continues, reattach and observe documented output/state, explicit stop, verify cleanup; restart runtime and read persisted metadata/index. Do not claim exact process continuation across restart.
+Optional real native CLI test only with explicit human authorization, subscribed account and no metered fallback. Never commit auth data. Record versions and results, not account identifiers.
+Acceptance: Linux build/link without Tauri GUI, repeatable offline automated scenario, Windows desktop regression, shutdown reaps owned children, no changes to real user files. Produce headless-evidence.md with commands and limitations. If platform unavailable, remain blocked.

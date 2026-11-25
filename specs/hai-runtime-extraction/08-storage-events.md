@@ -1,0 +1,4 @@
+# E4 — Persistence, indexing, events and routines
+Depends on E1/E2 and E3 interfaces. Inspect db/migrations, services/indexer, watcher, sessions.rs, routines.rs, profiles.rs, corresponding commands. Read ADR-0003, 0027, 0028, 0029, 0060. Identify authoritative stores and GUI coupling.
+Extract runtime persistence, watcher, scheduler and event generation with explicit roots/start/stop. Preserve SQLite schema, FTS5, parsing, debounce, project linking and routine catch-up. Desktop notifications are adapter. Avoid duplicate routine execution; distinguish existing semantics from future improvement. Replay cursors/sequence/resync are future design seams, no distributed bus now.
+Tests: temp DB fixture migration, index/FTS parity, duplicate events, watcher shutdown, due/catch-up routines, no secret leakage or live-store mutation. Acceptance: existing data/search parity, no schema reset, headless services without renderer, concurrency limits documented.

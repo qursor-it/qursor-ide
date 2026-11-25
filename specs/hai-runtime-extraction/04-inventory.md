@@ -1,0 +1,5 @@
+# E0 — Inventory and characterization
+Read-only analysis plus documentation/characterization tests; no extraction yet.
+Inspect root Cargo.toml, apps/desktop/src-tauri/Cargo.toml, src/lib.rs, state.rs, commands/, services/, agents/, db/, platform/, models, error.rs, frontend src/lib/tauri.ts, packages/types, specs/adr. Search tauri::, AppHandle, State, Emitter, Manager, WindowEvent, async_runtime, home/data dirs, platform cfg, process spawning, global locks, SQLite writes and shell calls.
+Produce inventory.md: each runtime-critical module, inbound/outbound deps, desktop coupling, ownership, OS requirements, move/adapt/keep disposition, tests/blockers. Include start/resume/stop call graph, startup/shutdown, actual IPC commands/events, DB/transcript authority, profile and secret flow without secrets. Inspect persistent SSH/tmux implementation and actual agent registry. Produce baseline.md with test commands/results/OS.
+Acceptance: complete classified runtime dependency map, smallest vertical slice, baseline failures distinguished from regressions, ADR proposals refined before E1.
