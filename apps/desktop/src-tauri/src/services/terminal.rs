@@ -5092,7 +5092,9 @@ mod tests {
 				dc.lock().unwrap().push((Instant::now(), n));
 			}),
 			Arc::new(|_| {}),
-			Arc::new(move |e: TerminalExitEvent| *ec.lock().unwrap() = Some((Instant::now(), e.code))),
+			Arc::new(move |e: TerminalExitEvent| {
+				*ec.lock().unwrap() = Some((Instant::now(), e.code))
+			}),
 		);
 		(mgr, data, exit)
 	}
@@ -5104,8 +5106,7 @@ mod tests {
 		let _spawn = crate::test_support::spawn_lock();
 		let dir = tempfile::TempDir::new().unwrap();
 		let file = dir.path().join("50mb.txt");
-		let line = "0123456789abcdef".repeat(4) + "
-";
+		let line = "0123456789abcdef".repeat(4) + "\n";
 		let lines = SIZE / line.len();
 		std::fs::write(&file, line.repeat(lines)).unwrap();
 		let path = file.to_string_lossy().into_owned();
@@ -5142,7 +5143,10 @@ mod tests {
 			if last.elapsed() >= Duration::from_millis(100) && complete {
 				break (last, received);
 			}
-			assert!(quiet_since.elapsed() < Duration::from_secs(30), "output never completed: {received}");
+			assert!(
+				quiet_since.elapsed() < Duration::from_secs(30),
+				"output never completed: {received}"
+			);
 		};
 		if let Some(n) = expected {
 			assert_eq!(received, n, "bytes lost or duplicated");

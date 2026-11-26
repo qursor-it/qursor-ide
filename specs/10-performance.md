@@ -1238,7 +1238,8 @@ into a separate process.
 effect worth gating on, so the core is compared like for like: baseline and core
 variants run alternately back to back, 5 runs each, on the same machine. The
 core passes when its median throughput lies within the baseline [min, max] and
-its `echo_p95_us` is at most the baseline `echo_p95_us` plus 1000 us.
+the median of its five `echo_p95_us` values is at most the median of the
+baseline's five (15901 us) plus 1000 us.
 
 ConPTY re-renders rather than relays, so about 53.2 MB reach the data events for
 the 50 MB file; the figure is not comparable with a POSIX run.
