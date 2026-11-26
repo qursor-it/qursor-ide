@@ -30,6 +30,7 @@ pub type OnChange = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct Delegations {
 	inner: Mutex<Inner>,
 	on_change: OnceLock<OnChange>,
+	on_session: OnceLock<OnChange>,
 }
 
 #[derive(Default)]
@@ -104,12 +105,26 @@ impl Delegations {
 		let _ = self.on_change.set(cb);
 	}
 
+	/// Told every session id a delegate runs under, provisional and adopted, so
+	/// it can be kept out of the lists for good (ADR-0126); set once at startup.
+	pub fn set_on_session(&self, cb: OnChange) {
+		let _ = self.on_session.set(cb);
+	}
+
+	fn delegate_session(&self, id: &str) {
+		if let Some(cb) = self.on_session.get() {
+			cb(id);
+		}
+	}
+
 	fn changed(&self, project: &str) {
 		if let Some(cb) = self.on_change.get() {
 			cb(project);
 		}
 	}
 
+	/// `launch.parent_session_id`, when the caller sets it, is the parent as the
+	/// renderer knows it now; `parent` is the id its endpoint was bound to.
 	pub fn request(&self, parent: &str, mut launch: SessionStart) -> AppResult<SessionStart> {
 		{
 			let mut inner = self.inner.lock();
@@ -126,13 +141,14 @@ impl Delegations {
 				)));
 			}
 			let id = Uuid::new_v4().to_string();
+			let parent_view = launch.parent_session_id.take().unwrap_or_else(|| parent.into());
 			launch.delegation_id = Some(id.clone());
-			launch.parent_session_id = Some(parent.into());
+			launch.parent_session_id = Some(parent_view.clone());
 			inner.entries.insert(
 				id.clone(),
 				Delegation {
 					parent: parent.into(),
-					parent_view: parent.into(),
+					parent_view,
 					session_id: id,
 					launch: launch.clone(),
 					created: Instant::now(),
@@ -198,6 +214,8 @@ impl Delegations {
 			return Err(unavailable());
 		}
 		entry.state = State::Starting;
+		drop(inner);
+		self.delegate_session(&opts.session_id);
 		Ok(true)
 	}
 
@@ -225,11 +243,13 @@ impl Delegations {
 	/// A child's or a parent's agent handed back its own session id (ADR-0062).
 	pub fn adopted(&self, provisional: &str, adopted: &str) {
 		let mut projects = Vec::new();
+		let mut child = false;
 		{
 			let mut inner = self.inner.lock();
 			for (id, entry) in inner.entries.iter_mut() {
 				if id == provisional {
 					entry.session_id = adopted.into();
+					child = true;
 				} else if entry.parent == provisional {
 					entry.parent_view = adopted.into();
 				} else {
@@ -238,10 +258,27 @@ impl Delegations {
 				projects.push(entry.launch.project_id.clone());
 			}
 		}
+		if child {
+			self.delegate_session(adopted);
+		}
 		projects.dedup();
 		for project in projects {
 			self.changed(&project);
 		}
+	}
+
+	/// The delegates a session has running, by the session id their PTY was
+	/// spawned under: closed before their parent, so none outlives it.
+	pub fn children_of(&self, parent: &str) -> Vec<String> {
+		self.inner
+			.lock()
+			.entries
+			.iter()
+			.filter(|(_, e)| {
+				e.parent == parent && matches!(e.state, State::Starting | State::Running)
+			})
+			.map(|(id, _)| id.clone())
+			.collect()
 	}
 
 	/// A PTY exited: a child that had not finished has ended, and a parent's
@@ -517,6 +554,26 @@ mod tests {
 			store.request("parent", launch(false)).expect("live");
 		}
 		assert!(store.request("parent", launch(false)).is_err());
+	}
+
+	#[test]
+	fn every_session_a_delegate_runs_under_is_reported_and_its_running_children_are_known() {
+		let store = Delegations::default();
+		let seen = Arc::new(Mutex::new(Vec::new()));
+		let sink = seen.clone();
+		store.set_on_session(Arc::new(move |id| sink.lock().push(id.to_string())));
+		let mut request = launch(true);
+		request.parent_session_id = Some("ses_parent".into());
+		let launch = store.request("parent", request).expect("request");
+		assert_eq!(launch.parent_session_id.as_deref(), Some("ses_parent"));
+		let id = launch.delegation_id.clone().expect("id");
+		assert!(store.children_of("parent").is_empty(), "not started yet");
+		store.begin(&opts(&launch), |_| true).expect("start");
+		assert_eq!(store.children_of("parent"), vec![id.clone()]);
+		store.adopted(&id, "ses_child");
+		assert_eq!(*seen.lock(), vec![id.clone(), "ses_child".to_string()]);
+		store.exited(&id);
+		assert!(store.children_of("parent").is_empty());
 	}
 
 	#[test]

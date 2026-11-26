@@ -58,7 +58,11 @@ export function needsCloseConfirm(
 	status: TerminalStatus | undefined,
 	gesture: CloseGesture,
 	prefs: CloseConfirmPrefs,
+	delegates = 0,
 ): boolean {
+	// Closing a session closes its delegates too (ADR-0126): always asked, since
+	// the switches above are about this session's own work, not theirs.
+	if (delegates > 0) return true;
 	if (status !== 'working') return false;
 	return gesture === 'middle-click' ? prefs.confirmCloseMiddleClick : prefs.confirmCloseSession;
 }
@@ -72,6 +76,8 @@ interface CloseSessionConfirmProps {
 	 *  (it exited on its own, or another surface closed it). The confirm greys
 	 *  out rather than firing a kill at a terminal id that no longer exists. */
 	canConfirm?: boolean;
+	/** Live delegates that close with it (F50). */
+	delegates?: number;
 	onCancel: () => void;
 	onConfirm: () => void;
 }
@@ -96,6 +102,7 @@ interface CloseSessionConfirmProps {
 export function CloseSessionConfirm({
 	sessionName,
 	canConfirm = true,
+	delegates = 0,
 	onCancel,
 	onConfirm,
 }: CloseSessionConfirmProps) {
@@ -109,7 +116,10 @@ export function CloseSessionConfirm({
 					</DialogTitle>
 					<DialogDescription>
 						{sessionName ?? ''} is running. Closing it terminates its agent — the transcript is
-						kept, but any work in progress is lost. This cannot be undone.
+						kept, but any work in progress is lost.
+						{delegates > 0 &&
+							` Its ${delegates === 1 ? 'delegated session closes' : `${delegates} delegated sessions close`} with it, first.`}{' '}
+						This cannot be undone.
 					</DialogDescription>
 				</DialogHeader>
 				<DialogFooter>

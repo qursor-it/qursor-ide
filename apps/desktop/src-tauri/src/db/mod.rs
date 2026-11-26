@@ -110,6 +110,8 @@ const MIGRATIONS: &[(&str, &str)] = &[
 	("9006_server_tunnels", include_str!("migrations/9006_server_tunnels.sql")),
 	// tmux-backed tabs per server. Fork-only.
 	("9007_server_persistent", include_str!("migrations/9007_server_persistent.sql")),
+	// Delegates are disposable (F50, ADR-0126): their sessions stay out of every list.
+	("9008_delegate_sessions", include_str!("migrations/9008_delegate_sessions.sql")),
 ];
 
 /// Migrations that need the connection to themselves, with foreign keys off.

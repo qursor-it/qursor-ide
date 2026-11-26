@@ -73,7 +73,7 @@ pub fn search(
 		JOIN discovered_projects ON discovered_projects.id = sessions.discovered_id \
 		LEFT JOIN profiles ON profiles.id = discovered_projects.profile_id \
 		JOIN projects ON projects.id = discovered_projects.project_id \
-		WHERE messages_fts MATCH ?1 AND discovered_projects.project_id IS NOT NULL";
+		WHERE messages_fts MATCH ?1 AND discovered_projects.project_id IS NOT NULL 		AND sessions.id NOT IN (SELECT session_id FROM delegate_sessions)";
 
 	let map = |row: &rusqlite::Row<'_>| {
 		Ok(SearchHit {
@@ -127,6 +127,7 @@ mod tests {
 			 CREATE TABLE discovered_projects (id INTEGER PRIMARY KEY, project_id TEXT, profile_id TEXT);
 			 CREATE TABLE profiles (id TEXT PRIMARY KEY, agent TEXT);
 			 CREATE TABLE sessions (id TEXT PRIMARY KEY, discovered_id INTEGER, title TEXT);
+			 CREATE TABLE delegate_sessions (session_id TEXT PRIMARY KEY);
 			 CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL,
 				role TEXT NOT NULL, body TEXT NOT NULL);
 			 CREATE INDEX idx_messages_session ON messages(session_id);
@@ -196,6 +197,15 @@ mod tests {
 			hits.iter().all(|h| h.session_id != "s3"),
 			"an unadded folder's sessions are unreachable from search"
 		);
+	}
+
+	#[test]
+	fn a_delegate_session_is_never_a_hit() {
+		let conn = setup();
+		// Delegates are disposable (ADR-0126): out of search for good.
+		conn.execute("INSERT INTO delegate_sessions(session_id) VALUES('s1')", []).unwrap();
+		let hits = search(&conn, "indexer", None, 50).unwrap();
+		assert!(hits.iter().all(|h| h.session_id != "s1"));
 	}
 
 	#[test]

@@ -129,6 +129,10 @@ interface TerminalState {
 	 *  the live PTY, the tab, the launch override, the routine origin, the
 	 *  checkout, the restart epoch. A no-op when nothing is keyed by `from`. */
 	rebindSession: (from: string, to: string) => void;
+	/** Sessions a delegation started (F50). Their tabs are never persisted:
+	 *  delegates are disposable and do not survive a restart (ADR-0126). */
+	delegates: Record<string, true>;
+	markDelegate: (sessionId: string) => void;
 	/** Which routine started a session, for the origin icon (F22).
 	 *
 	 *  Not persisted, like `bySession`: the durable copy is `session_routines`
@@ -290,6 +294,7 @@ export const useTerminalStore = create<TerminalState>()(
 				})),
 
 			launchAgent: {},
+			delegates: {},
 			launchPrompt: {},
 			launchCwd: {},
 			rebindSession: (from, to) =>
@@ -308,9 +313,12 @@ export const useTerminalStore = create<TerminalState>()(
 						routineBySession: move(s.routineBySession),
 						worktreeBySession: move(s.worktreeBySession),
 						restartEpoch: move(s.restartEpoch),
+						delegates: move(s.delegates),
 						tabs: s.tabs.map((t) => (t.sessionId === from ? { ...t, sessionId: to } : t)),
 					};
 				}),
+			markDelegate: (sessionId) =>
+				set((s) => ({ delegates: { ...s.delegates, [sessionId]: true } })),
 			setLaunchAgent: (sessionId, agent) =>
 				set((s) => ({ launchAgent: { ...s.launchAgent, [sessionId]: agent } })),
 			takeLaunchAgent: (sessionId) => {
@@ -439,8 +447,10 @@ export const useTerminalStore = create<TerminalState>()(
 			// is what makes a restored tab `stopped` by construction rather than by
 			// a rule somebody has to remember to apply.
 			partialize: (s) => ({
-				tabs: s.tabs.filter((t) =>
-					canRestoreSessionTab(s.bySession[t.sessionId]?.agent, t.sessionId),
+				tabs: s.tabs.filter(
+					(t) =>
+						!s.delegates[t.sessionId] &&
+						canRestoreSessionTab(s.bySession[t.sessionId]?.agent, t.sessionId),
 				),
 			}),
 			/**

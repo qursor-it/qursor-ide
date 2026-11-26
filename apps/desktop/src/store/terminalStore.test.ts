@@ -239,3 +239,23 @@ describe('restartEpoch', () => {
 		expect(useTerminalStore.getState().restartEpoch).toEqual({ a: 2 });
 	});
 });
+
+describe('a delegate is disposable (F50, ADR-0126)', () => {
+	beforeEach(() => {
+		reset();
+		useTerminalStore.setState({ delegates: {} });
+	});
+
+	it('keeps its tab out of what is persisted, under its adopted id too', () => {
+		const store = useTerminalStore.getState();
+		store.attach('parent', 'pty-p', 'p1', { agent: 'claude' });
+		store.attach('child', 'pty-c', 'p1', { agent: 'claude' });
+		store.markDelegate('child');
+		useTerminalStore.getState().rebindSession('child', 'adopted-child');
+		const persisted = useTerminalStore.persist
+			.getOptions()
+			.partialize?.(useTerminalStore.getState()) as { tabs: { sessionId: string }[] };
+		expect(ids()).toEqual(['parent', 'adopted-child']);
+		expect(persisted.tabs.map((t) => t.sessionId)).toEqual(['parent']);
+	});
+});

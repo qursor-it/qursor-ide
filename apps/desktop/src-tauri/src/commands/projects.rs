@@ -29,10 +29,12 @@ const PROJECT_SELECT: &str = "SELECT p.id, p.real_path, p.display_name, p.missin
 	-- an agent working is the project being worked on.
 	(SELECT COUNT(*) FROM sessions s
 	   JOIN discovered_projects d ON d.id = s.discovered_id
-	  WHERE d.project_id = p.id AND s.subagent_of IS NULL),
+	  WHERE d.project_id = p.id AND s.subagent_of IS NULL
+	    AND s.id NOT IN (SELECT session_id FROM delegate_sessions)),
 	(SELECT MAX(s.updated_at) FROM sessions s
 	   JOIN discovered_projects d ON d.id = s.discovered_id
-	  WHERE d.project_id = p.id),
+	  WHERE d.project_id = p.id
+	    AND s.id NOT IN (SELECT session_id FROM delegate_sessions)),
 	-- The assignment, and NULL meaning the default (F25 slice 3). A LEFT JOIN
 	-- rather than a subquery pair, since both columns come from the one row.
 	pr.id, pr.name

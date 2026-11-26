@@ -41,7 +41,9 @@ import { usePrTabStore } from '@store/prTabStore';
 import { useTabLayoutStore } from '@store/tabLayoutStore';
 import { useAttentionStore } from '@store/attentionStore';
 import { useTerminalStore } from '@store/terminalStore';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { liveDelegates } from '@components/session/Delegations';
+import type { DelegationList } from '@factorai/types';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { GitPullRequest, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -280,13 +282,23 @@ export function SessionTabs() {
 	 *
 	 *  The gesture is passed on because the two have their own switches in the
 	 *  settings page (F11) — a wheel-click and an aimed × are not the same act. */
+	const queryClient = useQueryClient();
+	const delegatesOf = useCallback(
+		(sessionId: string, projectId: string) =>
+			liveDelegates(
+				queryClient.getQueryData<DelegationList>(queryKeys.delegations(projectId)),
+				sessionId,
+			),
+		[queryClient],
+	);
 	const requestClose = useCallback(
 		(sessionId: string, projectId: string, gesture: CloseGesture) => {
-			if (needsCloseConfirm(bySession[sessionId]?.status, gesture, confirmPrefs))
+			const delegates = delegatesOf(sessionId, projectId);
+			if (needsCloseConfirm(bySession[sessionId]?.status, gesture, confirmPrefs, delegates))
 				setClosing(sessionId);
 			else closeSession(sessionId, projectId);
 		},
-		[bySession, closeSession, confirmPrefs],
+		[bySession, closeSession, confirmPrefs, delegatesOf],
 	);
 
 	/**
@@ -490,6 +502,7 @@ export function SessionTabs() {
 			<CloseSessionConfirm
 				sessionName={closing ? (titles.get(closing) ?? shortId(closing)) : null}
 				canConfirm={Boolean(closing && bySession[closing])}
+				delegates={closingTab ? delegatesOf(closingTab.sessionId, closingTab.projectId) : 0}
 				onCancel={() => setClosing(null)}
 				onConfirm={() => closingTab && closeSession(closingTab.sessionId, closingTab.projectId)}
 			/>

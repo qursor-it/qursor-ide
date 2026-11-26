@@ -726,6 +726,19 @@ when" is the question asked of a mark left weeks ago.
 exactly such a bit on `projects` with `sort_order`; migration 0015's comment says
 why a session list is the opposite shape and does not want one. See F2.
 
+### `delegate_sessions` — sessions a delegation started (F50, ADR-0126) — migration `9008`
+
+| col        | type    | notes                                        |
+| ---------- | ------- | -------------------------------------------- |
+| session_id | TEXT PK | the provisional id, and the adopted one too  |
+
+Delegates are disposable. A row is written when a delegate's PTY starts and
+again when its agent adopts its own id. The session list, search and a
+project's count and last activity leave these ids out, for good. **No foreign
+key**, for the reason `session_worktrees` has none: the id is recorded before
+any transcript exists. The transcripts themselves are left where their agents
+wrote them (ADR-0004).
+
 ### `file_drafts` — text you typed and have not saved
 
 | col        | type    | notes                                                        |

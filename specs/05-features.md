@@ -9341,8 +9341,17 @@ the brief and the way back to its parent.
 **Delegates are disposable** ([ADR-0125](adr/0125-delegates-are-disposable.md)).
 A delegation that finishes leaves the strip and the sidebar. After
 `completeDelegation` Qursor stops the child's PTY. Its tab then closes and a
-view of it moves to the parent. The child's session stays out of the lists for
-the rest of the run.
+view of it moves to the parent.
+
+**No delegate outlives its parent or the run**
+([ADR-0126](adr/0126-delegates-never-outlive-their-parent-or-the-run.md)).
+Closing a session closes its running delegates first and waits up to three
+seconds for them to stop. A parent that exits on its own takes them with it,
+and quit signals delegates before every other PTY. Closing a session with live
+delegates always asks, and the dialog says its delegates close with it. Every
+delegate session is recorded in `delegate_sessions` and stays out of the
+session list, search and project counts for good. Its tab is never restored.
+After a restart the parent delegates again.
 
 **Command.** `list_delegations(projectId)` → `{ active, retired }`: the live
 delegations, and the child sessions retired this run.

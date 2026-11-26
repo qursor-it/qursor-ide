@@ -1448,3 +1448,46 @@ fn opencode_indexes_saved_titles_and_removes_archived_sessions_without_writing_i
 	indexer.scan_opencode(true).expect("relink after removal");
 	assert_eq!(rows()[0].id, "ses_existing", "the ancestor project takes the sessions back");
 }
+
+#[test]
+fn a_delegate_session_stays_out_of_the_lists_and_counts() {
+	use factorai_lib::agents::opencode;
+	use factorai_lib::commands::sessions::list_sessions_in;
+	use factorai_lib::services::profiles;
+
+	// Delegates are disposable (ADR-0126): recorded once, hidden for good.
+	let tmp = TempDir::new().expect("temp");
+	let db = open_db(tmp.path());
+	let workspace = make_folder(tmp.path(), "delegating");
+	let project = add_project_in(&db, workspace.to_str().expect("path")).expect("add project");
+	let root = tmp.path().join("profile");
+	profiles::ensure_default_for(&db, "opencode", &root).expect("profile");
+	let path = opencode::database_path(&root);
+	std::fs::create_dir_all(path.parent().expect("data directory")).expect("mkdir");
+	let provider = rusqlite::Connection::open(&path).expect("OpenCode store");
+	provider.execute_batch(
+		"CREATE TABLE session(id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT NOT NULL,
+		 time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, parent_id TEXT, time_archived INTEGER)"
+	).expect("schema");
+	let cwd = factorai_lib::agents::path_identity::display_path(workspace.to_str().expect("cwd"));
+	provider
+		.execute(
+			"INSERT INTO session VALUES ('ses_parent', ?1, 'Parent', 1, 2, NULL, NULL),
+			 ('ses_delegate', ?1, 'Delegate', 1, 3, NULL, NULL)",
+			params![cwd],
+		)
+		.expect("sessions");
+	db.with_mut(|conn| {
+		conn.execute("INSERT INTO delegate_sessions(session_id) VALUES ('ses_delegate')", [])?;
+		Ok(())
+	})
+	.expect("record delegate");
+	let (indexer, _events) = make_indexer(db.clone(), tmp.path().join("claude"));
+	indexer.full_scan().expect("scan");
+
+	let rows = db.read(|conn| list_sessions_in(conn, &project.id)).expect("sessions");
+	assert_eq!(rows.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["ses_parent"]);
+	let listed = db.with(list_projects_in).expect("projects");
+	let listed = listed.iter().find(|p| p.id == project.id).expect("project");
+	assert_eq!(listed.session_count, 1);
+}

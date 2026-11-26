@@ -23,6 +23,7 @@ import { CanvasOriginStrip } from '@components/session/CanvasOriginStrip';
 import {
 	DelegatesStrip,
 	DelegationOriginStrip,
+	liveDelegates,
 	useDelegations,
 } from '@components/session/Delegations';
 import { LendTerminalMenu } from '@components/session/LendTerminalMenu';
@@ -152,7 +153,9 @@ function SessionView() {
 	const session = sessionsQ.data?.find((s) => s.id === sessionId);
 	const isSubAgent = session?.subagentOf != null;
 	// A delegate with no index row yet is named by its brief, not "New session" (F50).
-	const delegation = useDelegations(projectId).active.find((d) => d.sessionId === sessionId);
+	const delegations = useDelegations(projectId);
+	const delegation = delegations.active.find((d) => d.sessionId === sessionId);
+	const delegates = liveDelegates(delegations, sessionId);
 
 	// Which Claude identity this session is (F25). Named in the header only when
 	// it is *not* the default: a badge on every session in a single-profile
@@ -478,7 +481,7 @@ function SessionView() {
 							// tab strip so the two cannot disagree about when — and this is
 							// the `×` gesture, the same one a tab's close button is.
 							onClick={() =>
-								needsCloseConfirm(live.status, 'button', confirmPrefs)
+								needsCloseConfirm(live.status, 'button', confirmPrefs, delegates)
 									? setClosing(true)
 									: void closeSession(live.terminalId)
 							}
@@ -535,6 +538,7 @@ function SessionView() {
 			<CloseSessionConfirm
 				sessionName={closing ? sessionLabel(sessionId, sessionsQ.data) : null}
 				canConfirm={Boolean(live)}
+				delegates={delegates}
 				onCancel={() => setClosing(false)}
 				onConfirm={() => live && void closeSession(live.terminalId)}
 			/>

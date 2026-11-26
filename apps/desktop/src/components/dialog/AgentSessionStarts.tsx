@@ -32,6 +32,7 @@ export function AgentSessionStarts() {
 		const listener = events.onAgentSessionStart((event) => {
 			if (event.delegationId) {
 				if (event.autoApproved) {
+					useTerminalStore.getState().markDelegate(event.delegationId);
 					startAgentSession(event.delegationId, event);
 					void queryClient.invalidateQueries({ queryKey: queryKeys.sessions(event.projectId) });
 				} else {
@@ -87,7 +88,10 @@ export function AgentSessionStarts() {
 		setBusy(true);
 		try {
 			const launch = await cmd.resolveDelegation(id, approve);
-			if (launch) startAgentSession(id, launch);
+			if (launch) {
+				useTerminalStore.getState().markDelegate(id);
+				startAgentSession(id, launch);
+			}
 		} catch (error) {
 			showErrorNotice(`Could not resolve the delegation: ${formatError(error)}`);
 		} finally {

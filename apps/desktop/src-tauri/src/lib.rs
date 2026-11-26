@@ -349,6 +349,21 @@ pub fn run() {
 					},
 				});
 			let mut terminals = terminals;
+			// Every session a delegate runs under stays out of the lists for good (ADR-0126).
+			{
+				let db = db.clone();
+				terminals.delegations.set_on_session(Arc::new(move |session_id| {
+					if let Err(error) = db.with_mut(|conn| {
+						conn.execute(
+							"INSERT OR IGNORE INTO delegate_sessions(session_id) VALUES (?1)",
+							[session_id],
+						)?;
+						Ok(())
+					}) {
+						warn!(%error, "could not record a delegate session");
+					}
+				}));
+			}
 			let tunnels = Arc::new(services::ssh::tunnel::Tunnels::default());
 			let ssh = Arc::new(services::ssh::pool::Pool::new(
 				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),

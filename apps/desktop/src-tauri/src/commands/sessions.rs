@@ -77,6 +77,7 @@ pub fn list_sessions_in(
 		 LEFT JOIN session_pins pin ON pin.session_id = s.id
 		 LEFT JOIN session_pins ppin ON ppin.session_id = s.subagent_of
 		 WHERE d.project_id = ?1
+		   AND s.id NOT IN (SELECT session_id FROM delegate_sessions)
 		 ORDER BY (COALESCE(ppin.session_id, pin.session_id) IS NULL),
 		          COALESCE(p.updated_at, s.updated_at) DESC,
 		          (s.subagent_of IS NULL) DESC,

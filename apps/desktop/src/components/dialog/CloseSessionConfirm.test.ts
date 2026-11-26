@@ -6,6 +6,12 @@ import { needsCloseConfirm } from './CloseSessionConfirm';
 const ON: CloseConfirmPrefs = { confirmCloseSession: true, confirmCloseMiddleClick: true };
 
 describe('needsCloseConfirm', () => {
+	it('always asks when live delegates would close with it (ADR-0126)', () => {
+		const OFF = { confirmCloseSession: false, confirmCloseMiddleClick: false };
+		expect(needsCloseConfirm('waiting_input', 'button', OFF, 1)).toBe(true);
+		expect(needsCloseConfirm('stopped', 'middle-click', OFF, 2)).toBe(true);
+	});
+
 	it('asks while Claude is working', () => {
 		expect(needsCloseConfirm('working', 'button', ON)).toBe(true);
 		expect(needsCloseConfirm('working', 'middle-click', ON)).toBe(true);

@@ -1533,6 +1533,7 @@ impl TerminalManager {
 		// Weak: the closure lives inside a handle this map owns.
 		let live = Arc::downgrade(&self.terminals);
 		let finished = caller.clone();
+		let parent_of = live.clone();
 		let delegation_tools = DelegationTools {
 			caller: caller.clone(),
 			state: state.clone(),
@@ -1542,13 +1543,8 @@ impl TerminalManager {
 				let (live, finished) = (live.clone(), finished.clone());
 				std::thread::spawn(move || {
 					std::thread::sleep(Duration::from_secs(2));
-					let Some(terminals) = live.upgrade() else { return };
-					for entry in terminals.iter() {
-						let handle = entry.value();
-						if handle.session_id.as_deref() == Some(finished.as_str()) {
-							handle.killed.store(true, Ordering::Relaxed);
-							handle.kill_process_tree();
-						}
+					if let Some(terminals) = live.upgrade() {
+						signal_session(&terminals, &finished);
 					}
 				});
 			}),
@@ -1558,11 +1554,20 @@ impl TerminalManager {
 				let binary = target_binary.as_ref().and_then(|resolve| resolve(target.id));
 				find_agent_binary(target, binary.as_deref())?;
 				let auto_approved = confirm_delegations.as_ref().is_some_and(|confirm| !confirm());
+				// The parent as the renderer knows it: its agent's own id once adopted.
+				let parent_view = parent_of.upgrade().and_then(|terminals| {
+					terminals.iter().find_map(|entry| {
+						let handle = entry.value();
+						(handle.session_id.as_deref() == Some(caller.as_str()))
+							.then(|| handle.adopted.lock().clone())
+							.flatten()
+					})
+				});
 				let launch = state.request(
 					&caller,
 					SessionStart {
 						delegation_id: None,
-						parent_session_id: None,
+						parent_session_id: parent_view,
 						auto_approved,
 						project_id: project.clone(),
 						agent: target.id.into(),
@@ -2523,14 +2528,39 @@ impl TerminalManager {
 	}
 
 	pub fn kill(&self, id: &str) -> AppResult<()> {
-		let handle =
-			self.terminals.get(id).ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
-		// Signal via the killer, not the child — the waiter thread owns the
-		// child and is parked in `wait()`. Best effort: it may already be gone.
-		// Recorded before the signal, so the waiter cannot report the exit before
-		// this is true. The other order is a race with a fast-dying child.
-		handle.killed.store(true, Ordering::Relaxed);
-		handle.kill_process_tree();
+		let handle = self
+			.terminals
+			.get(id)
+			.map(|entry| entry.value().clone())
+			.ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+		let children = handle
+			.session_id
+			.as_deref()
+			.map(|s| self.delegations.children_of(s))
+			.unwrap_or_default();
+		if children.is_empty() {
+			signal(&handle);
+			return Ok(());
+		}
+		// **Children first, then the parent** (ADR-0126): no delegate outlives the
+		// session it reports to. Off the caller's thread, which may be the main one,
+		// because the parent waits for its children to be gone.
+		let terminals = self.terminals.clone();
+		std::thread::spawn(move || {
+			for child in &children {
+				signal_session(&terminals, child);
+			}
+			let deadline = Instant::now() + Duration::from_secs(3);
+			while Instant::now() < deadline
+				&& terminals.iter().any(|entry| {
+					let h = entry.value();
+					h.session_id.as_ref().is_some_and(|s| children.contains(s))
+						&& *h.status.lock() != TerminalStatus::Stopped
+				}) {
+				std::thread::sleep(Duration::from_millis(50));
+			}
+			signal(&handle);
+		});
 		Ok(())
 	}
 
@@ -2597,8 +2627,15 @@ impl TerminalManager {
 	pub fn kill_all(&self) {
 		let ids: Vec<TerminalId> = self.terminals.iter().map(|e| e.key().clone()).collect();
 		debug!(count = ids.len(), "kill_all");
-		for id in &ids {
-			let _ = self.kill(id);
+		// Delegates before everything else, so none is left without its parent
+		// even for the half-second below (ADR-0126).
+		// Collected before asking the store: never hold the map while taking its lock.
+		let handles: Vec<_> = self.terminals.iter().map(|e| e.value().clone()).collect();
+		let (delegates, others): (Vec<_>, Vec<_>) = handles
+			.into_iter()
+			.partition(|h| h.session_id.as_deref().is_some_and(|s| self.delegations.is_child(s)));
+		for handle in delegates.iter().chain(&others) {
+			signal(handle);
 		}
 		std::thread::sleep(Duration::from_millis(500));
 		for id in &ids {
@@ -2947,6 +2984,10 @@ fn spawn_waiter(
 				last_activity,
 			});
 			if let Some(session_id) = handle.session_id.as_deref() {
+				// No orphans (ADR-0126): a delegate cannot report to a parent that is gone.
+				for child in delegations.children_of(session_id) {
+					signal_session(&terminals, &child);
+				}
 				delegations.exited(session_id);
 			}
 			(on_exit)(TerminalExitEvent {
@@ -3012,6 +3053,24 @@ fn opencode_version(bin: &Path) -> Option<String> {
 	let version = crate::services::agent_cli::version_for(bin)?;
 	VERSIONS.lock().insert(bin.to_path_buf(), version.clone());
 	Some(version)
+}
+
+/// Signal via the killer, not the child: the waiter thread owns the child and is
+/// parked in `wait()`. Best effort, it may already be gone. `killed` is recorded
+/// first, so the waiter cannot report the exit before it is true; the other order
+/// is a race with a fast-dying child.
+fn signal(handle: &TerminalHandle) {
+	handle.killed.store(true, Ordering::Relaxed);
+	handle.kill_process_tree();
+}
+
+/// Signal every PTY spawned under this session id.
+fn signal_session(terminals: &DashMap<TerminalId, Arc<TerminalHandle>>, session_id: &str) {
+	for entry in terminals.iter() {
+		if entry.value().session_id.as_deref() == Some(session_id) {
+			signal(entry.value());
+		}
+	}
 }
 
 fn opencode_desc() -> &'static AgentDescriptor {

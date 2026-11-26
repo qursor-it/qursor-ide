@@ -88,3 +88,24 @@ test('@smoke the approval names the session that asked', async ({ page }) => {
 	const dialog = page.getByRole('dialog', { name: 'Delegate to OpenCode' });
 	await expect(dialog).toContainText('Requested by Alpha only task');
 });
+
+test('@smoke closing a parent asks first and names the delegates that close with it', async ({
+	page,
+}) => {
+	await installMockBridge(page, fixture());
+	await page.goto(`/#/projects/${ALPHA_ID}/sessions/${PARENT}`);
+	await expect(page.locator('.xterm:visible')).toBeVisible();
+	// Not working, so a plain session would close on the click.
+	await page.evaluate(() =>
+		window.__FACTORAI_EMIT__?.('terminal:status', {
+			id: 'pty-parent',
+			status: 'waiting_input',
+			lastActivity: Date.now(),
+		}),
+	);
+	await page.getByRole('button', { name: 'Close session' }).click();
+	const dialog = page.getByRole('dialog', { name: 'Close this session?' });
+	await expect(dialog).toContainText('Its delegated session closes with it, first.');
+	await dialog.getByRole('button', { name: 'Keep it running' }).click();
+	await expect(dialog).toHaveCount(0);
+});

@@ -24,6 +24,13 @@ export function useDelegations(projectId: string): DelegationList {
 	return data ?? NONE;
 }
 
+/** How many live delegates close with this session (F50, ADR-0126). */
+export function liveDelegates(list: DelegationList | undefined, sessionId: string): number {
+	return (list?.active ?? []).filter(
+		(d) => d.parentSessionId === sessionId && d.status !== 'pendingApproval',
+	).length;
+}
+
 /** The words and dot for a delegation: its own state, or once it runs, its PTY's. */
 export function describeDelegation(
 	status: Delegation['status'],
