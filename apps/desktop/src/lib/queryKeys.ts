@@ -127,6 +127,7 @@ export const queryKeys = {
 	canvasSession: (projectId: string, relPath: string) =>
 		['canvasSession', projectId, relPath] as const,
 	canvasOrigins: (projectId: string) => ['canvasOrigins', projectId] as const,
+	delegations: (projectId: string) => ['delegations', projectId] as const,
 	/** Whether Project Intelligence is on, and whether its provider can run
 	 *  (F33). One per app: the switch is global. */
 	intelligenceStatus: () => ['intelligence-status'] as const,

@@ -723,6 +723,7 @@ pub fn run() {
 			commands::settings::validate_agent_binary,
 			commands::terminal::start_session,
 			commands::terminal::resolve_delegation,
+			commands::terminal::list_delegations,
 			commands::terminal::terminal_spawn,
 			commands::terminal::terminal_write,
 			commands::terminal::terminal_resize,

@@ -6,6 +6,7 @@ import { agentIndexesSessions } from '@lib/agents';
 import { ProjectIcon } from '@components/layout/ProjectIcon';
 import { StatusDot } from '@components/layout/StatusDot';
 import { RoutineOrigin } from '@components/routines/RoutineOrigin';
+import { SidebarDelegates, useDelegations } from '@components/session/Delegations';
 import { useSortable } from '@dnd-kit/sortable';
 // Aliased for the same reason `SessionTabs` aliases it: dnd-kit's `CSS` helper
 // shadows the global one at module scope, and a file that ever calls
@@ -582,13 +583,30 @@ function SessionList({
 		refetchOnWindowFocus: true,
 	});
 
-	const sessions = useMemo(() => orderSessions(sessionsQ.data ?? [], open), [sessionsQ.data, open]);
+	// A delegated session hangs under the session that delegated it (F50), not beside it.
+	// A finished one is retired: out of every list for the rest of this run.
+	const delegations = useDelegations(project.id);
+	const delegated = useMemo(
+		() =>
+			new Set([
+				...delegations.active.map((d) => d.sessionId),
+				...delegations.retired.map((d) => d.sessionId),
+			]),
+		[delegations],
+	);
+	const sessions = useMemo(
+		() => orderSessions(sessionsQ.data ?? [], open).filter((s) => !delegated.has(s.id)),
+		[sessionsQ.data, open, delegated],
+	);
 	// A session you started ten seconds ago has no index row yet, and this list
 	// is where you look for it (F6). Same union the project page does — without
 	// it the row you clicked `+` on reads "No sessions yet".
 	const pending = useMemo(
-		() => pendingSessions(bySession, project.id, sessionsQ.data),
-		[bySession, project.id, sessionsQ.data],
+		() =>
+			pendingSessions(bySession, project.id, sessionsQ.data).filter(
+				(p) => !delegated.has(p.sessionId),
+			),
+		[bySession, project.id, sessionsQ.data, delegated],
 	);
 	// How many sub-agents each listed session spawned, for its delete dialog.
 	// From the unfiltered response, because `orderSessions` drops sub-agent rows
@@ -666,6 +684,14 @@ function SessionList({
 							className="size-1.5"
 						/>
 					</Link>
+					<ul>
+						<SidebarDelegates
+							delegations={delegations.active}
+							parentId={p.sessionId}
+							projectId={project.id}
+							pad={pad}
+						/>
+					</ul>
 				</li>
 			))}
 			{sessions.map((session, i) => (
@@ -696,6 +722,12 @@ function SessionList({
 						mark={open[session.id]}
 						subagentCount={subagentCounts[session.id] ?? 0}
 						clock24={clock24}
+						pad={pad}
+					/>
+					<SidebarDelegates
+						delegations={delegations.active}
+						parentId={session.id}
+						projectId={project.id}
 						pad={pad}
 					/>
 				</Fragment>

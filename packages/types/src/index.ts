@@ -1183,10 +1183,42 @@ export interface RoutineFireEvent {
 export interface AgentSessionStartEvent {
 	delegationId?: string | null;
 	autoApproved?: boolean;
+	/** The session that asked, for a delegation (F50). */
+	parentSessionId?: string | null;
 	projectId: string;
 	agent: AgentId;
 	prompt: string;
 	cwd: string;
+}
+
+/** Where a live cross-agent delegation is (F50). A delegation that finishes
+ *  leaves the list: delegates are disposable. */
+export type DelegationStatus = 'pendingApproval' | 'starting' | 'running';
+
+/** One live delegation a session requested (F50). `sessionId` is the child's
+ *  session: the delegation id until the child's agent hands back its own id. */
+export interface Delegation {
+	id: string;
+	parentSessionId: string;
+	sessionId: string;
+	projectId: string;
+	agent: AgentId;
+	prompt: string;
+	status: DelegationStatus;
+	createdAt: number;
+}
+
+/** A finished delegate, kept only so the renderer can close its tab and keep
+ *  its transcript out of the lists for the rest of this run (F50). */
+export interface RetiredDelegate {
+	sessionId: string;
+	parentSessionId: string;
+}
+
+/** What `list_delegations` returns for one project (F50). */
+export interface DelegationList {
+	active: Delegation[];
+	retired: RetiredDelegate[];
 }
 
 /** `routines:changed` — a project's routine list is no longer what the renderer

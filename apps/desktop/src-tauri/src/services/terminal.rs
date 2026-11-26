@@ -270,6 +270,8 @@ pub struct SessionWorktreeEvent {
 #[serde(rename_all = "camelCase")]
 pub struct SessionStart {
 	pub delegation_id: Option<String>,
+	/// The session that asked, for a delegation; set by the store.
+	pub parent_session_id: Option<String>,
 	pub auto_approved: bool,
 	pub project_id: String,
 	pub agent: String,
@@ -888,7 +890,15 @@ impl TerminalManager {
 		let app_ide_status = app.clone();
 		let app_adopted = app.clone();
 		let app_worktree = app.clone();
+		let app_delegations = app.clone();
 		let app_session_start = app;
+		// One store per app; it announces every change for the renderer (F50).
+		let delegations = Arc::new(Delegations::default());
+		delegations.set_on_change(Arc::new(move |project| {
+			let _ = app_delegations
+				.emit("delegations:changed", serde_json::json!({ "projectId": project }));
+		}));
+		let adopted_delegations = delegations.clone();
 		Self {
 			terminals: Arc::new(DashMap::new()),
 			claude_dir,
@@ -902,6 +912,7 @@ impl TerminalManager {
 				let _ = app_ide_status.emit("ide:status", e);
 			}),
 			on_adopted: Arc::new(move |e| {
+				adopted_delegations.adopted(&e.provisional, &e.adopted);
 				let _ = app_adopted.emit("session:adopted", e);
 			}),
 			on_data: Arc::new(move |e| {
@@ -910,7 +921,7 @@ impl TerminalManager {
 			on_status: Arc::new(move |e| {
 				let _ = app_status.emit("terminal:status", e);
 			}),
-			delegations: Arc::default(),
+			delegations,
 			confirm_delegations: None,
 			usage_limits: None,
 			on_exit: Arc::new(move |e| {
@@ -1519,9 +1530,28 @@ impl TerminalManager {
 		let (state, caller) = (self.delegations.clone(), session_id.to_string());
 		let (project, folder) = (project_id.to_string(), cwd.to_string_lossy().into_owned());
 		let confirm_delegations = self.confirm_delegations.clone();
+		// Weak: the closure lives inside a handle this map owns.
+		let live = Arc::downgrade(&self.terminals);
+		let finished = caller.clone();
 		let delegation_tools = DelegationTools {
 			caller: caller.clone(),
 			state: state.clone(),
+			// A delegate is disposable once it has reported (ADR-0125). Off this
+			// thread and a moment later, so the tool's reply reaches the agent first.
+			on_complete: Arc::new(move || {
+				let (live, finished) = (live.clone(), finished.clone());
+				std::thread::spawn(move || {
+					std::thread::sleep(Duration::from_secs(2));
+					let Some(terminals) = live.upgrade() else { return };
+					for entry in terminals.iter() {
+						let handle = entry.value();
+						if handle.session_id.as_deref() == Some(finished.as_str()) {
+							handle.killed.store(true, Ordering::Relaxed);
+							handle.kill_process_tree();
+						}
+					}
+				});
+			}),
 			request: Arc::new(move |target, prompt| {
 				let target = agents::descriptor(target)
 					.ok_or_else(|| AppError::InvalidInput(format!("unknown agent {target}")))?;
@@ -1532,6 +1562,7 @@ impl TerminalManager {
 					&caller,
 					SessionStart {
 						delegation_id: None,
+						parent_session_id: None,
 						auto_approved,
 						project_id: project.clone(),
 						agent: target.id.into(),
@@ -1551,6 +1582,7 @@ impl TerminalManager {
 		let start_session: agent_tools::StartSession = Arc::new(move |prompt| {
 			(on_session_start)(SessionStart {
 				delegation_id: None,
+				parent_session_id: None,
 				auto_approved: false,
 				project_id: start_project.clone(),
 				agent: start_agent.clone(),

@@ -41,6 +41,15 @@ pub async fn start_session(
 	.await
 }
 
+/// The live delegations and retired delegates of one project (F50, ADR-0125).
+#[tauri::command]
+pub fn list_delegations(
+	state: State<'_, AppState>,
+	project_id: String,
+) -> crate::services::agent_tools::delegations::DelegationList {
+	state.terminals.delegations.list(&project_id)
+}
+
 /// Confirm or decline a model's delegation request in Qursor (F50).
 #[tauri::command]
 pub fn resolve_delegation(

@@ -92,6 +92,8 @@ pub struct DelegationTools {
 	pub caller: String,
 	pub state: Arc<Delegations>,
 	pub request: RequestDelegation,
+	/// After the caller published its result: stop its PTY (ADR-0125).
+	pub on_complete: Arc<dyn Fn() + Send + Sync>,
 }
 
 /// One session's view of Qursor IDE's tools.
@@ -171,7 +173,7 @@ impl AgentTools {
 		);
 		let handoff = match &self.delegations {
 			Some(tools) if tools.state.is_child(&tools.caller) =>
-				"You are a Qursor delegate. Publish your result with completeDelegation before you finish.",
+				"You are a Qursor delegate. When the task is done, publish your result with completeDelegation as your last action: Qursor then closes this session.",
 			Some(_) => "To delegate to another installed agent, pass its id as agent to startSession. Qursor follows the user's delegation confirmation setting and returns a delegation id. Retrieve its result with getDelegation. For a same-agent hand-off without an explicit agent, ask the human first.",
 			None => "To hand a part of the work to a new session in this project, use startSession once the human agrees.",
 		};
@@ -406,7 +408,7 @@ impl AgentTools {
 		let result = if name == "getDelegation" {
 			tools.state.get(&tools.caller, value)
 		} else {
-			tools.state.complete(&tools.caller, value)
+			tools.state.complete(&tools.caller, value).inspect(|_| (tools.on_complete)())
 		};
 		match result {
 			Ok(value) => tool_text(&value.to_string()),
@@ -677,7 +679,7 @@ fn tools_list(delegations: Option<&DelegationTools>, usage_limits: bool) -> Valu
 				list.retain(|tool| tool["name"] != "startSession");
 				list.push(json!({
 					"name": "completeDelegation",
-					"description": "Send your final summary to the session that delegated this task.",
+					"description": "Send your final summary to the session that delegated this task. Call it last: Qursor closes this session right after.",
 					"inputSchema": {
 						"type": "object", "required": ["summary"],
 						"properties": { "summary": { "type": "string" } }
@@ -694,7 +696,7 @@ fn tools_list(delegations: Option<&DelegationTools>, usage_limits: bool) -> Valu
 				}
 				list.push(json!({
 					"name": "getDelegation",
-					"description": "Read the current state and reported summary of a delegation you requested.",
+					"description": "Read the current state of a delegation you requested. A finished one (completed, ended, declined or failed) is returned once, with its summary, and then forgotten.",
 					"inputSchema": {
 						"type": "object", "required": ["id"],
 						"properties": { "id": { "type": "string" } }
@@ -1214,6 +1216,7 @@ mod tests {
 				"parent",
 				crate::services::terminal::SessionStart {
 					delegation_id: None,
+					parent_session_id: None,
 					auto_approved: false,
 					project_id: "project".into(),
 					agent: "opencode".into(),
@@ -1226,6 +1229,7 @@ mod tests {
 			caller: child.delegation_id.expect("delegate id"),
 			state,
 			request: Arc::new(|_, _| panic!("not callable from a delegate")),
+			on_complete: Arc::new(|| {}),
 		});
 		let instructions = tools.instructions();
 		assert!(instructions.contains("completeDelegation"));

@@ -14,6 +14,7 @@ import type {
 	AppError,
 	RunningSubagent,
 	ClaudeCliStatus,
+	DelegationList,
 	DirEntry,
 	DirListing,
 	FileContents,
@@ -94,7 +95,11 @@ export interface TestFixture {
 	pendingRoutineFires?: RoutineFireEvent[];
 	sessionPages?: Record<string, SessionPage>;
 	terminalSpawnId?: TerminalId;
+	/** What `list_delegations` answers (F50); the spec may swap it, then emit
+	 *  `delegations:changed`. */
+	delegations?: DelegationList;
 	delegationRequest?: {
+		parentSessionId?: string;
 		delegationId: string;
 		projectId: string;
 		agent: AgentId;

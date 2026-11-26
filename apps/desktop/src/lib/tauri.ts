@@ -59,6 +59,7 @@ import type {
 	Routine,
 	RoutineFireEvent,
 	AgentSessionStartEvent,
+	DelegationList,
 	GoKeySource,
 	GoKeyUpdate,
 	RoutinesChangedEvent,
@@ -292,6 +293,8 @@ export const cmd = {
 		invoke<void>('set_canvas_session', { projectId, relPath, sessionId }),
 	listCanvasOrigins: (projectId: string) =>
 		invoke<CanvasOrigin[]>('list_canvas_origins', { projectId }),
+	/** The cross-agent delegations requested by this project's sessions (F50). */
+	listDelegations: (projectId: string) => invoke<DelegationList>('list_delegations', { projectId }),
 	/** Tell the backend what is on screen, so the IDE bridge can answer for it
 	 *  rather than guess (F20). Fire-and-forget: a report that goes missing
 	 *  leaves a stale-but-honest picture. */
@@ -938,6 +941,10 @@ export const events = {
 	 *  headless. Only emitted from a live session, so there is nothing to drain. */
 	onAgentSessionStart: (cb: (p: AgentSessionStartEvent) => void) =>
 		listen<AgentSessionStartEvent>('agent-session:start', cb),
+	/** A delegation in this project changed state or activity (F50). Project
+	 *  only; re-read the list. */
+	onDelegationsChanged: (cb: (p: { projectId: string }) => void) =>
+		listen<{ projectId: string }>('delegations:changed', cb),
 	/** The file the viewer has open changed on disk (F7). Carries the path; the
 	 *  renderer re-reads it through the same commands a reopen uses. */
 	onFileChanged: (cb: (p: FileChangedEvent) => void) =>
@@ -1039,6 +1046,7 @@ interface TestFixture {
 	sessionPages?: Record<string, SessionPage>;
 	terminalSpawnId?: TerminalId;
 	delegationRequest?: AgentSessionStartEvent;
+	delegations?: DelegationList;
 	/** Make `terminal_spawn` reject with this `AppError`, as a missing CLI does. */
 	terminalSpawnFails?: { kind: string; message: string };
 	/** The id `shell_spawn` hands back in the browser lane (F23). Distinct from
@@ -1889,6 +1897,11 @@ async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Prom
 					return { sessionId, relPath, title: titles.get(relPath) ?? relPath };
 				}) as unknown as T;
 		}
+		case 'list_delegations':
+			return {
+				active: (fx?.delegations?.active ?? []).filter((d) => d.projectId === args?.projectId),
+				retired: fx?.delegations?.retired ?? [],
+			} as unknown as T;
 		case 'watch_canvas':
 			return undefined as unknown as T;
 		case 'unwatch_canvas':

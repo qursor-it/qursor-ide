@@ -1,9 +1,17 @@
 //! Qursor's local parent/child hand-offs (F50).
+//!
+//! **Delegates are disposable** (ADR-0125). A delegation is listed while it is
+//! pending, starting or running. Once it finishes it leaves the list, and its
+//! child session is retired: the renderer closes its tab and keeps it out of the
+//! lists for the rest of the run. A result stays readable by the parent until the
+//! parent has read it once, exits, or [`RESULT_TTL`] passes. Nothing is persisted.
 
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -11,16 +19,48 @@ use crate::error::{AppError, AppResult};
 use crate::services::terminal::{SessionStart, SpawnOpts};
 
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(600);
-const MAX_PER_PARENT: usize = 32;
+const RESULT_TTL: Duration = Duration::from_secs(600);
+/// Live delegations one session may hold at once.
+const MAX_PER_PARENT: usize = 8;
+
+/// Called with a project id whenever that project's list changes.
+pub type OnChange = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Default)]
-pub struct Delegations(Mutex<HashMap<String, Delegation>>);
+pub struct Delegations {
+	inner: Mutex<Inner>,
+	on_change: OnceLock<OnChange>,
+}
+
+#[derive(Default)]
+struct Inner {
+	entries: HashMap<String, Delegation>,
+	// ponytail: grows by one per finished delegate for the life of the app, a
+	// few dozen bytes each; cap it if a run ever delegates thousands of times.
+	retired: Vec<(String, RetiredDelegate)>,
+}
 
 struct Delegation {
+	/// The caller's session id as its MCP endpoint was bound: what authorises it.
 	parent: String,
+	/// The parent as the renderer knows it, after its own adoption.
+	parent_view: String,
+	/// The child's session id: the delegation id until its agent adopts its own.
+	session_id: String,
 	launch: SessionStart,
 	created: Instant,
+	created_ms: i64,
 	state: State,
+	/// When it reached a final state; the clock for [`RESULT_TTL`].
+	finished: Option<Instant>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Final {
+	Declined,
+	Ended,
+	Failed,
+	Completed,
 }
 
 enum State {
@@ -28,41 +68,86 @@ enum State {
 	Approved,
 	Starting,
 	Running,
-	Declined,
-	Ended,
-	Failed,
-	Completed(String),
+	Done(Final, Option<String>),
+}
+
+/// One live delegation, as `list_delegations` returns it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegationDto {
+	pub id: String,
+	pub parent_session_id: String,
+	pub session_id: String,
+	pub project_id: String,
+	pub agent: String,
+	pub prompt: String,
+	pub status: &'static str,
+	pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RetiredDelegate {
+	pub session_id: String,
+	pub parent_session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct DelegationList {
+	pub active: Vec<DelegationDto>,
+	pub retired: Vec<RetiredDelegate>,
 }
 
 impl Delegations {
+	/// Where changes are announced; set once at startup.
+	pub fn set_on_change(&self, cb: OnChange) {
+		let _ = self.on_change.set(cb);
+	}
+
+	fn changed(&self, project: &str) {
+		if let Some(cb) = self.on_change.get() {
+			cb(project);
+		}
+	}
+
 	pub fn request(&self, parent: &str, mut launch: SessionStart) -> AppResult<SessionStart> {
-		let mut entries = self.0.lock();
-		if entries.contains_key(parent) {
-			return Err(AppError::InvalidInput(
-				"delegated sessions cannot start other sessions".into(),
-			));
+		{
+			let mut inner = self.inner.lock();
+			inner.sweep();
+			if inner.entries.contains_key(parent) {
+				return Err(AppError::InvalidInput(
+					"delegated sessions cannot start other sessions".into(),
+				));
+			}
+			let live = inner.entries.values().filter(|e| e.parent == parent && e.is_live()).count();
+			if live >= MAX_PER_PARENT {
+				return Err(AppError::InvalidInput(format!(
+					"this session already has {MAX_PER_PARENT} delegations in progress"
+				)));
+			}
+			let id = Uuid::new_v4().to_string();
+			launch.delegation_id = Some(id.clone());
+			launch.parent_session_id = Some(parent.into());
+			inner.entries.insert(
+				id.clone(),
+				Delegation {
+					parent: parent.into(),
+					parent_view: parent.into(),
+					session_id: id,
+					launch: launch.clone(),
+					created: Instant::now(),
+					created_ms: crate::epoch_ms(),
+					state: if launch.auto_approved { State::Approved } else { State::Pending },
+					finished: None,
+				},
+			);
 		}
-		if entries.values().filter(|entry| entry.parent == parent).count() >= MAX_PER_PARENT {
-			return Err(AppError::InvalidInput(
-				"this session has reached its delegation limit".into(),
-			));
-		}
-		let id = Uuid::new_v4().to_string();
-		launch.delegation_id = Some(id.clone());
-		entries.insert(
-			id,
-			Delegation {
-				parent: parent.into(),
-				launch: launch.clone(),
-				created: Instant::now(),
-				state: if launch.auto_approved { State::Approved } else { State::Pending },
-			},
-		);
+		self.changed(&launch.project_id);
 		Ok(launch)
 	}
 
 	pub fn is_child(&self, id: &str) -> bool {
-		self.0.lock().contains_key(id)
+		self.inner.lock().entries.contains_key(id)
 	}
 
 	pub fn decide(
@@ -71,18 +156,24 @@ impl Delegations {
 		approve: bool,
 		parent_live: impl FnOnce(&str) -> bool,
 	) -> AppResult<Option<SessionStart>> {
-		let mut entries = self.0.lock();
-		let entry = entries.get_mut(id).ok_or_else(unavailable)?;
-		entry.expire();
-		if !matches!(entry.state, State::Pending) {
-			return Err(unavailable());
-		}
-		if !approve || !parent_live(&entry.parent) {
-			entry.state = State::Declined;
-			return Ok(None);
-		}
-		entry.state = State::Approved;
-		Ok(Some(entry.launch.clone()))
+		let (project, launch) = {
+			let mut inner = self.inner.lock();
+			let entry = inner.entries.get_mut(id).ok_or_else(unavailable)?;
+			entry.expire();
+			if !matches!(entry.state, State::Pending) {
+				return Err(unavailable());
+			}
+			let launch = if approve && parent_live(&entry.parent) {
+				entry.state = State::Approved;
+				Some(entry.launch.clone())
+			} else {
+				entry.finish(Final::Declined, None);
+				None
+			};
+			(entry.launch.project_id.clone(), launch)
+		};
+		self.changed(&project);
+		Ok(launch)
 	}
 
 	pub fn begin(
@@ -90,8 +181,8 @@ impl Delegations {
 		opts: &SpawnOpts,
 		parent_live: impl FnOnce(&str) -> bool,
 	) -> AppResult<bool> {
-		let mut entries = self.0.lock();
-		let Some(entry) = entries.get_mut(&opts.session_id) else { return Ok(false) };
+		let mut inner = self.inner.lock();
+		let Some(entry) = inner.entries.get_mut(&opts.session_id) else { return Ok(false) };
 		entry.expire();
 		let expected = &entry.launch;
 		if !matches!(entry.state, State::Approved)
@@ -103,7 +194,7 @@ impl Delegations {
 			return Err(unavailable());
 		}
 		if !parent_live(&entry.parent) {
-			entry.state = State::Declined;
+			entry.finish(Final::Declined, None);
 			return Err(unavailable());
 		}
 		entry.state = State::Starting;
@@ -111,61 +202,198 @@ impl Delegations {
 	}
 
 	pub fn started(&self, id: &str, success: bool) {
-		if let Some(entry) = self.0.lock().get_mut(id) {
-			if matches!(entry.state, State::Starting) {
-				entry.state = if success { State::Running } else { State::Failed };
+		let project = {
+			let mut inner = self.inner.lock();
+			let Some(entry) = inner.entries.get_mut(id) else { return };
+			if !matches!(entry.state, State::Starting) {
+				return;
 			}
+			if success {
+				entry.state = State::Running;
+			} else {
+				entry.finish(Final::Failed, None);
+			}
+			let project = entry.launch.project_id.clone();
+			if !success {
+				inner.retire(id);
+			}
+			project
+		};
+		self.changed(&project);
+	}
+
+	/// A child's or a parent's agent handed back its own session id (ADR-0062).
+	pub fn adopted(&self, provisional: &str, adopted: &str) {
+		let mut projects = Vec::new();
+		{
+			let mut inner = self.inner.lock();
+			for (id, entry) in inner.entries.iter_mut() {
+				if id == provisional {
+					entry.session_id = adopted.into();
+				} else if entry.parent == provisional {
+					entry.parent_view = adopted.into();
+				} else {
+					continue;
+				}
+				projects.push(entry.launch.project_id.clone());
+			}
+		}
+		projects.dedup();
+		for project in projects {
+			self.changed(&project);
 		}
 	}
 
+	/// A PTY exited: a child that had not finished has ended, and a parent's
+	/// unstarted requests and unread results go with it.
 	pub fn exited(&self, id: &str) {
-		let mut entries = self.0.lock();
-		if let Some(entry) = entries.get_mut(id) {
-			if matches!(entry.state, State::Starting | State::Running) {
-				entry.state = State::Ended;
+		let mut projects = Vec::new();
+		{
+			let mut inner = self.inner.lock();
+			if let Some(entry) = inner.entries.get_mut(id) {
+				if matches!(entry.state, State::Starting | State::Running) {
+					entry.finish(Final::Ended, None);
+				}
+				projects.push(entry.launch.project_id.clone());
+				inner.retire(id);
+			}
+			let children: Vec<String> = inner
+				.entries
+				.iter()
+				.filter(|(_, e)| {
+					e.parent == id && !matches!(e.state, State::Starting | State::Running)
+				})
+				.map(|(child, _)| child.clone())
+				.collect();
+			for child in children {
+				if let Some(entry) = inner.entries.remove(&child) {
+					projects.push(entry.launch.project_id);
+				}
 			}
 		}
-		for entry in entries.values_mut().filter(|entry| entry.parent == id) {
-			if matches!(entry.state, State::Pending | State::Approved) {
-				entry.state = State::Declined;
-			}
+		projects.dedup();
+		for project in projects {
+			self.changed(&project);
 		}
 	}
 
+	/// What the parent sees. A final state is handed over once and then forgotten.
 	pub fn get(&self, parent: &str, id: &str) -> AppResult<Value> {
-		let mut entries = self.0.lock();
-		let entry =
-			entries.get_mut(id).filter(|entry| entry.parent == parent).ok_or_else(unavailable)?;
+		let mut inner = self.inner.lock();
+		inner.sweep();
+		let entry = inner
+			.entries
+			.get_mut(id)
+			.filter(|entry| entry.parent == parent)
+			.ok_or_else(unavailable)?;
 		entry.expire();
+		let agent = entry.launch.agent.clone();
 		let (status, summary) = match &entry.state {
 			State::Pending => ("pendingApproval", None),
 			State::Approved | State::Starting => ("starting", None),
 			State::Running => ("running", None),
-			State::Declined => ("declined", None),
-			State::Ended => ("ended", None),
-			State::Failed => ("failed", None),
-			State::Completed(summary) => ("completed", Some(summary)),
+			State::Done(end, summary) => (end.as_str(), summary.clone()),
 		};
-		Ok(json!({ "id": id, "agent": entry.launch.agent, "status": status, "summary": summary }))
+		if entry.finished.is_some() {
+			inner.entries.remove(id);
+		}
+		Ok(json!({ "id": id, "agent": agent, "status": status, "summary": summary }))
 	}
 
+	/// The child publishes its result. The caller then stops its PTY.
 	pub fn complete(&self, child: &str, summary: &str) -> AppResult<Value> {
-		let mut entries = self.0.lock();
-		let entry = entries.get_mut(child).ok_or_else(unavailable)?;
-		if !matches!(entry.state, State::Starting | State::Running) {
-			return Err(unavailable());
-		}
-		entry.state = State::Completed(summary.into());
+		let project = {
+			let mut inner = self.inner.lock();
+			let entry = inner.entries.get_mut(child).ok_or_else(unavailable)?;
+			if !matches!(entry.state, State::Starting | State::Running) {
+				return Err(unavailable());
+			}
+			entry.finish(Final::Completed, Some(summary.into()));
+			let project = entry.launch.project_id.clone();
+			inner.retire(child);
+			project
+		};
+		self.changed(&project);
 		Ok(json!({ "status": "completed" }))
+	}
+
+	pub fn list(&self, project: &str) -> DelegationList {
+		let mut inner = self.inner.lock();
+		inner.sweep();
+		let mut active: Vec<DelegationDto> = inner
+			.entries
+			.iter()
+			.filter(|(_, e)| e.launch.project_id == project && e.is_live())
+			.map(|(id, e)| DelegationDto {
+				id: id.clone(),
+				parent_session_id: e.parent_view.clone(),
+				session_id: e.session_id.clone(),
+				project_id: e.launch.project_id.clone(),
+				agent: e.launch.agent.clone(),
+				prompt: e.launch.prompt.clone(),
+				status: match e.state {
+					State::Pending => "pendingApproval",
+					State::Running => "running",
+					_ => "starting",
+				},
+				created_at: e.created_ms,
+			})
+			.collect();
+		active.sort_by_key(|d| d.created_at);
+		let retired =
+			inner.retired.iter().filter(|(p, _)| p == project).map(|(_, r)| r.clone()).collect();
+		DelegationList { active, retired }
+	}
+}
+
+impl Inner {
+	/// Remember a finished child's session so the renderer can drop it.
+	fn retire(&mut self, id: &str) {
+		let Some(entry) = self.entries.get(id) else { return };
+		let retired = RetiredDelegate {
+			session_id: entry.session_id.clone(),
+			parent_session_id: entry.parent_view.clone(),
+		};
+		if !self.retired.iter().any(|(_, r)| *r == retired) {
+			self.retired.push((entry.launch.project_id.clone(), retired));
+		}
+	}
+
+	/// Expire unanswered requests and drop results nobody read in time.
+	fn sweep(&mut self) {
+		for entry in self.entries.values_mut() {
+			entry.expire();
+		}
+		self.entries.retain(|_, e| e.finished.is_none_or(|t| t.elapsed() < RESULT_TTL));
 	}
 }
 
 impl Delegation {
+	fn is_live(&self) -> bool {
+		self.finished.is_none()
+	}
+
+	fn finish(&mut self, end: Final, summary: Option<String>) {
+		self.state = State::Done(end, summary);
+		self.finished = Some(Instant::now());
+	}
+
 	fn expire(&mut self) {
 		if matches!(self.state, State::Pending | State::Approved)
 			&& self.created.elapsed() >= APPROVAL_TIMEOUT
 		{
-			self.state = State::Declined;
+			self.finish(Final::Declined, None);
+		}
+	}
+}
+
+impl Final {
+	fn as_str(self) -> &'static str {
+		match self {
+			Final::Declined => "declined",
+			Final::Ended => "ended",
+			Final::Failed => "failed",
+			Final::Completed => "completed",
 		}
 	}
 }
@@ -177,40 +405,44 @@ fn unavailable() -> AppError {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::sync::atomic::{AtomicUsize, Ordering};
+
+	fn launch(auto_approved: bool) -> SessionStart {
+		SessionStart {
+			project_id: "project".into(),
+			agent: "opencode".into(),
+			prompt: "Review the diff".into(),
+			cwd: "/project".into(),
+			delegation_id: None,
+			parent_session_id: None,
+			auto_approved,
+		}
+	}
+
+	fn opts(launch: &SessionStart) -> SpawnOpts {
+		SpawnOpts {
+			session_id: launch.delegation_id.clone().expect("id"),
+			project_id: launch.project_id.clone(),
+			cwd: Some(launch.cwd.clone()),
+			agent: Some(launch.agent.clone()),
+			initial_prompt: Some(launch.prompt.clone()),
+			cols: 80,
+			rows: 24,
+		}
+	}
 
 	#[test]
 	fn an_automatic_delegation_can_start_once_while_its_parent_is_live() {
 		let store = Delegations::default();
 		for live in [false, true] {
-			let launch = store
-				.request(
-					"parent",
-					SessionStart {
-						project_id: "project".into(),
-						agent: "opencode".into(),
-						prompt: "Review the diff".into(),
-						cwd: "/project".into(),
-						delegation_id: None,
-						auto_approved: true,
-					},
-				)
-				.expect("request");
-			let id = launch.delegation_id.expect("id");
-			assert_eq!(store.get("parent", &id).expect("status")["status"], "starting");
-			let opts = SpawnOpts {
-				session_id: id.clone(),
-				project_id: launch.project_id,
-				cwd: Some(launch.cwd),
-				agent: Some(launch.agent),
-				initial_prompt: Some(launch.prompt),
-				cols: 80,
-				rows: 24,
-			};
+			let launch = store.request("parent", launch(true)).expect("request");
+			let id = launch.delegation_id.clone().expect("id");
+			assert_eq!(store.list("project").active.iter().filter(|d| d.id == id).count(), 1);
 			assert_eq!(
-				store.begin(&opts, |parent| live && parent == "parent").ok(),
+				store.begin(&opts(&launch), |parent| live && parent == "parent").ok(),
 				live.then_some(true)
 			);
-			assert!(store.begin(&opts, |_| true).is_err());
+			assert!(store.begin(&opts(&launch), |_| true).is_err());
 			if !live {
 				assert_eq!(store.get("parent", &id).expect("status")["status"], "declined");
 			}
@@ -220,42 +452,80 @@ mod tests {
 	#[test]
 	fn only_the_approved_child_can_publish_and_only_the_parent_can_read() {
 		let store = Delegations::default();
-		let launch = store
-			.request(
-				"parent",
-				SessionStart {
-					project_id: "project".into(),
-					agent: "opencode".into(),
-					prompt: "Review the diff".into(),
-					cwd: "/project".into(),
-					delegation_id: None,
-					auto_approved: false,
-				},
-			)
-			.expect("request");
-		let id = launch.delegation_id.expect("id");
+		let launch = store.request("parent", launch(false)).expect("request");
+		let id = launch.delegation_id.clone().expect("id");
+		assert_eq!(launch.parent_session_id.as_deref(), Some("parent"));
 		assert!(store.complete(&id, "too soon").is_err());
 		assert!(store.get("other", &id).is_err());
 		assert_eq!(store.get("parent", &id).expect("status")["status"], "pendingApproval");
 		assert!(store.decide(&id, true, |parent| parent == "parent").expect("decision").is_some());
 		assert!(store.decide(&id, true, |_| true).is_err());
-		assert!(store
-			.begin(
-				&SpawnOpts {
-					session_id: id.clone(),
-					project_id: "project".into(),
-					cwd: Some("/project".into()),
-					agent: Some("opencode".into()),
-					initial_prompt: Some("Review the diff".into()),
-					cols: 80,
-					rows: 24,
-				},
-				|_| true
-			)
-			.expect("start"));
+		assert!(store.begin(&opts(&launch), |_| true).expect("start"));
+		store.started(&id, true);
 		assert!(store.complete("other", "wrong session").is_err());
 		store.complete(&id, "Review done").expect("result");
 		store.exited(&id);
 		assert_eq!(store.get("parent", &id).expect("result")["summary"], "Review done");
+	}
+
+	#[test]
+	fn a_finished_delegate_leaves_the_list_is_retired_and_its_result_is_read_once() {
+		let store = Delegations::default();
+		let changes = Arc::new(AtomicUsize::new(0));
+		let seen = changes.clone();
+		store.set_on_change(Arc::new(move |project| {
+			assert_eq!(project, "project");
+			seen.fetch_add(1, Ordering::Relaxed);
+		}));
+		let launch = store.request("parent", launch(true)).expect("request");
+		let id = launch.delegation_id.clone().expect("id");
+		store.begin(&opts(&launch), |_| true).expect("start");
+		store.started(&id, true);
+		store.adopted(&id, "ses_child");
+		store.adopted("parent", "ses_parent");
+		let live = &store.list("project").active[0];
+		assert_eq!(
+			(live.session_id.as_str(), live.parent_session_id.as_str()),
+			("ses_child", "ses_parent")
+		);
+		assert!(store.get("ses_parent", &id).is_err(), "authority stays with the bound caller");
+
+		store.complete(&id, "Done").expect("complete");
+		let list = store.list("project");
+		assert!(list.active.is_empty());
+		assert_eq!(
+			list.retired,
+			vec![RetiredDelegate {
+				session_id: "ses_child".into(),
+				parent_session_id: "ses_parent".into()
+			}]
+		);
+		assert_eq!(store.get("parent", &id).expect("result")["summary"], "Done");
+		assert!(store.get("parent", &id).is_err(), "a result is handed over once");
+		assert!(changes.load(Ordering::Relaxed) >= 4);
+	}
+
+	#[test]
+	fn the_limit_counts_only_live_delegations() {
+		let store = Delegations::default();
+		for _ in 0..MAX_PER_PARENT * 2 {
+			let launch = store.request("parent", launch(false)).expect("room for another");
+			let id = launch.delegation_id.expect("id");
+			store.decide(&id, false, |_| true).expect("decline");
+		}
+		for _ in 0..MAX_PER_PARENT {
+			store.request("parent", launch(false)).expect("live");
+		}
+		assert!(store.request("parent", launch(false)).is_err());
+	}
+
+	#[test]
+	fn a_parent_that_exits_takes_its_unstarted_requests_and_unread_results() {
+		let store = Delegations::default();
+		let pending = store.request("parent", launch(false)).expect("request");
+		let pending = pending.delegation_id.expect("id");
+		store.exited("parent");
+		assert!(store.list("project").active.is_empty());
+		assert!(!store.is_child(&pending));
 	}
 }

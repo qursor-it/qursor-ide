@@ -9304,7 +9304,9 @@ answers at once, and the caller neither waits for the new session nor reads its
 result.
 
 **Events.** `agent-session:start` (`projectId`, `agent`, `prompt`, `cwd`,
-optional `delegationId` and `autoApproved`).
+optional `delegationId`, `parentSessionId` and `autoApproved`).
+`delegations:changed` (`projectId`) whenever a delegation in that project
+changes; the renderer re-reads `list_delegations`.
 
 ### Delegation to another agent
 
@@ -9319,6 +9321,28 @@ ten minutes. The delegate uses the target's resolved project profile, or that
 agent's default. Omitting `agent` retains the same-agent hand-off described
 above. See [ADR-0121](adr/0121-delegation-approval-can-be-disabled.md).
 
-The child can call `completeDelegation({ summary })` once. Its parent reads
-the state and result with `getDelegation({ id })`. The result is available to the parent while the app is running. A delegated session cannot start further Qursor
-sessions. If it exits before reporting, the parent sees an ended delegation.
+The child can call `completeDelegation({ summary })` once, as its last
+action. Its parent reads the state with `getDelegation({ id })`. A finished
+state (completed with its summary, ended, declined or failed) is returned
+once and then forgotten. An unread result also goes when the parent exits or
+ten minutes after the delegation finished. A delegated session cannot start
+further Qursor sessions. If it exits before reporting, the parent sees an
+ended delegation. A session can hold eight live delegations at once.
+
+**What the human sees.** The approval dialog names the session that asked,
+then the folder and the brief. While a delegation is pending, starting or
+running, the parent session shows a strip under its header with one row per
+child: the agent's mark and name, its state (awaiting your approval, starting,
+working, needs you), the child's session title or its brief until it has one,
+and Open. The sidebar nests the same rows under the parent session instead of
+listing the child beside it, and the child session shows "delegated by" with
+the brief and the way back to its parent.
+
+**Delegates are disposable** ([ADR-0125](adr/0125-delegates-are-disposable.md)).
+A delegation that finishes leaves the strip and the sidebar. After
+`completeDelegation` Qursor stops the child's PTY. Its tab then closes and a
+view of it moves to the parent. The child's session stays out of the lists for
+the rest of the run.
+
+**Command.** `list_delegations(projectId)` → `{ active, retired }`: the live
+delegations, and the child sessions retired this run.

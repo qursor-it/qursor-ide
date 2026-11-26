@@ -20,6 +20,11 @@ import { StatusDot } from '@components/layout/StatusDot';
 import { ChangesChip, StatusPill } from '@components/session/HeaderChips';
 import { GitOriginStrip } from '@components/session/GitOriginStrip';
 import { CanvasOriginStrip } from '@components/session/CanvasOriginStrip';
+import {
+	DelegatesStrip,
+	DelegationOriginStrip,
+	useDelegations,
+} from '@components/session/Delegations';
 import { LendTerminalMenu } from '@components/session/LendTerminalMenu';
 import { CheckoutMenu } from '@components/session/CheckoutMenu';
 import { SubAgentTranscript } from '@components/session/SubAgentTranscript';
@@ -146,6 +151,8 @@ function SessionView() {
 	// index row is the authority — it says where the transcript actually lives.
 	const session = sessionsQ.data?.find((s) => s.id === sessionId);
 	const isSubAgent = session?.subagentOf != null;
+	// A delegate with no index row yet is named by its brief, not "New session" (F50).
+	const delegation = useDelegations(projectId).active.find((d) => d.sessionId === sessionId);
 
 	// Which Claude identity this session is (F25). Named in the header only when
 	// it is *not* the default: a badge on every session in a single-profile
@@ -254,6 +261,11 @@ function SessionView() {
 		<main className="flex h-full flex-col bg-terminal">
 			<GitOriginStrip sessionId={sessionId} />
 			<CanvasOriginStrip sessionId={sessionId} projectId={projectId} />
+			<DelegationOriginStrip
+				sessionId={sessionId}
+				projectId={projectId}
+				parentTitle={(id) => sessionLabel(id, sessionsQ.data)}
+			/>
 			{/* Two rows (F3, ADR-0090): where the session is, then what it is and
 			    what you can do to it. */}
 			<header className="flex flex-col gap-1.5 border-b border-border bg-card px-4 py-2.5">
@@ -368,7 +380,11 @@ function SessionView() {
 						className="min-w-0 truncate font-semibold text-base text-foreground"
 						title={sessionId}
 					>
-						{isSubAgent ? 'sub-agent' : sessionLabel(sessionId, sessionsQ.data)}
+						{isSubAgent
+							? 'sub-agent'
+							: !session && delegation
+								? delegation.prompt
+								: sessionLabel(sessionId, sessionsQ.data)}
 					</span>
 					{!isSubAgent && <StatusPill status={live?.status ?? 'stopped'} />}
 					{/* Keyed so showing a session, even one of the same checkout, reads git again. */}
@@ -483,6 +499,7 @@ function SessionView() {
 					)}
 				</div>
 			</header>
+			<DelegatesStrip sessionId={sessionId} projectId={projectId} />
 			{/* The project's shell footer is not here — it is in `AppShell`, so it
 			    is drawn on this route, the project page and a sub-agent transcript
 			    alike, and a pane's host survives a session switch instead of being

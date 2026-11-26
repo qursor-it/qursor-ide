@@ -867,11 +867,21 @@ credential (F34).
 
 ### Delegation Confirmation
 
-The standard dialog shows the target agent and working folder above the exact
-brief. Long briefs scroll within the muted surface. Focus starts on Decline,
+The standard dialog names the session that asked, then the working folder,
+above the exact brief. Long briefs scroll within the muted surface. Focus starts on Decline,
 and Start session is the primary action. The new session opens in the
 background when approved. Settings → Confirmations has a switch for starting
 future delegations automatically (F50).
+
+### Delegates
+
+A live delegation is a 28px row: the agent's mark, its name, a status dot with
+the state in words, then the child's title or brief truncated, and an outline
+Open. Blue is reserved for "awaiting your approval" and "needs you". The rows
+sit in a collapsible strip under the parent's session header, and the sidebar
+nests the same rows under the parent at 12px behind a `↳`. The child shows a
+`h-9` origin strip like Git's and Canvas's. A finished delegate leaves every
+surface: nothing is kept on screen once it has reported (ADR-0125).
 
 ### Command Palette
 
