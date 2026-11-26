@@ -90,7 +90,9 @@ test.describe('usage status bar', () => {
 		await expect(page.getByTestId('usage-group-codex')).toContainText('92%');
 	});
 
-	test('@smoke OpenCode Go shows all three remaining quota windows', async ({ page }) => {
+	test('@smoke OpenCode Go shows all three quota windows as used, like the others', async ({
+		page,
+	}) => {
 		const base = fixtureWithUsage();
 		await installMockBridge(page, {
 			...base,
@@ -118,11 +120,11 @@ test.describe('usage status bar', () => {
 			.filter({
 				has: page.getByRole('heading', { name: 'OpenCode', exact: true }),
 			});
-		await expect(go).toContainText('70%');
-		await expect(go.getByText('0%', { exact: true })).toBeVisible();
+		await expect(go).toContainText('30%');
+		await expect(go).toContainText('100%');
 		await expect(go).toContainText('Monthly');
 		await expect(go).toContainText('50%');
-		await expect(go).toContainText('percentages remaining');
+		await expect(go).not.toContainText('remaining');
 	});
 
 	test('@smoke usage status bar is absent when turned off', async ({ page }) => {
