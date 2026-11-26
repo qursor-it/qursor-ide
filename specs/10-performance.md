@@ -1211,22 +1211,34 @@ not exist. The per-finding numbers — the ones that show what each change bough
 ## P9 — qursor-core
 
 Baseline of the in-process PTY path, taken before the terminal manager moves
-into a separate process. The same two measures are run again against the core
-and compared with these.
+into a separate process.
 
 - **Machine:** Windows 11 Pro (native, ConPTY), Intel Core Ultra 7 155H,
   release build.
 - **Run:** `cargo test -p qursor-ide --release --lib baseline_ -- --ignored --nocapture --test-threads=1`
   (`baseline_throughput` and `baseline_echo` in `services/terminal.rs`).
-- **Method:** throughput is spawn to the exit event for `cmd /c type` of a
-  50 MB file; echo is 200 single-byte writes to an interactive `cmd`, each timed
-  from `write` to the first data event that follows, p95 of the 200.
+- **Sink:** an in-process closure that base64-decodes each data event. This is
+  today's manager path, not Tauri IPC.
+- **Throughput:** spawn to the last data byte (or the exit event if later) for
+  `cmd /c type` of a 50 MB file; the exit code must be 0. The wait for output to
+  go quiet is not counted.
+- **Echo:** 400 single-byte writes to an interactive `cmd`, each timed from
+  `write` to the first data event that follows, with a 100 to 131 ms
+  pseudo-random pause between writes so the probe does not lock onto one phase
+  of the 16 ms flusher. p95 of the 400.
 
-| Measure | Run 1 | Run 2 | Run 3 | Median |
+| Measure | Runs (5) | Min | Median | Max |
 |---|---|---|---|---|
-| `throughput_50mb_ms` | 24453 | 28645 | 31279 | **28645** |
-| `echo_p95_us` | 14620 | 14552 | 14676 | **14620** |
+| `throughput_50mb_ms` | 22582, 23513, 25727, 33882, 30927 | 22582 | **25727** | 33882 |
+| `echo_p95_us` | 15894, 15908, 15912, 15879, 15901 | 15879 | **15901** | 15912 |
+
+(`echo_p50_us` median 8317.)
+
+**Comparison method.** The run-to-run spread on throughput is wider than any
+effect worth gating on, so the core is compared like for like: baseline and core
+variants run alternately back to back, 5 runs each, on the same machine. The
+core passes when its median throughput lies within the baseline [min, max] and
+its `echo_p95_us` is at most the baseline `echo_p95_us` plus 1000 us.
 
 ConPTY re-renders rather than relays, so about 53.2 MB reach the data events for
-the 50 MB file; the figure is not comparable with a POSIX run. The echo number
-includes the flush window, since that is what the renderer sees today.
+the 50 MB file; the figure is not comparable with a POSIX run.

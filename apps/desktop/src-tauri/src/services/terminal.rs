@@ -5062,6 +5062,7 @@ mod tests {
 	// today, so the qursor-core extraction can be compared against it. Run with
 	// `cargo test -p qursor-ide --release --lib baseline_ -- --ignored --nocapture --test-threads=1`.
 	type Stamps = Arc<StdMutex<Vec<(Instant, usize)>>>;
+	type ExitStamp = Arc<StdMutex<Option<(Instant, Option<i32>)>>>;
 
 	fn baseline_request() -> PtyRequest {
 		PtyRequest {
@@ -5078,7 +5079,9 @@ mod tests {
 	}
 
 	/// A manager whose data events are stamped on arrival, and whose exit is too.
-	fn baseline_manager() -> (TerminalManager, Stamps, Arc<StdMutex<Option<Instant>>>) {
+	/// The sink is an in-process closure that base64-decodes, i.e. today's manager
+	/// path, not Tauri IPC.
+	fn baseline_manager() -> (TerminalManager, Stamps, ExitStamp) {
 		let data: Stamps = Arc::new(StdMutex::new(Vec::new()));
 		let exit = Arc::new(StdMutex::new(None));
 		let (dc, ec) = (data.clone(), exit.clone());
@@ -5089,7 +5092,7 @@ mod tests {
 				dc.lock().unwrap().push((Instant::now(), n));
 			}),
 			Arc::new(|_| {}),
-			Arc::new(move |_| *ec.lock().unwrap() = Some(Instant::now())),
+			Arc::new(move |e: TerminalExitEvent| *ec.lock().unwrap() = Some((Instant::now(), e.code))),
 		);
 		(mgr, data, exit)
 	}
@@ -5101,8 +5104,10 @@ mod tests {
 		let _spawn = crate::test_support::spawn_lock();
 		let dir = tempfile::TempDir::new().unwrap();
 		let file = dir.path().join("50mb.txt");
-		let line = "0123456789abcdef".repeat(4) + "\n";
-		std::fs::write(&file, line.repeat(SIZE / line.len())).unwrap();
+		let line = "0123456789abcdef".repeat(4) + "
+";
+		let lines = SIZE / line.len();
+		std::fs::write(&file, line.repeat(lines)).unwrap();
 		let path = file.to_string_lossy().into_owned();
 		#[cfg(windows)]
 		let argv = vec!["cmd".into(), "/c".into(), "type".into(), path];
@@ -5112,26 +5117,47 @@ mod tests {
 		let (mgr, data, exit) = baseline_manager();
 		let start = Instant::now();
 		mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
-		let end = loop {
-			if let Some(t) = *exit.lock().unwrap() {
-				break t;
+		let (exited, code) = loop {
+			if let Some(e) = *exit.lock().unwrap() {
+				break e;
 			}
 			assert!(start.elapsed() < Duration::from_secs(120), "the child never exited");
 			std::thread::sleep(Duration::from_millis(5));
 		};
-		let received: usize = data.lock().unwrap().iter().map(|(_, n)| n).sum();
-		// ConPTY re-renders a screen rather than relaying bytes, so only the
-		// POSIX count is an exact claim.
+		assert_eq!(code, Some(0), "the child failed, the number would be meaningless");
+		// The exit callback is not ordered after the final flush: the clock stops
+		// at the last byte, and the quiet wait below is not counted.
+		// POSIX: the tty adds a CR to every line.
 		#[cfg(not(windows))]
-		assert!(received >= SIZE, "only {received} of {SIZE} bytes arrived");
+		let expected = Some(lines * (line.len() + 1));
+		#[cfg(windows)]
+		let expected: Option<usize> = None;
+		let quiet_since = Instant::now();
+		let (last, received) = loop {
+			std::thread::sleep(Duration::from_millis(100));
+			let d = data.lock().unwrap();
+			let received: usize = d.iter().map(|(_, n)| n).sum();
+			let last = d.last().map_or(exited, |(t, _)| *t);
+			let complete = expected.is_none_or(|n| received >= n);
+			if last.elapsed() >= Duration::from_millis(100) && complete {
+				break (last, received);
+			}
+			assert!(quiet_since.elapsed() < Duration::from_secs(30), "output never completed: {received}");
+		};
+		if let Some(n) = expected {
+			assert_eq!(received, n, "bytes lost or duplicated");
+		}
+		#[cfg(windows)]
+		assert!(received > 0, "nothing arrived");
 		println!("bytes_received={received}");
-		println!("throughput_50mb_ms={}", end.duration_since(start).as_millis());
+		println!("throughput_50mb_ms={}", exited.max(last).duration_since(start).as_millis());
 		mgr.kill_all();
 	}
 
 	#[test]
 	#[ignore = "baseline measure, see specs/10-performance.md P9"]
 	fn baseline_echo() {
+		const SAMPLES: usize = 400;
 		let _spawn = crate::test_support::spawn_lock();
 		// The simplest child that echoes what it is typed: `cat` on a tty, the
 		// console's own line editor under ConPTY.
@@ -5143,14 +5169,12 @@ mod tests {
 		let (mgr, data, _exit) = baseline_manager();
 		let id = mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
 		let mut lat = Vec::new();
-		let settle = |data: &Stamps| {
-			// Let the banner and the previous echo drain before the next probe.
-			std::thread::sleep(Duration::from_millis(100));
-			data.lock().unwrap().len()
-		};
-		settle(&data);
-		for _ in 0..200 {
-			let seen = settle(&data);
+		std::thread::sleep(Duration::from_millis(500));
+		for i in 0..SAMPLES {
+			// Let the previous echo drain. The jitter keeps the probe from locking
+			// onto one phase of the flusher's tick, which would hide added delay.
+			std::thread::sleep(Duration::from_millis(100 + (i as u64 * 7919) % 32));
+			let seen = data.lock().unwrap().len();
 			let t0 = Instant::now();
 			mgr.write(&id, b"a").expect("write");
 			let at = loop {
@@ -5158,9 +5182,10 @@ mod tests {
 					break *t;
 				}
 				assert!(t0.elapsed() < Duration::from_secs(5), "no echo");
-				std::hint::spin_loop();
+				std::thread::sleep(Duration::from_micros(50));
 			};
-			lat.push(at.saturating_duration_since(t0).as_micros());
+			assert!(at >= t0, "an echo stamped before its write is a stale event");
+			lat.push(at.duration_since(t0).as_micros());
 		}
 		lat.sort_unstable();
 		println!("echo_p50_us={}", lat[lat.len() / 2]);
