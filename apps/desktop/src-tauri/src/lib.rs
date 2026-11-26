@@ -115,6 +115,12 @@ pub fn run() {
 				}
 			}
 
+			// Built before anything spawns a child: it takes the Go key out of the
+			// environment so no child inherits it.
+			let vault =
+				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
+			let go_usage = Arc::new(services::usage::mcp::GoUsage::new(vault.clone()));
+
 			// Ask the user's login shell what their PATH is, on its own thread.
 			// A GUI process has never run an rc file, so ours has no Homebrew and
 			// no version-manager shims in it, and a session handed that PATH
@@ -169,10 +175,12 @@ pub fn run() {
 			let statusline_dir = data_dir.join("usage").join("statusline");
 			let usage =
 				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
-			let vault =
-				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
-			let go_usage = Arc::new(services::usage::mcp::GoUsage::new(vault.clone()));
+			let opencode_signals = data_dir.join("opencode");
+			if let Err(error) = agents::opencode::prepare_signal_dir(&opencode_signals) {
+				warn!(%error, "could not prepare the OpenCode session signal folder");
+			}
 			let terminals = TerminalManager::for_app(app.handle().clone(), cd.clone(), ui.clone())
+				.with_opencode_signal_dir(opencode_signals)
 				.with_status_tap(move |e| attention_tap.on_status(e))
 				// Claude's limits, forwarded by each session's status line.
 				.with_usage_sink_dir(statusline_dir.clone())
@@ -208,8 +216,7 @@ pub fn run() {
 						})
 						.ok()
 						.flatten()
-						.as_deref()
-							!= Some("off")
+						.as_deref() != Some("off")
 					})
 				})
 				.with_user_binary(Arc::new(move |agent| {

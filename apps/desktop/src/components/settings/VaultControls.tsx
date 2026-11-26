@@ -31,6 +31,7 @@ export function VaultControls() {
 		setDialog(null);
 		qc.invalidateQueries({ queryKey: queryKeys.vault() });
 		qc.invalidateQueries({ queryKey: queryKeys.servers() });
+		qc.invalidateQueries({ queryKey: queryKeys.openCodeGoKey() });
 	};
 	const act = useMutation({
 		mutationFn: async () => {

@@ -32,8 +32,12 @@ fn valid_key(key: &str) -> bool {
 	!key.is_empty() && key.len() <= 4096 && key.bytes().all(|b| b.is_ascii_graphic())
 }
 
-fn environment_key() -> Option<Zeroizing<String>> {
-	std::env::var(GO_KEY_ENV).ok().map(Zeroizing::new).filter(|key| valid_key(key.trim()))
+/// Taken out of the process environment so no child (git, an agent, a version
+/// probe) inherits it.
+fn take_environment_key() -> Option<Zeroizing<String>> {
+	let key = std::env::var(GO_KEY_ENV).ok().map(Zeroizing::new);
+	std::env::remove_var(GO_KEY_ENV);
+	key.filter(|key| valid_key(key.trim()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -55,19 +59,20 @@ pub struct GoKeyUpdate {
 
 pub struct GoUsage {
 	vault: Arc<Vault>,
+	env_key: Option<Zeroizing<String>>,
 	cache: Mutex<Option<(i64, Result<UsageReading, GoStatus>)>>,
 }
 
 impl GoUsage {
 	pub fn new(vault: Arc<Vault>) -> Self {
-		Self { vault, cache: Mutex::default() }
+		Self { vault, env_key: take_environment_key(), cache: Mutex::default() }
 	}
 
 	pub fn key_source(&self) -> Option<GoKeySource> {
 		if self.vault.has(GO_VAULT_ID) {
 			Some(GoKeySource::Saved)
 		} else {
-			environment_key().map(|_| GoKeySource::Environment)
+			self.env_key.as_ref().map(|_| GoKeySource::Environment)
 		}
 	}
 
@@ -91,20 +96,9 @@ impl GoUsage {
 		let mut cache = self.cache.lock();
 		let profile = match db.read(|conn| profiles::default_for(conn, agents::OPENCODE)) {
 			Ok(Some(profile)) => profile,
+			// No profile means OpenCode was never seen here; nothing to attribute usage to.
 			Ok(None) if self.key_source().is_none() => return GoStatus::NoKey,
-			Ok(None) => {
-				let descriptor =
-					agents::descriptor(agents::OPENCODE).expect("OpenCode is in the registry");
-				match profiles::ensure_default_for(
-					db,
-					agents::OPENCODE,
-					&agents::ambient_dir(descriptor),
-				) {
-					Ok(profile) => profile,
-					Err(_) => return GoStatus::Unavailable,
-				}
-			}
-			Err(_) => return GoStatus::Unavailable,
+			Ok(None) | Err(_) => return GoStatus::Unavailable,
 		};
 		let status = match self.read(&mut cache, now_ms()) {
 			Ok(reading) => {
@@ -123,11 +117,11 @@ impl GoUsage {
 		now: i64,
 	) -> Result<UsageReading, GoStatus> {
 		let stored = self.vault.get(GO_VAULT_ID).map_err(|_| GoStatus::Unavailable)?;
-		let fallback = stored.is_none().then(environment_key).flatten();
+		let fallback = stored.is_none().then_some(self.env_key.as_ref()).flatten();
 		let key = stored
 			.as_ref()
 			.and_then(|v| std::str::from_utf8(v).ok())
-			.or_else(|| fallback.as_ref().map(|key| key.trim()))
+			.or_else(|| fallback.map(|key| key.trim()))
 			.ok_or(GoStatus::NoKey)?;
 		if let Some((observed, reading)) = cache.as_ref() {
 			if now.saturating_sub(*observed) < GO_CACHE_MS {
@@ -305,6 +299,7 @@ mod tests {
 		let go = GoUsage::new(Arc::new(
 			Vault::open(dir.path().join("secrets.vault"), Box::new(TestKeychain)).expect("vault"),
 		));
+		profiles::ensure_default_for(&db, agents::OPENCODE, dir.path()).expect("profile");
 		go.set_key(Some("qa-opencode-token"), &store).expect("save");
 		let at = now_ms();
 		*go.cache.lock() = Some((

@@ -120,7 +120,6 @@ function ProfileBlock({
 	now: number;
 }) {
 	const stale = isStale(usage.updatedAt, now);
-	const remaining = usage.source === 'openCodeGo';
 	return (
 		<div className="flex flex-col gap-1">
 			<div className="flex items-baseline justify-between gap-2">
@@ -134,15 +133,8 @@ function ProfileBlock({
 				window={windowAt(usage.fiveHour, now)}
 				clock24={clock24}
 				now={now}
-				remaining={remaining}
 			/>
-			<WindowRow
-				label="Weekly"
-				window={windowAt(usage.weekly, now)}
-				clock24={clock24}
-				now={now}
-				remaining={remaining}
-			/>
+			<WindowRow label="Weekly" window={windowAt(usage.weekly, now)} clock24={clock24} now={now} />
 			{usage.perModel.map((m) => (
 				<WindowRow
 					key={m.label}
@@ -150,13 +142,9 @@ function ProfileBlock({
 					window={windowAt(m.window, now)}
 					clock24={clock24}
 					now={now}
-					remaining={remaining}
 				/>
 			))}
-			<span className="text-muted-foreground">
-				{sourceLabel(usage.source)}
-				{remaining ? ' · percentages remaining' : ''}
-			</span>
+			<span className="text-muted-foreground">{sourceLabel(usage.source)}</span>
 		</div>
 	);
 }
@@ -166,13 +154,11 @@ function WindowRow({
 	window,
 	clock24,
 	now,
-	remaining,
 }: {
 	label: string;
 	window: UsageWindow | null;
 	clock24: boolean;
 	now: number;
-	remaining: boolean;
 }) {
 	const thresholds = useUsageStore((s) => s.thresholds);
 	return (
@@ -182,7 +168,7 @@ function WindowRow({
 				<>
 					<UsageMeter percent={window.usedPercent} className="w-16" />
 					<span className={`text-right tabular-nums ${inkOf(window.usedPercent, thresholds)}`}>
-						{formatPercent(remaining ? 100 - window.usedPercent : window.usedPercent)}
+						{formatPercent(window.usedPercent)}
 					</span>
 					<span className="text-muted-foreground">
 						{window.resetsAt !== null

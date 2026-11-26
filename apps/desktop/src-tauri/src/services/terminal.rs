@@ -855,6 +855,8 @@ pub struct TerminalManager {
 	/// Where a Claude session's status-line helper drops its rate limits.
 	/// `None` — every test that does not wire it — adds no `--settings`.
 	usage_sink_dir: Option<PathBuf>,
+	/// Folder holding the OpenCode session-signal plugin and per-terminal files (ADR-0122).
+	opencode_signal_dir: Option<PathBuf>,
 	/// Whether the status-line injection is switched on, read at **spawn time**.
 	/// `None` — every test that does not wire it — means on.
 	usage_statusline_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
@@ -924,6 +926,7 @@ impl TerminalManager {
 			routine_store: None,
 			canvas_store: None,
 			usage_sink_dir: None,
+			opencode_signal_dir: None,
 			usage_statusline_enabled: None,
 			on_worktree: Arc::new(move |e| {
 				let _ = app_worktree.emit("session:worktree", e);
@@ -966,6 +969,7 @@ impl TerminalManager {
 			routine_store: None,
 			canvas_store: None,
 			usage_sink_dir: None,
+			opencode_signal_dir: None,
 			usage_statusline_enabled: None,
 			on_worktree: Arc::new(|_| {}),
 			on_session_start: Arc::new(|_| {}),
@@ -1065,6 +1069,11 @@ impl TerminalManager {
 	/// Where a Claude session's status line forwards its rate limits
 	/// (`services::usage::statusline`). Wired to `<data_dir>/usage/statusline`
 	/// in `lib.rs`.
+	pub fn with_opencode_signal_dir(mut self, dir: PathBuf) -> Self {
+		self.opencode_signal_dir = Some(dir);
+		self
+	}
+
 	pub fn with_usage_sink_dir(mut self, dir: PathBuf) -> Self {
 		self.usage_sink_dir = Some(dir);
 		self
@@ -1785,8 +1794,7 @@ impl TerminalManager {
 		};
 		let mut v = vec![bin.to_string_lossy().to_string()];
 		if agent.id == agents::OPENCODE {
-			if !opencode::supports_version(crate::services::agent_cli::version_for(&bin).as_deref())
-			{
+			if !opencode::supports_version(opencode_version(&bin).as_deref()) {
 				return Err(AppError::InvalidInput("Qursor requires OpenCode 1.x".into()));
 			}
 			let resume = opencode::is_session_id(session_id).then_some(session_id);
@@ -1988,7 +1996,6 @@ impl TerminalManager {
 		let (program, process_args) =
 			crate::services::agent_cli::launch_command(Path::new(&argv[0]), &process_args)?;
 		let mut cmd = CommandBuilder::new(program);
-		cmd.env_remove("QURSOR_OPENCODE_GO_API_KEY");
 		for arg in process_args {
 			cmd.arg(arg);
 		}
@@ -2105,10 +2112,11 @@ impl TerminalManager {
 		cmd.env_remove(opencode::TOOLS_TOKEN_ENV);
 		cmd.env_remove(opencode::SESSION_SIGNAL_ENV);
 		if env_agent.id == agents::OPENCODE {
-			if uses_agent_binary
-				&& req.session_id.as_deref().is_some_and(|id| !opencode::is_session_id(id))
-			{
-				match opencode::SessionSignal::create() {
+			if let Some(dir) = self.opencode_signal_dir.as_deref().filter(|_| {
+				uses_agent_binary
+					&& req.session_id.as_deref().is_some_and(|id| !opencode::is_session_id(id))
+			}) {
+				match opencode::SessionSignal::create(dir) {
 					Ok(signal) => {
 						cmd.env(opencode::SESSION_SIGNAL_ENV, signal.path());
 						opencode_signal = Some(signal);
@@ -2705,13 +2713,16 @@ fn spawn_reader(
 	std::thread::Builder::new()
 		.name(format!("term-flush-{id}"))
 		.spawn(move || {
+			let mut adoption_checked = false;
 			loop {
 				// Re-read per tick rather than per spawn: which session is in front
 				// changes while the PTY runs, and a terminal that was in the
 				// background when it started is the common case for the one you
 				// switch to (PERF-14).
 				std::thread::sleep(flush_window(&ui, handle_f.session_id.as_deref()));
-				if let Some(signal) = &handle_f.opencode_signal {
+				if let Some(signal) =
+					handle_f.opencode_signal.as_ref().filter(|_| !adoption_checked)
+				{
 					let mut last = handle_f.last_probe.lock();
 					if handle_f.adopted.lock().is_none()
 						&& (eof.load(Ordering::Acquire)
@@ -2719,17 +2730,20 @@ fn spawn_reader(
 					{
 						*last = Some(Instant::now());
 						drop(last);
-						if let Some(adopted) = signal.read().filter(|session| {
-							opencode::session_directory(&handle_f.store_dir, session).is_some_and(
-								|path| {
+						// The store is opened once, for the first id the plugin reports: a
+						// folder that never matches (symlink, drive-letter case) must not
+						// cost a SQLite open every tick for the whole session.
+						if let Some(session) = signal.read() {
+							adoption_checked = true;
+							if opencode::session_directory(&handle_f.store_dir, &session)
+								.is_some_and(|path| {
 									agents::path_identity::same(
 										&path,
 										&handle_f.cwd.to_string_lossy(),
 									)
-								},
-							)
-						}) {
-							adopt_session(&id, &handle_f, adopted, &on_adopted);
+								}) {
+								adopt_session(&id, &handle_f, session, &on_adopted);
+							}
 						}
 					}
 				}
@@ -2953,6 +2967,19 @@ fn claude_desc() -> &'static AgentDescriptor {
 /// The registry's Codex entry.
 fn codex_desc() -> &'static AgentDescriptor {
 	agents::descriptor(agents::CODEX).expect("codex is in the registry")
+}
+
+/// `opencode --version` once per binary: it is a process spawn on every launch otherwise.
+fn opencode_version(bin: &Path) -> Option<String> {
+	static VERSIONS: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, String>>> =
+		std::sync::LazyLock::new(Mutex::default);
+	if let Some(version) = VERSIONS.lock().get(bin) {
+		return Some(version.clone());
+	}
+	// A failed probe is not cached, so the next launch asks again.
+	let version = crate::services::agent_cli::version_for(bin)?;
+	VERSIONS.lock().insert(bin.to_path_buf(), version.clone());
+	Some(version)
 }
 
 fn opencode_desc() -> &'static AgentDescriptor {

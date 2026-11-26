@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use parking_lot::Mutex;
 
@@ -126,7 +125,7 @@ pub type LiveIdsCb = Arc<dyn Fn() -> HashSet<String> + Send + Sync>;
 /// kill does not.
 pub type ReapShellsCb = Arc<dyn Fn() + Send + Sync>;
 
-type OpenCodeStamp = [Option<(SystemTime, u64)>; 2];
+type OpenCodeStamp = (i64, Option<i64>);
 type OpenCodeDirs = HashMap<String, (i64, Option<String>)>;
 
 /// Owns the scan + watcher. Cheap to clone (Arc internals). Emit is wired
@@ -387,12 +386,10 @@ impl Indexer {
 		});
 		for profile in profiles.into_iter().filter(|p| p.agent == agents::OPENCODE) {
 			let root = Path::new(&profile.config_dir);
-			let db = opencode::database_path(root);
-			let stamp = [db.clone(), db.with_file_name("opencode.db-wal")].map(|path| {
-				let meta = std::fs::metadata(path).ok()?;
-				Some((meta.modified().ok()?, meta.len()))
-			});
-			if stamp[0].is_none() || (!force && stamps.get(root) == Some(&stamp)) {
+			// Session count and newest update, not the file: the -wal grows on every
+			// message OpenCode streams, which would re-read every session each tick.
+			let Ok(stamp) = opencode::stamp(root) else { continue };
+			if !force && stamps.get(root) == Some(&stamp) {
 				continue;
 			}
 			let sessions = match opencode::sessions(root) {
@@ -437,24 +434,15 @@ impl Indexer {
 				let on_disk = sessions.into_iter().map(|s| s.id).collect::<HashSet<_>>();
 				indexed.push((discovered_id, project_id, on_disk, changed));
 			}
-			let mut reap_pending = false;
 			for (discovered_id, project_id, on_disk, mut changed) in indexed {
 				changed.extend(self.reap_deleted(discovered_id, &on_disk)?);
 				if !changed.is_empty() {
 					(self.on_changed)(SessionsChanged { project_id, session_ids: changed });
 				}
-				reap_pending |= self.db.read(|conn| {
-					let indexed: usize = conn.query_row(
-						"SELECT COUNT(*) FROM sessions WHERE discovered_id = ?1",
-						[discovered_id],
-						|r| r.get(0),
-					)?;
-					Ok(indexed > on_disk.len())
-				})?;
 			}
-			if !reap_pending {
-				stamps.insert(root.to_path_buf(), stamp);
-			}
+			// Stored even when a live tab keeps an archived session indexed: retrying
+			// every tick would re-read the store for as long as the tab is open.
+			stamps.insert(root.to_path_buf(), stamp);
 		}
 		Ok(())
 	}
@@ -549,8 +537,10 @@ impl Indexer {
 			self.discover()?;
 		}
 		let linked = self.db.with(|conn| {
-			let sql = format!("{LINKED_SELECT} AND d.profile_id = ?1 AND d.key = ?2");
-			Ok(conn.query_row(&sql, params![profile_id, key], map_linked).optional()?)
+			let sql = format!("{LINKED_SELECT} AND d.profile_id = ?2 AND d.key = ?3");
+			Ok(conn
+				.query_row(&sql, params![agents::OPENCODE, profile_id, key], map_linked)
+				.optional()?)
 		})?;
 		match linked {
 			Some(dir) => self.index_dir(&dir),
@@ -575,8 +565,10 @@ impl Indexer {
 			self.discover()?;
 		}
 		let linked = self.db.with(|conn| {
-			let sql = format!("{LINKED_SELECT} AND d.profile_id = ?1 AND d.key = ?2");
-			Ok(conn.query_row(&sql, params![profile_id, meta.cwd], map_linked).optional()?)
+			let sql = format!("{LINKED_SELECT} AND d.profile_id = ?2 AND d.key = ?3");
+			Ok(conn
+				.query_row(&sql, params![agents::OPENCODE, profile_id, meta.cwd], map_linked)
+				.optional()?)
 		})?;
 		match linked {
 			Some(dir) => self.index_dir(&dir),
@@ -902,9 +894,9 @@ impl Indexer {
 		// twice, the second time through `Bash` alone.
 		let mut touched_paths: Vec<String> = Vec::new();
 		let mut fts_rows: Vec<(String, String)> = Vec::new(); // (role, body)
-															  // Two independent title sources, kept apart so precedence is decided once
-															  // at the end rather than by whichever line happens to come last in the
-															  // file: `/rename` always beats Claude's own auto-title.
+														// Two independent title sources, kept apart so precedence is decided once
+														// at the end rather than by whichever line happens to come last in the
+														// file: `/rename` always beats Claude's own auto-title.
 		let mut custom_title: Option<String> = None;
 		let mut ai_title: Option<String> = None;
 
@@ -1123,7 +1115,7 @@ impl Indexer {
 const LINKED_SELECT: &str = "SELECT d.id, d.project_id, p.agent, p.config_dir, d.key
 	FROM discovered_projects d
 	JOIN profiles p ON p.id = d.profile_id
-	WHERE d.project_id IS NOT NULL AND p.agent != 'opencode'";
+	WHERE d.project_id IS NOT NULL AND p.agent != ?1";
 
 fn map_linked(row: &rusqlite::Row<'_>) -> rusqlite::Result<LinkedDir> {
 	Ok(LinkedDir {
@@ -1137,15 +1129,17 @@ fn map_linked(row: &rusqlite::Row<'_>) -> rusqlite::Result<LinkedDir> {
 
 fn linked_dirs(conn: &Connection, project_id: Option<&str>) -> AppResult<Vec<LinkedDir>> {
 	let sql = match project_id {
-		Some(_) => format!("{LINKED_SELECT} AND d.project_id = ?1"),
+		Some(_) => format!("{LINKED_SELECT} AND d.project_id = ?2"),
 		None => LINKED_SELECT.to_string(),
 	};
 	let mut stmt = conn.prepare(&sql)?;
 	let rows = match project_id {
-		Some(id) => {
-			stmt.query_map(params![id], map_linked)?.collect::<rusqlite::Result<Vec<_>>>()?
-		}
-		None => stmt.query_map([], map_linked)?.collect::<rusqlite::Result<Vec<_>>>()?,
+		Some(id) => stmt
+			.query_map(params![agents::OPENCODE, id], map_linked)?
+			.collect::<rusqlite::Result<Vec<_>>>()?,
+		None => stmt
+			.query_map(params![agents::OPENCODE], map_linked)?
+			.collect::<rusqlite::Result<Vec<_>>>()?,
 	};
 	Ok(rows)
 }

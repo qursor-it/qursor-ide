@@ -118,6 +118,13 @@ pub fn sessions(root: &Path) -> rusqlite::Result<Vec<SessionMeta>> {
 	rows.filter(|r| r.as_ref().is_err() || r.as_ref().is_ok_and(|r| is_session_id(&r.id))).collect()
 }
 
+/// Cheap change marker for the session table: how many rows, and the newest update.
+pub fn stamp(root: &Path) -> rusqlite::Result<(i64, Option<i64>)> {
+	open(root)?.query_row("SELECT COUNT(*), MAX(time_updated) FROM session", [], |r| {
+		Ok((r.get(0)?, r.get(1)?))
+	})
+}
+
 pub fn session_directory(root: &Path, id: &str) -> Option<String> {
 	if !is_session_id(id) {
 		return None;
@@ -134,22 +141,30 @@ pub fn session_directory(root: &Path, id: &str) -> Option<String> {
 
 pub const SESSION_SIGNAL_ENV: &str = "QURSOR_OPENCODE_SESSION_SIGNAL";
 
-/// The first root session from this CLI process, scoped to a private temp directory (ADR-0122).
+/// Wipe the signal folder left by a previous run and write the plugin once (ADR-0122).
+pub fn prepare_signal_dir(dir: &Path) -> std::io::Result<()> {
+	match std::fs::remove_dir_all(dir) {
+		Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+		_ => {}
+	}
+	std::fs::create_dir_all(dir)?;
+	std::fs::write(dir.join(PLUGIN_FILE), include_str!("opencode-session.mjs"))
+}
+
+const PLUGIN_FILE: &str = "qursor-session.mjs";
+
+/// The first root session from this CLI process: one file per terminal in the
+/// app's signal folder, removed when the handle drops (ADR-0122).
 pub struct SessionSignal {
-	_dir: tempfile::TempDir,
 	path: PathBuf,
 	pub plugin: tauri::Url,
 }
 
 impl SessionSignal {
-	pub fn create() -> std::io::Result<Self> {
-		let dir = tempfile::Builder::new().prefix("qursor-opencode-").tempdir()?;
-		let script = dir.path().join("qursor-session.mjs");
-		std::fs::write(&script, include_str!("opencode-session.mjs"))?;
-		let plugin = tauri::Url::from_file_path(&script)
+	pub fn create(dir: &Path) -> std::io::Result<Self> {
+		let plugin = tauri::Url::from_file_path(dir.join(PLUGIN_FILE))
 			.map_err(|_| std::io::Error::other("invalid OpenCode plugin path"))?;
-		let path = dir.path().join("session-id");
-		Ok(Self { _dir: dir, path, plugin })
+		Ok(Self { path: dir.join(format!("session-{}", uuid::Uuid::new_v4())), plugin })
 	}
 
 	pub fn path(&self) -> &Path {
@@ -162,6 +177,12 @@ impl SessionSignal {
 	}
 }
 
+impl Drop for SessionSignal {
+	fn drop(&mut self) {
+		let _ = std::fs::remove_file(&self.path);
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -171,6 +192,25 @@ mod tests {
 		assert!(supports_version(Some("1.18.30")));
 		assert!(!supports_version(Some("2.0.0")));
 		assert!(supports_version(None));
+	}
+
+	#[test]
+	fn signal_files_live_in_one_folder_and_go_with_their_handle() {
+		let tmp = tempfile::tempdir().expect("tmp");
+		let dir = tmp.path().join("opencode");
+		std::fs::create_dir_all(&dir).expect("dir");
+		std::fs::write(dir.join("stale"), "x").expect("stale");
+		prepare_signal_dir(&dir).expect("prepare");
+		assert!(!dir.join("stale").exists());
+		assert!(dir.join(PLUGIN_FILE).is_file());
+		let signal = SessionSignal::create(&dir).expect("signal");
+		assert!(signal.read().is_none());
+		std::fs::write(signal.path(), "ses_abc123").expect("write");
+		assert_eq!(signal.read().as_deref(), Some("ses_abc123"));
+		let path = signal.path().to_path_buf();
+		drop(signal);
+		assert!(!path.exists());
+		assert!(dir.join(PLUGIN_FILE).is_file());
 	}
 
 	#[test]

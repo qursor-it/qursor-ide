@@ -1443,4 +1443,8 @@ fn opencode_indexes_saved_titles_and_removes_archived_sessions_without_writing_i
 	assert!(rows().is_empty(), "an explicit project wins over its ancestor");
 	let nested_rows = db.read(|conn| list_sessions_in(conn, &nested.id)).expect("nested rows");
 	assert_eq!(nested_rows[0].id, "ses_existing");
+
+	factorai_lib::commands::projects::remove_project_in(&db, &nested.id).expect("remove nested");
+	indexer.scan_opencode(true).expect("relink after removal");
+	assert_eq!(rows()[0].id, "ses_existing", "the ancestor project takes the sessions back");
 }

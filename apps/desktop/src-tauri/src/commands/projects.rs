@@ -239,12 +239,22 @@ pub fn remove_project(state: State<'_, AppState>, id: String) -> AppResult<()> {
 	})?;
 	remove_project_in(&state.db, &id)?;
 	if had_opencode {
-		crate::services::indexer::spawn_initial_scan(state.indexer.clone());
+		// Its sessions may now belong to an ancestor project (ADR-0123); only
+		// OpenCode's store needs reading again, not every agent's.
+		let indexer = state.indexer.clone();
+		std::thread::spawn(move || {
+			if let Err(e) = indexer.scan_opencode(true) {
+				tracing::warn!(error = %e, "OpenCode relink after removing a project failed");
+			}
+		});
 	}
 	Ok(())
 }
 
 pub fn remove_project_in(db: &Db, id: &str) -> AppResult<()> {
+	// Built before the transaction (PERF-08), without the project being removed.
+	let mut owners = db.read(checkout_owners)?;
+	owners.forget(id);
 	db.with_mut(|conn| {
 		let tx = conn.transaction()?;
 		// Order matters: `discovered_projects.project_id` is ON DELETE SET NULL,
@@ -262,6 +272,9 @@ pub fn remove_project_in(db: &Db, id: &str) -> AppResult<()> {
 			params![id],
 		)?;
 		tx.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+		// Directories this project owned are unlinked now; they may belong to
+		// another project or, for OpenCode, to an ancestor folder (ADR-0123).
+		reconcile(&tx, &owners)?;
 		tx.commit()?;
 		Ok(())
 	})
@@ -546,6 +559,10 @@ impl CheckoutOwners {
 		for checkout in git::worktree_paths(real_path) {
 			self.0.entry(checkout_key(&checkout)).or_insert_with(|| project_id.to_string());
 		}
+	}
+
+	fn forget(&mut self, project_id: &str) {
+		self.0.retain(|_, owner| owner != project_id);
 	}
 
 	fn get(&self, path: &Path) -> Option<&String> {
