@@ -5057,6 +5057,116 @@ mod tests {
 		assert!(events[0].connected, "a bridge with a client on it must say so");
 		assert_eq!(events[0].session_id, opts(80, 24).session_id);
 	}
+
+	// Baseline for specs/10-performance.md P9: what the in-process PTY path costs
+	// today, so the qursor-core extraction can be compared against it. Run with
+	// `cargo test -p qursor-ide --release --lib baseline_ -- --ignored --nocapture --test-threads=1`.
+	type Stamps = Arc<StdMutex<Vec<(Instant, usize)>>>;
+
+	fn baseline_request() -> PtyRequest {
+		PtyRequest {
+			session_id: None,
+			client_key: Some("baseline".into()),
+			project_id: "baseline".into(),
+			cwd: None,
+			cols: 80,
+			rows: 24,
+			initial_prompt: None,
+			kind: TerminalKind::Shell,
+			agent: None,
+		}
+	}
+
+	/// A manager whose data events are stamped on arrival, and whose exit is too.
+	fn baseline_manager() -> (TerminalManager, Stamps, Arc<StdMutex<Option<Instant>>>) {
+		let data: Stamps = Arc::new(StdMutex::new(Vec::new()));
+		let exit = Arc::new(StdMutex::new(None));
+		let (dc, ec) = (data.clone(), exit.clone());
+		let mgr = TerminalManager::with_callbacks(
+			PathBuf::from(NO_STORE),
+			Arc::new(move |e: TerminalDataEvent| {
+				let n = B64.decode(&e.bytes_b64).map_or(0, |b| b.len());
+				dc.lock().unwrap().push((Instant::now(), n));
+			}),
+			Arc::new(|_| {}),
+			Arc::new(move |_| *ec.lock().unwrap() = Some(Instant::now())),
+		);
+		(mgr, data, exit)
+	}
+
+	#[test]
+	#[ignore = "baseline measure, see specs/10-performance.md P9"]
+	fn baseline_throughput() {
+		const SIZE: usize = 50 * 1024 * 1024;
+		let _spawn = crate::test_support::spawn_lock();
+		let dir = tempfile::TempDir::new().unwrap();
+		let file = dir.path().join("50mb.txt");
+		let line = "0123456789abcdef".repeat(4) + "\n";
+		std::fs::write(&file, line.repeat(SIZE / line.len())).unwrap();
+		let path = file.to_string_lossy().into_owned();
+		#[cfg(windows)]
+		let argv = vec!["cmd".into(), "/c".into(), "type".into(), path];
+		#[cfg(not(windows))]
+		let argv = vec!["/bin/cat".into(), path];
+
+		let (mgr, data, exit) = baseline_manager();
+		let start = Instant::now();
+		mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
+		let end = loop {
+			if let Some(t) = *exit.lock().unwrap() {
+				break t;
+			}
+			assert!(start.elapsed() < Duration::from_secs(120), "the child never exited");
+			std::thread::sleep(Duration::from_millis(5));
+		};
+		let received: usize = data.lock().unwrap().iter().map(|(_, n)| n).sum();
+		// ConPTY re-renders a screen rather than relaying bytes, so only the
+		// POSIX count is an exact claim.
+		#[cfg(not(windows))]
+		assert!(received >= SIZE, "only {received} of {SIZE} bytes arrived");
+		println!("bytes_received={received}");
+		println!("throughput_50mb_ms={}", end.duration_since(start).as_millis());
+		mgr.kill_all();
+	}
+
+	#[test]
+	#[ignore = "baseline measure, see specs/10-performance.md P9"]
+	fn baseline_echo() {
+		let _spawn = crate::test_support::spawn_lock();
+		// The simplest child that echoes what it is typed: `cat` on a tty, the
+		// console's own line editor under ConPTY.
+		#[cfg(windows)]
+		let argv = vec!["cmd".into(), "/q".into()];
+		#[cfg(not(windows))]
+		let argv = vec!["/bin/cat".into()];
+
+		let (mgr, data, _exit) = baseline_manager();
+		let id = mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
+		let mut lat = Vec::new();
+		let settle = |data: &Stamps| {
+			// Let the banner and the previous echo drain before the next probe.
+			std::thread::sleep(Duration::from_millis(100));
+			data.lock().unwrap().len()
+		};
+		settle(&data);
+		for _ in 0..200 {
+			let seen = settle(&data);
+			let t0 = Instant::now();
+			mgr.write(&id, b"a").expect("write");
+			let at = loop {
+				if let Some((t, _)) = data.lock().unwrap().get(seen) {
+					break *t;
+				}
+				assert!(t0.elapsed() < Duration::from_secs(5), "no echo");
+				std::hint::spin_loop();
+			};
+			lat.push(at.saturating_duration_since(t0).as_micros());
+		}
+		lat.sort_unstable();
+		println!("echo_p50_us={}", lat[lat.len() / 2]);
+		println!("echo_p95_us={}", lat[lat.len() * 95 / 100]);
+		mgr.kill_all();
+	}
 }
 #[cfg(all(test, windows))]
 mod windows_tests {

@@ -1207,3 +1207,26 @@ not exist. The per-finding numbers — the ones that show what each change bough
   pool and a streaming parser the code does not have; both are corrected
   when PERF-02 and PERF-03 land, and until then this spec is the one that is
   right about them.
+
+## P9 — qursor-core
+
+Baseline of the in-process PTY path, taken before the terminal manager moves
+into a separate process. The same two measures are run again against the core
+and compared with these.
+
+- **Machine:** Windows 11 Pro (native, ConPTY), Intel Core Ultra 7 155H,
+  release build.
+- **Run:** `cargo test -p qursor-ide --release --lib baseline_ -- --ignored --nocapture --test-threads=1`
+  (`baseline_throughput` and `baseline_echo` in `services/terminal.rs`).
+- **Method:** throughput is spawn to the exit event for `cmd /c type` of a
+  50 MB file; echo is 200 single-byte writes to an interactive `cmd`, each timed
+  from `write` to the first data event that follows, p95 of the 200.
+
+| Measure | Run 1 | Run 2 | Run 3 | Median |
+|---|---|---|---|---|
+| `throughput_50mb_ms` | 24453 | 28645 | 31279 | **28645** |
+| `echo_p95_us` | 14620 | 14552 | 14676 | **14620** |
+
+ConPTY re-renders rather than relays, so about 53.2 MB reach the data events for
+the 50 MB file; the figure is not comparable with a POSIX run. The echo number
+includes the flush window, since that is what the renderer sees today.
