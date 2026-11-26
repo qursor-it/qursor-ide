@@ -15,13 +15,10 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use base64::engine::general_purpose::STANDARD as B64;
-use base64::Engine;
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
@@ -54,6 +51,7 @@ use crate::services::agent_cli::find_agent_binary;
 use crate::services::agent_tools::{
 	self, delegations::Delegations, AgentTools, AgentToolsServer, DelegationTools,
 };
+use crate::services::event_sink::{CoreEvent, EventSink};
 use crate::services::ide::protocol::{self, Mcp, Mention};
 use crate::services::ide::scope;
 use crate::services::ide::server::IdeServer;
@@ -214,11 +212,10 @@ pub struct TerminalStatusDto {
 	pub agent: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct TerminalDataEvent {
 	pub id: TerminalId,
-	pub bytes_b64: String,
+	pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -879,78 +876,71 @@ pub struct TerminalManager {
 	remote_files: Option<Arc<crate::services::ssh::sftp::RemoteFiles>>,
 	/// The tmux session of each persistent SSH tab (F49), by terminal id.
 	tmux: Arc<DashMap<TerminalId, String>>,
+	/// What the bridge and tool servers' accept loops run on; the caller of
+	/// `spawn` may be a plain thread with no runtime of its own.
+	runtime: tokio::runtime::Handle,
+}
+
+/// The runtime this manager's servers live on: the caller's, which in the app
+/// is Tauri's (entered in `run`) and in the core is its own. Tests have none per
+/// thread, so they share one.
+fn current_runtime() -> tokio::runtime::Handle {
+	#[cfg(test)]
+	return tokio::runtime::Handle::try_current()
+		.unwrap_or_else(|_| crate::test_support::runtime().handle().clone());
+	#[cfg(not(test))]
+	tokio::runtime::Handle::current()
 }
 
 impl TerminalManager {
-	pub fn for_app(app: AppHandle, claude_dir: PathBuf, ui: Arc<UiState>) -> Self {
-		let app_data = app.clone();
-		let app_status = app.clone();
-		let app_exit = app.clone();
-		let app_ide = app.clone();
-		let app_ide_status = app.clone();
-		let app_adopted = app.clone();
-		let app_worktree = app.clone();
-		let app_delegations = app.clone();
-		let app_session_start = app;
+	pub fn new(sink: Arc<dyn EventSink>, claude_dir: PathBuf, ui: Arc<UiState>) -> Self {
 		// One store per app; it announces every change for the renderer (F50).
 		let delegations = Arc::new(Delegations::default());
-		delegations.set_on_change(Arc::new(move |project| {
-			let _ = app_delegations
-				.emit("delegations:changed", serde_json::json!({ "projectId": project }));
+		let s = sink.clone();
+		delegations.set_on_change(Arc::new(move |project_id| {
+			s.emit(CoreEvent::DelegationsChanged { project_id: project_id.to_string() });
 		}));
 		let adopted_delegations = delegations.clone();
-		Self {
-			terminals: Arc::new(DashMap::new()),
+		let mut mgr = Self::with_callbacks(
 			claude_dir,
-			codex_dir: agents::ambient_dir(codex_desc()),
-			opencode_dir: agents::ambient_dir(opencode_desc()),
-			ui,
-			on_ide_open: Arc::new(move |e| {
-				let _ = app_ide.emit("ide:open-file", e);
-			}),
-			on_ide_status: Arc::new(move |e| {
-				let _ = app_ide_status.emit("ide:status", e);
-			}),
-			on_adopted: Arc::new(move |e| {
+			{
+				let s = sink.clone();
+				Arc::new(move |e| {
+					s.emit(CoreEvent::TerminalData { terminal_id: e.id, bytes: e.bytes })
+				})
+			},
+			{
+				let s = sink.clone();
+				Arc::new(move |e| s.emit(CoreEvent::TerminalStatus(e)))
+			},
+			{
+				let s = sink.clone();
+				Arc::new(move |e| s.emit(CoreEvent::TerminalExit(e)))
+			},
+		);
+		mgr.ui = ui;
+		mgr.delegations = delegations;
+		mgr.on_ide_open = {
+			let s = sink.clone();
+			Arc::new(move |e| s.emit(CoreEvent::IdeOpenFile(e)))
+		};
+		mgr.on_ide_status = {
+			let s = sink.clone();
+			Arc::new(move |e| s.emit(CoreEvent::IdeStatus(e)))
+		};
+		mgr.on_adopted = {
+			let s = sink.clone();
+			Arc::new(move |e| {
 				adopted_delegations.adopted(&e.provisional, &e.adopted);
-				let _ = app_adopted.emit("session:adopted", e);
-			}),
-			on_data: Arc::new(move |e| {
-				let _ = app_data.emit("terminal:data", e);
-			}),
-			on_status: Arc::new(move |e| {
-				let _ = app_status.emit("terminal:status", e);
-			}),
-			delegations,
-			confirm_delegations: None,
-			usage_limits: None,
-			on_exit: Arc::new(move |e| {
-				let _ = app_exit.emit("terminal:exit", e);
-			}),
-			binary_override: None,
-			user_binary: None,
-			agent_of: None,
-			session_cwd: None,
-			session_key: None,
-			profile_dir: None,
-			worktree_store: None,
-			routine_store: None,
-			canvas_store: None,
-			usage_sink_dir: None,
-			opencode_signal_dir: None,
-			usage_statusline_enabled: None,
-			on_worktree: Arc::new(move |e| {
-				let _ = app_worktree.emit("session:worktree", e);
-			}),
-			on_session_start: Arc::new(move |e| {
-				let _ = app_session_start.emit("agent-session:start", e);
-			}),
-			agent_policy: None,
-			on_agent_run: Arc::new(|_| {}),
-			server_label: None,
-			remote_files: None,
-			tmux: Arc::new(DashMap::new()),
-		}
+				s.emit(CoreEvent::SessionAdopted(e));
+			})
+		};
+		mgr.on_worktree = {
+			let s = sink.clone();
+			Arc::new(move |e| s.emit(CoreEvent::SessionWorktree(e)))
+		};
+		mgr.on_session_start = Arc::new(move |e| sink.emit(CoreEvent::AgentSessionStart(e)));
+		mgr
 	}
 
 	pub fn with_callbacks(
@@ -993,6 +983,7 @@ impl TerminalManager {
 			server_label: None,
 			remote_files: None,
 			tmux: Arc::new(DashMap::new()),
+			runtime: current_runtime(),
 		}
 	}
 
@@ -1004,8 +995,8 @@ impl TerminalManager {
 		self.server_label.as_ref().map_or_else(|| server_id.to_string(), |f| f(server_id))
 	}
 
-	/// Watch adoptions. For tests only — production wires this to a Tauri
-	/// event in `for_app`.
+	/// Watch adoptions. For tests only — production wires this to the sink
+	/// in `new`.
 	#[cfg(test)]
 	pub fn set_adopted_cb(&mut self, cb: AdoptedCb) {
 		self.on_adopted = cb;
@@ -1178,7 +1169,7 @@ impl TerminalManager {
 	}
 
 	/// Watch the bridge's attach/detach edges. For tests only — production wires
-	/// this to a Tauri event in `for_app`.
+	/// this to the sink in `new`.
 	#[cfg(test)]
 	pub fn set_ide_status_cb(&mut self, cb: IdeStatusCb) {
 		self.on_ide_status = cb;
@@ -1600,6 +1591,7 @@ impl TerminalManager {
 			.with_terminals(Arc::new(self.session_terminals(session_id)))
 			.with_delegations(delegation_tools)
 			.with_usage_limits(self.usage_limits.clone());
+		let _rt = self.runtime.enter();
 		AgentToolsServer::start(Arc::new(move |text| tools.handle(text)))
 	}
 
@@ -1687,6 +1679,7 @@ impl TerminalManager {
 		let on_status = self.on_ide_status.clone();
 		let status_session = session_id.to_string();
 
+		let _rt = self.runtime.enter();
 		IdeServer::start(
 			claude_dir,
 			&cwd.to_string_lossy(),
@@ -2952,9 +2945,9 @@ fn set_status(
 
 fn emit_data(id: &TerminalId, bytes: &[u8], on_data: &DataCb) {
 	// Split very large chunks into FLUSH_BYTES-sized pieces so a single
-	// emit doesn't pin the renderer with a multi-MB base64 string.
+	// emit doesn't pin the renderer with a multi-MB payload.
 	for piece in bytes.chunks(FLUSH_BYTES) {
-		let payload = TerminalDataEvent { id: id.clone(), bytes_b64: B64.encode(piece) };
+		let payload = TerminalDataEvent { id: id.clone(), bytes: piece.to_vec() };
 		(on_data)(payload);
 	}
 }
@@ -3149,6 +3142,73 @@ mod tests {
 		assert!(!seeds_working(TerminalKind::Agent, codex, Some("hi")));
 	}
 
+	#[derive(Default)]
+	struct RecordingSink(StdMutex<Vec<CoreEvent>>);
+
+	impl EventSink for RecordingSink {
+		fn emit(&self, event: CoreEvent) {
+			self.0.lock().unwrap().push(event);
+		}
+	}
+
+	#[test]
+	fn recording_sink_receives_terminal_data() {
+		let _spawn = crate::test_support::spawn_lock();
+		let sink = Arc::new(RecordingSink::default());
+		let mgr = TerminalManager::new(
+			sink.clone(),
+			PathBuf::from(NO_STORE),
+			Arc::new(UiState::default()),
+		);
+		let argv: Vec<String> = if cfg!(windows) {
+			["cmd", "/c", "echo hi"].map(String::from).to_vec()
+		} else {
+			["printf", "hi"].map(String::from).to_vec()
+		};
+		mgr.spawn_inner(
+			PtyRequest {
+				session_id: None,
+				client_key: Some("sink".into()),
+				project_id: "sink".into(),
+				cwd: None,
+				cols: 80,
+				rows: 24,
+				initial_prompt: None,
+				kind: TerminalKind::Shell,
+				agent: None,
+			},
+			Some(argv),
+		)
+		.unwrap();
+
+		let exits = |events: &[CoreEvent]| {
+			events.iter().filter(|e| matches!(e, CoreEvent::TerminalExit(_))).count()
+		};
+		let data = |events: &[CoreEvent]| -> Vec<u8> {
+			events
+				.iter()
+				.filter_map(|e| match e {
+					CoreEvent::TerminalData { bytes, .. } => Some(bytes.clone()),
+					_ => None,
+				})
+				.flatten()
+				.collect()
+		};
+		// Both, not just the exit: on ConPTY the exit can be reported before the
+		// reader has drained the last bytes.
+		let deadline = Instant::now() + Duration::from_secs(10);
+		loop {
+			let events = sink.0.lock().unwrap();
+			if exits(&events) > 0 && data(&events).windows(2).any(|w| w == b"hi") {
+				break;
+			}
+			drop(events);
+			assert!(Instant::now() < deadline, "no output and exit from the child");
+			std::thread::sleep(Duration::from_millis(20));
+		}
+		assert_eq!(exits(&sink.0.lock().unwrap()), 1);
+	}
+
 	fn make_manager() -> (TerminalManager, DataLog, ExitLog) {
 		make_manager_in(PathBuf::from(NO_STORE))
 	}
@@ -3205,7 +3265,7 @@ mod tests {
 			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
 		};
 		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
-		let (master, child) = tauri::async_runtime::block_on(async {
+		let (master, child) = crate::test_support::block_on(async {
 			let fp = match ssh::connect(&t, &known, None).await {
 				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
 				_ => panic!("expected an unknown host first"),
@@ -3228,10 +3288,7 @@ mod tests {
 				.unwrap()
 				.iter()
 				.filter(|e| e.id == id)
-				.map(|e| {
-					String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default())
-						.into_owned()
-				})
+				.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
 				.collect();
 			out.contains("SSH_42")
 		});
@@ -3277,7 +3334,7 @@ mod tests {
 			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
 		};
 		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
-		let (master, child) = tauri::async_runtime::block_on(async {
+		let (master, child) = crate::test_support::block_on(async {
 			let fp = match ssh::connect(&t, &known, None).await {
 				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
 				_ => panic!("expected an unknown host first"),
@@ -3345,7 +3402,7 @@ mod tests {
 			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
 		};
 		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
-		let (master, child) = tauri::async_runtime::block_on(async {
+		let (master, child) = crate::test_support::block_on(async {
 			let fp = match ssh::connect(&t, &known, None).await {
 				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
 				_ => panic!("expected an unknown host first"),
@@ -3385,7 +3442,7 @@ mod tests {
 			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
 		};
 		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
-		let (master, child) = tauri::async_runtime::block_on(async {
+		let (master, child) = crate::test_support::block_on(async {
 			let fp = match ssh::connect(&t, &known, None).await {
 				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
 				_ => panic!("expected an unknown host first"),
@@ -3448,7 +3505,7 @@ mod tests {
 			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
 		};
 		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
-		let (master, child) = tauri::async_runtime::block_on(async {
+		let (master, child) = crate::test_support::block_on(async {
 			let fp = match ssh::connect(&t, &known, None).await {
 				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
 				_ => panic!("expected an unknown host first"),
@@ -3567,7 +3624,7 @@ mod tests {
 		};
 		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
 		let name = format!("qursor-test{}", std::process::id());
-		let conn = tauri::async_runtime::block_on(async {
+		let conn = crate::test_support::block_on(async {
 			let fp = match ssh::connect(&t, &known, None).await {
 				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
 				_ => panic!("expected an unknown host first"),
@@ -3575,7 +3632,7 @@ mod tests {
 			Arc::new(ssh::connect(&t, &known, Some(fp)).await.expect("connect"))
 		});
 		let open = |mgr: &TerminalManager| {
-			let ch = tauri::async_runtime::block_on(ssh::open_shell(
+			let ch = crate::test_support::block_on(ssh::open_shell(
 				&conn,
 				100,
 				30,
@@ -3684,9 +3741,7 @@ mod tests {
 			.unwrap()
 			.iter()
 			.filter(|e| e.id == id)
-			.map(|e| {
-				String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default()).into_owned()
-			})
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
 			.collect();
 		let merged = chunks.join("");
 		assert!(merged.contains("HELLO_PTY"), "expected HELLO_PTY in stream, got: {merged}");
@@ -3733,9 +3788,7 @@ mod tests {
 			.unwrap()
 			.iter()
 			.filter(|e| e.id == id)
-			.map(|e| {
-				String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default()).into_owned()
-			})
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
 			.collect();
 
 		let login = crate::services::shell_path::child_path();
@@ -3794,10 +3847,7 @@ mod tests {
 					.unwrap()
 					.iter()
 					.filter(|e| e.id == id)
-					.map(|e| {
-						String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default())
-							.into_owned()
-					})
+					.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
 					.collect();
 				if seen.contains(&expected) {
 					break;
@@ -3892,9 +3942,7 @@ mod tests {
 			.unwrap()
 			.iter()
 			.filter(|e| e.id == id)
-			.map(|e| {
-				String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default()).into_owned()
-			})
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
 			.collect();
 
 		assert!(seen.contains("CFG[]"), "expected an empty CLAUDE_CONFIG_DIR, got: {seen}");
@@ -3931,9 +3979,7 @@ mod tests {
 			.unwrap()
 			.iter()
 			.filter(|e| e.id == id)
-			.map(|e| {
-				String::from_utf8_lossy(&B64.decode(&e.bytes_b64).unwrap_or_default()).into_owned()
-			})
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
 			.collect::<Vec<_>>()
 			.join("");
 		assert!(merged.contains("GOT:hello"), "expected GOT:hello in stream, got: {merged:?}");
@@ -4167,9 +4213,7 @@ mod tests {
 		let mgr = TerminalManager::with_callbacks(
 			PathBuf::from("/nonexistent-claude-dir"),
 			Arc::new(move |e: TerminalDataEvent| {
-				if let Ok(bytes) = B64.decode(e.bytes_b64) {
-					dc.lock().unwrap().extend_from_slice(&bytes);
-				}
+				dc.lock().unwrap().extend_from_slice(&e.bytes);
 			}),
 			Arc::new(move |e| sc.lock().unwrap().push(e)),
 			Arc::new(|_| {}),
@@ -4731,6 +4775,7 @@ mod tests {
 		let (mut mgr, _data, _exit) = make_manager();
 		mgr.set_binary(PathBuf::from("/bin/echo"));
 		let o = opts(80, 24);
+		let _rt = crate::test_support::runtime().enter();
 		let tools = AgentToolsServer::start(Arc::new(|_| None)).expect("bind");
 
 		let argv = mgr
@@ -5088,7 +5133,7 @@ mod tests {
 		let mgr = TerminalManager::with_callbacks(
 			PathBuf::from(NO_STORE),
 			Arc::new(move |e: TerminalDataEvent| {
-				let n = B64.decode(&e.bytes_b64).map_or(0, |b| b.len());
+				let n = e.bytes.len();
 				dc.lock().unwrap().push((Instant::now(), n));
 			}),
 			Arc::new(|_| {}),
@@ -5256,7 +5301,7 @@ mod windows_tests {
 			.unwrap()
 			.iter()
 			.filter(|event| event.id == id)
-			.flat_map(|event| B64.decode(&event.bytes_b64).unwrap_or_default())
+			.flat_map(|event| event.bytes.clone())
 			.collect()
 	}
 

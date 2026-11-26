@@ -12,8 +12,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::services::hash::sha256_hex;
 use crate::services::ide::scope::resolve_within;
-use crate::services::intelligence::sha256_hex;
 
 /// Folder under the project root that holds the canvases.
 pub const DIR: &str = "canvas";

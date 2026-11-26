@@ -157,12 +157,12 @@ const PLUGIN_FILE: &str = "qursor-session.mjs";
 /// app's signal folder, removed when the handle drops (ADR-0122).
 pub struct SessionSignal {
 	path: PathBuf,
-	pub plugin: tauri::Url,
+	pub plugin: url::Url,
 }
 
 impl SessionSignal {
 	pub fn create(dir: &Path) -> std::io::Result<Self> {
-		let plugin = tauri::Url::from_file_path(dir.join(PLUGIN_FILE))
+		let plugin = url::Url::from_file_path(dir.join(PLUGIN_FILE))
 			.map_err(|_| std::io::Error::other("invalid OpenCode plugin path"))?;
 		Ok(Self { path: dir.join(format!("session-{}", uuid::Uuid::new_v4())), plugin })
 	}

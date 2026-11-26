@@ -56,7 +56,7 @@ impl Pool {
 	/// terminals report as an exit.
 	pub fn disconnect(&self, server_id: &str) {
 		if let Some((_, conn)) = self.conns.remove(server_id) {
-			tauri::async_runtime::spawn(async move {
+			tokio::spawn(async move {
 				let _ = conn.disconnect(russh::Disconnect::ByApplication, "", "en").await;
 			});
 		}

@@ -223,21 +223,24 @@ impl RemoteFiles {
 
 	/// Read a text file for an agent, and remember what it looked like.
 	pub fn agent_read(&self, session: &str, server_id: &str, path: &str) -> AppResult<String> {
-		let (text, st) = tauri::async_runtime::block_on(self.with(server_id, |_, s| async move {
-			let st = stamp(&s, path)
-				.await?
-				.ok_or_else(|| AppError::NotFound(format!("{path} does not exist")))?;
-			if st.0 > MAX_TEXT {
-				return Err(AppError::InvalidInput(format!(
-					"{path} is {} bytes; read it with a command instead",
-					st.0
-				)));
-			}
-			let bytes = s.read(path).await.map_err(sftp_err)?;
-			let text = String::from_utf8(bytes)
-				.map_err(|_| AppError::InvalidInput(format!("{path} is not text")))?;
-			Ok((text, st))
-		}))?;
+		let (text, st) = tokio::runtime::Handle::current().block_on(self.with(
+			server_id,
+			|_, s| async move {
+				let st = stamp(&s, path)
+					.await?
+					.ok_or_else(|| AppError::NotFound(format!("{path} does not exist")))?;
+				if st.0 > MAX_TEXT {
+					return Err(AppError::InvalidInput(format!(
+						"{path} is {} bytes; read it with a command instead",
+						st.0
+					)));
+				}
+				let bytes = s.read(path).await.map_err(sftp_err)?;
+				let text = String::from_utf8(bytes)
+					.map_err(|_| AppError::InvalidInput(format!("{path} is not text")))?;
+				Ok((text, st))
+			},
+		))?;
 		self.reads.insert((session.into(), server_id.into(), path.into()), Some(st));
 		Ok(text)
 	}
@@ -253,7 +256,7 @@ impl RemoteFiles {
 	) -> AppResult<()> {
 		let key = (session.to_string(), server_id.to_string(), path.to_string());
 		let read = self.reads.get(&key).map(|r| *r);
-		tauri::async_runtime::block_on(self.with(server_id, |conn, s| async move {
+		tokio::runtime::Handle::current().block_on(self.with(server_id, |conn, s| async move {
 			let now = stamp(&s, path).await?;
 			match (now, read) {
 				(None, _) => {}
@@ -272,9 +275,8 @@ impl RemoteFiles {
 			write_atomic(&conn, &s, path, content.as_bytes()).await
 		}))?;
 		// The new content is what this session now knows.
-		let st = tauri::async_runtime::block_on(
-			self.with(server_id, |_, s| async move { stamp(&s, path).await }),
-		)?;
+		let st = tokio::runtime::Handle::current()
+			.block_on(self.with(server_id, |_, s| async move { stamp(&s, path).await }))?;
 		self.reads.insert(key, st);
 		Ok(())
 	}
@@ -289,7 +291,7 @@ impl RemoteFiles {
 			"tmux display-message -p -t {} '#{{alternate_on}} #{{pane_current_command}}'",
 			quote(session)
 		);
-		let out = tauri::async_runtime::block_on(
+		let out = tokio::runtime::Handle::current().block_on(
 			self.with(server_id, |conn, _| async move { exec_output(&conn, &cmd).await }),
 		)?;
 		Ok(tmux_verdict(&out))
@@ -298,9 +300,8 @@ impl RemoteFiles {
 	/// A tmux session's text history, for reading a command's output back (F49).
 	pub fn tmux_capture(&self, server_id: &str, session: &str) -> AppResult<String> {
 		let cmd = format!("tmux capture-pane -p -J -S -3000 -t {}", quote(session));
-		tauri::async_runtime::block_on(
-			self.with(server_id, |conn, _| async move { exec_output(&conn, &cmd).await }),
-		)
+		tokio::runtime::Handle::current()
+			.block_on(self.with(server_id, |conn, _| async move { exec_output(&conn, &cmd).await }))
 	}
 
 	/// The server has tmux (F49): a persistent tab is only tmux-backed if so.
@@ -332,8 +333,9 @@ impl RemoteFiles {
 		let read = self.reads.get(&key).map(|r| *r).ok_or_else(|| {
 			AppError::InvalidInput(format!("read {path} with file_read before editing it"))
 		})?;
-		let (count, st) =
-			tauri::async_runtime::block_on(self.with(server_id, |conn, s| async move {
+		let (count, st) = tokio::runtime::Handle::current().block_on(self.with(
+			server_id,
+			|conn, s| async move {
 				if stamp(&s, path).await? != read {
 					return Err(AppError::InvalidInput(format!(
 						"{path} changed since you read it (someone else edited it); read it again"
@@ -358,7 +360,8 @@ impl RemoteFiles {
 				let edited = if all { text.replace(old, new) } else { text.replacen(old, new, 1) };
 				write_atomic(&conn, &s, path, edited.as_bytes()).await?;
 				Ok((count, stamp(&s, path).await?))
-			}))?;
+			},
+		))?;
 		self.reads.insert(key, st);
 		Ok(count)
 	}
@@ -407,7 +410,7 @@ mod tests {
 			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
 		};
 		// Trust the key once, the way the human does.
-		tauri::async_runtime::block_on(async {
+		crate::test_support::block_on(async {
 			if let Err(SshError::UnknownHost { fingerprint }) = connect(&target, &known, None).await
 			{
 				connect(&target, &known, Some(fingerprint)).await.expect("trust");
@@ -437,7 +440,7 @@ mod tests {
 		}
 		let path = file.to_string_lossy().to_string();
 
-		let listing = tauri::async_runtime::block_on(files.with("s", |_, s| {
+		let listing = crate::test_support::block_on(files.with("s", |_, s| {
 			let p = dir.to_string_lossy().to_string();
 			async move { list(&s, &p).await }
 		}))

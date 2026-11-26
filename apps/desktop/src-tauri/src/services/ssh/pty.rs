@@ -63,7 +63,7 @@ pub fn bridge(
 	let stop = Arc::new(Notify::new());
 	let closer = Closer { write: write_half.clone(), stop: stop.clone() };
 	let writer = write_half.clone();
-	tauri::async_runtime::spawn(async move {
+	tokio::spawn(async move {
 		while let Some(c) = ctl_rx.recv().await {
 			let ok = match c {
 				Ctl::Data(d) => writer.data(&d[..]).await.is_ok(),
@@ -76,7 +76,7 @@ pub fn bridge(
 			}
 		}
 	});
-	tauri::async_runtime::spawn(async move {
+	tokio::spawn(async move {
 		let mut code = None;
 		loop {
 			let msg = tokio::select! {
@@ -111,7 +111,7 @@ pub fn bridge(
 /// its session), which is the remote half of kill-on-quit (ADR-0005).
 fn close(c: &Closer) {
 	let c = c.clone();
-	tauri::async_runtime::spawn(async move {
+	tokio::spawn(async move {
 		let _ = c.write.close().await;
 		c.stop.notify_one();
 	});

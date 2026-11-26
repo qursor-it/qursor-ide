@@ -24,7 +24,7 @@ use crate::models::{
 	ProblemKind, Server, ServerFileProblem, ServerFolder, ServerInput, ServerSource, SidebarRow,
 	SshConfigHost, Tunnel,
 };
-use crate::services::intelligence::sha256_hex;
+use crate::services::hash::sha256_hex;
 use crate::services::server_files::{self as files, FileFolder, FileServer, ScanProject};
 use crate::services::vault::Vault;
 

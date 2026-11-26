@@ -4317,6 +4317,7 @@ dependencies = [
  "trash",
  "tungstenite",
  "ureq",
+ "url",
  "uuid",
  "vt100",
  "webkit2gtk",

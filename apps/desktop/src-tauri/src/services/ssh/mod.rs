@@ -495,7 +495,7 @@ mod tests {
 		use std::io::{Read, Write};
 		let d = test_sshd::start();
 		let (t, known) = target(&d);
-		tauri::async_runtime::block_on(async {
+		crate::test_support::block_on(async {
 			let fingerprint = match connect(&t, &known, None).await {
 				Err(SshError::UnknownHost { fingerprint }) => fingerprint,
 				Err(e) => panic!("expected an unknown host, got {e}"),
@@ -542,7 +542,7 @@ mod tests {
 		)
 		.expect("known_hosts");
 		let res =
-			tauri::async_runtime::block_on(connect(&t, &known, Some("SHA256:anything".into())));
+			crate::test_support::block_on(connect(&t, &known, Some("SHA256:anything".into())));
 		assert!(
 			matches!(res, Err(SshError::HostKeyChanged { .. })),
 			"a changed key must never connect"
@@ -562,7 +562,7 @@ mod tests {
 			format!("[127.0.0.1]:{} {}\n", d.port, test_sshd::public_key_line(&rsa)),
 		)
 		.expect("known_hosts");
-		let res = tauri::async_runtime::block_on(connect(&t, &known, None));
+		let res = crate::test_support::block_on(connect(&t, &known, None));
 		assert!(matches!(res, Err(SshError::HostKeyChanged { .. })), "got {:?}", res.err());
 	}
 

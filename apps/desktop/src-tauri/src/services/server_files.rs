@@ -12,8 +12,8 @@ use serde_json::{json, Map, Value};
 use crate::error::{AppError, AppResult};
 use crate::models::{ProblemKind, Server, ServerFileProblem, ServerInput, ServerSource, Tunnel};
 use crate::services::canvas::slugify;
+use crate::services::hash::sha256_hex;
 use crate::services::ide::scope::resolve_within;
-use crate::services::intelligence::sha256_hex;
 
 const DIR: &str = "servers";
 const EXT: &str = "server";

@@ -20,7 +20,7 @@ use crate::error::{AppError, AppResult};
 
 struct Running {
 	server_id: String,
-	task: tauri::async_runtime::JoinHandle<()>,
+	task: tokio::task::JoinHandle<()>,
 }
 
 #[derive(Default)]
@@ -61,7 +61,7 @@ impl Tunnels {
 			.map_err(|e| AppError::Io(format!("cannot listen on 127.0.0.1:{local_port}: {e}")))?;
 		let conn = Arc::new(conn);
 		let (running, id) = (self.running.clone(), tunnel_id.to_string());
-		let task = tauri::async_runtime::spawn(async move {
+		let task = tokio::spawn(async move {
 			// Owned by this task: aborting it (stop) drops the set, which aborts
 			// every connection still being forwarded.
 			let mut open = tokio::task::JoinSet::new();
@@ -128,7 +128,7 @@ mod tests {
 			user: d.user.clone(),
 			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
 		};
-		tauri::async_runtime::block_on(async {
+		crate::test_support::block_on(async {
 			let fp = match connect(&target, &known, None).await {
 				Err(SshError::UnknownHost { fingerprint }) => fingerprint,
 				_ => panic!("expected an unknown host"),

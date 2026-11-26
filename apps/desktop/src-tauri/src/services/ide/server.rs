@@ -88,7 +88,7 @@ pub struct IdeServer {
 	/// that reason on the PTY side; this is its counterpart.
 	attached: Arc<AtomicBool>,
 	claude_dir: PathBuf,
-	task: tauri::async_runtime::JoinHandle<()>,
+	task: tokio::task::JoinHandle<()>,
 }
 
 impl IdeServer {
@@ -136,7 +136,7 @@ impl IdeServer {
 		let accept_outbound = outbound.clone();
 
 		let accept_token = token.clone();
-		let task = tauri::async_runtime::spawn(async move {
+		let task = tokio::spawn(async move {
 			let listener = match TcpListener::from_std(std_listener) {
 				Ok(l) => l,
 				Err(e) => {
@@ -215,7 +215,7 @@ async fn accept_loop(
 		let handler = handler.clone();
 		let on_client = on_client.clone();
 		let rx = outbound.subscribe();
-		tauri::async_runtime::spawn(async move {
+		tokio::spawn(async move {
 			if let Err(e) = serve(stream, token, handler, on_client, rx).await {
 				debug!(%peer, error = %e, "ide bridge connection ended");
 			}

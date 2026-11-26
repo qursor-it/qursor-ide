@@ -22,6 +22,7 @@ use serde::Serialize;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{Routine, RoutineInput};
+use crate::services::event_sink::{CoreEvent, EventSink};
 
 /// How often the runner asks "what is due?".
 pub const TICK_SECS: u64 = 30;
@@ -518,17 +519,6 @@ pub fn set_enabled(
 
 // ------------------------------------------------------- writes that announce
 
-/// `routines:changed` — a project's list is no longer what the renderer has.
-///
-/// Carries the project rather than the routine because every reader of it is a
-/// list keyed by project, and a client that has to fetch anyway gains nothing
-/// from knowing which row moved.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RoutinesChangedEvent {
-	pub project_id: String,
-}
-
 /// Write, then say so.
 ///
 /// **Every routine write goes through this layer, whichever caller made it**
@@ -541,37 +531,39 @@ pub struct RoutinesChangedEvent {
 ///
 /// Write-then-emit, in that order and never the other — an event ahead of its
 /// row is a fact the next reload contradicts.
-fn announce(app: &tauri::AppHandle, project_id: &str) {
-	use tauri::Emitter;
-	let _ =
-		app.emit("routines:changed", RoutinesChangedEvent { project_id: project_id.to_string() });
+///
+/// `routines:changed` carries the project rather than the routine because every
+/// reader of it is a list keyed by project, and a client that has to fetch
+/// anyway gains nothing from knowing which row moved.
+fn announce(sink: &dyn EventSink, project_id: &str) {
+	sink.emit(CoreEvent::RoutinesChanged { project_id: project_id.to_string() });
 }
 
 /// Create a routine and tell the renderer. `author` is the session that asked,
 /// or `None` for a human at the editor.
 pub fn create_and_announce(
 	db: &crate::db::Db,
-	app: &tauri::AppHandle,
+	sink: &dyn EventSink,
 	input: &RoutineInput,
 	author: Option<&str>,
 	now_ms: i64,
 ) -> AppResult<Routine> {
 	let routine = db.with(|conn| create(conn, input, author, now_ms))?;
-	announce(app, &routine.project_id);
+	announce(sink, &routine.project_id);
 	Ok(routine)
 }
 
 /// Change part of a routine and tell the renderer.
 pub fn update_and_announce(
 	db: &crate::db::Db,
-	app: &tauri::AppHandle,
+	sink: &dyn EventSink,
 	id: &str,
 	patch: &RoutinePatch,
 	author: Option<&str>,
 	now_ms: i64,
 ) -> AppResult<Routine> {
 	let routine = db.with(|conn| update_partial(conn, id, patch, author, now_ms))?;
-	announce(app, &routine.project_id);
+	announce(sink, &routine.project_id);
 	Ok(routine)
 }
 
@@ -581,7 +573,7 @@ pub fn update_and_announce(
 /// tool call.
 pub fn delete_and_announce(
 	db: &crate::db::Db,
-	app: &tauri::AppHandle,
+	sink: &dyn EventSink,
 	id: &str,
 	now_ms: i64,
 ) -> AppResult<()> {
@@ -590,7 +582,7 @@ pub fn delete_and_announce(
 	let project_id = db.with(|conn| get(conn, id, now_ms)).map(|r| r.project_id).ok();
 	db.with(|conn| delete(conn, id))?;
 	if let Some(project_id) = project_id {
-		announce(app, &project_id);
+		announce(sink, &project_id);
 	}
 	Ok(())
 }
@@ -785,7 +777,7 @@ pub fn numeric_setting(conn: &Connection, key: crate::models::SettingKey, defaul
 /// before the webview has loaded any listeners at all.
 pub struct Runner {
 	db: crate::db::Db,
-	app: tauri::AppHandle,
+	sink: std::sync::Arc<dyn EventSink>,
 	/// The live PTYs, asked for rather than held: the runner needs an answer
 	/// from `TerminalManager` and a count from the database, and owning either
 	/// would make it the wrong kind of object.
@@ -890,10 +882,10 @@ impl RunNowResult {
 impl Runner {
 	pub fn new(
 		db: crate::db::Db,
-		app: tauri::AppHandle,
+		sink: std::sync::Arc<dyn EventSink>,
 		live: std::sync::Arc<dyn Fn() -> HashSet<String> + Send + Sync>,
 	) -> Self {
-		Self { db, app, live }
+		Self { db, sink, live }
 	}
 
 	/// Start ticking. The first tick is immediate — that is catch-up, which is
@@ -1017,10 +1009,9 @@ impl Runner {
 		// own, emitted before the webview had a listener, and anything a reload
 		// interrupted. Older than one tick, so this is never the pass above
 		// shouting twice.
-		use tauri::Emitter;
 		for event in self.pending_fires(now_ms, TICK_SECS as i64 * 1000) {
 			tracing::info!(routine = %event.routine_name, "re-emitting a routine fire nobody started");
-			let _ = self.app.emit("routine:fire", event);
+			self.sink.emit(CoreEvent::RoutineFire(event));
 		}
 		Ok(())
 	}
@@ -1049,8 +1040,7 @@ impl Runner {
 			return Err(e.to_string());
 		}
 
-		use tauri::Emitter;
-		let _ = self.app.emit("routine:fire", fire_event(routine, &session_id, folder));
+		self.sink.emit(CoreEvent::RoutineFire(fire_event(routine, &session_id, folder)));
 		Ok(session_id)
 	}
 
@@ -1082,7 +1072,7 @@ impl Runner {
 			Ok(get(conn, &claim.routine_id, now_ms)?.project_id)
 		});
 		match recorded {
-			Ok(project_id) => announce(&self.app, &project_id),
+			Ok(project_id) => announce(self.sink.as_ref(), &project_id),
 			Err(e) => tracing::warn!(error = %e, session_id, "could not record a routine fire"),
 		}
 	}

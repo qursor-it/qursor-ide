@@ -6,6 +6,7 @@ pub mod models;
 pub mod platform;
 pub mod services;
 pub mod state;
+pub mod tauri_sink;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,10 +16,12 @@ use tauri::{Emitter, Manager, WindowEvent};
 use tracing::{info, warn};
 
 use crate::db::Db;
+use crate::services::event_sink::{CoreEvent, EventSink};
 use crate::services::indexer::{spawn_initial_scan, Indexer};
 use crate::services::terminal::TerminalManager;
 use crate::services::watcher;
 use crate::state::AppState;
+use crate::tauri_sink::TauriSink;
 
 /// The Claude config directory this machine uses when nothing has been
 /// configured here — the *ambient* one.
@@ -53,6 +56,10 @@ pub fn run_usage_statusline_helper() -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+	// Held until the event loop ends. `setup()` and the synchronous commands run
+	// on this thread, and what they start (`TerminalManager::new`, an SSH
+	// disconnect) needs a runtime to be current rather than Tauri's own handle.
+	let _runtime = tauri::async_runtime::handle().inner().enter();
 	tracing_subscriber::fmt()
 		.with_env_filter(
 			tracing_subscriber::EnvFilter::try_from_default_env()
@@ -179,7 +186,8 @@ pub fn run() {
 			if let Err(error) = agents::opencode::prepare_signal_dir(&opencode_signals) {
 				warn!(%error, "could not prepare the OpenCode session signal folder");
 			}
-			let terminals = TerminalManager::for_app(app.handle().clone(), cd.clone(), ui.clone())
+			let sink: Arc<dyn EventSink> = Arc::new(TauriSink::new(app.handle().clone()));
+			let terminals = TerminalManager::new(sink.clone(), cd.clone(), ui.clone())
 				.with_opencode_signal_dir(opencode_signals)
 				.with_status_tap(move |e| attention_tap.on_status(e))
 				// Claude's limits, forwarded by each session's status line.
@@ -303,11 +311,11 @@ pub fn run() {
 					},
 					create: {
 						let db = db.clone();
-						let app = app.handle().clone();
+						let sink = sink.clone();
 						Arc::new(move |input, author| {
 							services::routines::create_and_announce(
 								&db,
-								&app,
+								sink.as_ref(),
 								input,
 								Some(author),
 								epoch_ms(),
@@ -316,11 +324,11 @@ pub fn run() {
 					},
 					update: {
 						let db = db.clone();
-						let app = app.handle().clone();
+						let sink = sink.clone();
 						Arc::new(move |id, patch, author| {
 							services::routines::update_and_announce(
 								&db,
-								&app,
+								sink.as_ref(),
 								id,
 								patch,
 								Some(author),
@@ -383,20 +391,19 @@ pub fn run() {
 			// Agents using SSH terminals (F46): announce their commands, and name
 			// a server in `terminals_list` the way the address book does.
 			{
-				let app = app.handle().clone();
-				let run_app = app.clone();
+				let run_sink = sink.clone();
 				terminals.set_agent_run_cb(Arc::new(move |e| {
-					let _ = run_app.emit("agent-terminal:run", e);
+					run_sink.emit(CoreEvent::AgentTerminalRun(e));
 				}));
 				// What an agent may do on each server (ADR-0110), decided per
 				// command from the address book, asked of the human when the
 				// policy says so, and written to the local audit log.
 				let policy_db = db.clone();
-				let policy_app = app.clone();
+				let policy_sink = sink.clone();
 				let asks = confirmations.clone();
 				terminals.set_agent_policy(Arc::new(move |req| {
 					services::agent_policy::decide(&policy_db, &asks, req, |ev| {
-						let _ = policy_app.emit("agent-terminal:confirm", ev);
+						policy_sink.emit(CoreEvent::AgentTerminalConfirm(ev.clone()));
 					})
 				}));
 				let db = db.clone();
@@ -433,7 +440,7 @@ pub fn run() {
 			let routine_live = terminals.clone();
 			let routines = Arc::new(services::routines::Runner::new(
 				db.clone(),
-				app.handle().clone(),
+				sink.clone(),
 				Arc::new(move || routine_live.live_session_ids()),
 			));
 
@@ -792,6 +799,10 @@ pub(crate) fn epoch_ms() -> i64 {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+	#[cfg(unix)]
+	use std::future::Future;
+	use std::sync::OnceLock;
+
 	use parking_lot::{Mutex, MutexGuard};
 
 	static SPAWN: Mutex<()> = Mutex::new(());
@@ -802,5 +813,17 @@ pub(crate) mod test_support {
 	/// suite stays parallel.
 	pub(crate) fn spawn_lock() -> MutexGuard<'static, ()> {
 		SPAWN.lock()
+	}
+
+	/// One runtime for the whole test binary, the way the app has one: a test
+	/// thread has none of its own, and what a test starts has to outlive it.
+	pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
+		static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+		RT.get_or_init(|| tokio::runtime::Runtime::new().expect("test runtime"))
+	}
+
+	#[cfg(unix)]
+	pub(crate) fn block_on<F: Future>(f: F) -> F::Output {
+		runtime().block_on(f)
 	}
 }

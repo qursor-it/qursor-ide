@@ -43,7 +43,7 @@ const BEARER: &str = "bearer ";
 pub struct AgentToolsServer {
 	addr: SocketAddr,
 	token: String,
-	task: tauri::async_runtime::JoinHandle<()>,
+	task: tokio::task::JoinHandle<()>,
 }
 
 impl AgentToolsServer {
@@ -69,7 +69,7 @@ impl AgentToolsServer {
 		let token = uuid::Uuid::new_v4().simple().to_string();
 		let accept_token = token.clone();
 
-		let task = tauri::async_runtime::spawn(async move {
+		let task = tokio::spawn(async move {
 			let listener = match TcpListener::from_std(std_listener) {
 				Ok(l) => l,
 				Err(e) => {
@@ -81,7 +81,7 @@ impl AgentToolsServer {
 				let Ok((stream, peer)) = listener.accept().await else { return };
 				let token = accept_token.clone();
 				let handler = handler.clone();
-				tauri::async_runtime::spawn(async move {
+				tokio::spawn(async move {
 					if let Err(e) = serve(stream, token, handler).await {
 						debug!(%peer, error = %e, "agent tool connection ended");
 					}
@@ -394,7 +394,7 @@ mod tests {
 		assert_eq!(replies.next().0, 405);
 	}
 
-	#[tokio::test]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn a_request_with_the_right_token_is_answered() {
 		let server = echo_server();
 		let bearer = format!("Bearer {}", server.token());
@@ -404,7 +404,7 @@ mod tests {
 		assert!(body.contains("echoed"), "{body}");
 	}
 
-	#[tokio::test]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn a_bad_or_missing_token_never_reaches_the_handler() {
 		// The token is not the real boundary — the scope baked into the tools is
 		// (ADR-0017 § 3) — but it should still cost more than a guess, and a
@@ -424,7 +424,7 @@ mod tests {
 		assert!(!reached.load(std::sync::atomic::Ordering::SeqCst), "the handler ran anyway");
 	}
 
-	#[tokio::test]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn the_scheme_is_case_insensitive_but_the_token_is_not() {
 		let server = echo_server();
 		let (ok, _) =
@@ -438,7 +438,7 @@ mod tests {
 		assert_eq!(bad, 401, "the token itself is compared exactly");
 	}
 
-	#[tokio::test]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn a_notification_is_accepted_with_no_body() {
 		let server = echo_server();
 		let bearer = format!("Bearer {}", server.token());
@@ -451,7 +451,7 @@ mod tests {
 		assert!(body.is_empty(), "{body}");
 	}
 
-	#[tokio::test]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn one_connection_carries_a_whole_session() {
 		// The CLI reuses the connection across `initialize`, `tools/list` and
 		// every `tools/call`. A server that answered once and stopped reading
@@ -473,7 +473,7 @@ mod tests {
 		}
 	}
 
-	#[tokio::test]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn it_binds_loopback_and_advertises_itself_that_way() {
 		let server = echo_server();
 		assert_eq!(server.addr.ip().to_string(), "127.0.0.1");
@@ -484,7 +484,7 @@ mod tests {
 		assert_eq!(entry["type"], "http");
 	}
 
-	#[tokio::test]
+	#[tokio::test(flavor = "multi_thread")]
 	async fn a_body_longer_than_it_claims_does_not_hang_the_next_request() {
 		// `Content-Length` decides where one request ends and the next begins.
 		// Reading one byte too many or too few desynchronises the connection for
