@@ -2,6 +2,11 @@
 members = ["apps/desktop/src-tauri", "crates/qursor-core"]
 resolver = "2"
 
+# One version for both crates: `services::mcp_wire` reports the core's
+# `CARGO_PKG_VERSION` as the app's, so a release bumps it here.
+[workspace.package]
+version = "0.58.0"
+
 # **Here and not in `apps/desktop/src-tauri/Cargo.toml`**, which is where this
 # was first written: cargo reads `[profile.*]` from the workspace root only and
 # silently ignores it in a member, so the member copy changed the binary by one
