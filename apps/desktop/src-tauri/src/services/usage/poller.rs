@@ -21,6 +21,8 @@ const TICK: Duration = Duration::from_secs(60);
 /// Minimum gap between two `codex app-server` reads of one profile.
 const APP_SERVER_EVERY: Duration = Duration::from_secs(300);
 const APP_SERVER_TIMEOUT: Duration = Duration::from_secs(15);
+/// `usage.go` from the core, whose own request to OpenCode gives up at 5 s.
+const GO_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a `codex` binary lookup (found or not) is trusted.
 const BINARY_RECHECK: Duration = Duration::from_secs(600);
 /// A status-line sink file untouched this long belongs to a session long gone.
@@ -82,11 +84,17 @@ pub fn spawn(
 /// Nothing to read until the core is up.
 fn go_step(store: &UsageStore, core: &crate::core_link::CoreCell) {
 	let Some(link) = core.ready() else { return };
-	let reply = tauri::async_runtime::block_on(link.request("usage.go", serde_json::Value::Null));
-	match reply.map(serde_json::from_value::<GoReport>) {
-		Ok(Ok(report)) => store.put_go(report.usage),
-		Ok(Err(error)) => tracing::warn!(%error, "qursor-core's Go report did not parse"),
-		Err(error) => tracing::warn!("could not read the Go usage from qursor-core: {error:#}"),
+	let reply = tauri::async_runtime::block_on(tokio::time::timeout(
+		GO_TIMEOUT,
+		link.request("usage.go", serde_json::Value::Null),
+	));
+	match reply {
+		Ok(Ok(value)) => match serde_json::from_value::<GoReport>(value) {
+			Ok(report) => store.put_go(report.usage),
+			Err(error) => tracing::warn!(%error, "qursor-core's Go report did not parse"),
+		},
+		Ok(Err(error)) => tracing::warn!("could not read the Go usage from qursor-core: {error:#}"),
+		Err(_) => tracing::warn!("qursor-core did not report the Go usage within 15 s"),
 	}
 }
 
