@@ -1215,7 +1215,7 @@ into a separate process.
 
 - **Machine:** Windows 11 Pro (native, ConPTY), Intel Core Ultra 7 155H,
   release build.
-- **Run:** `cargo test -p qursor-ide --release --lib baseline_ -- --ignored --nocapture --test-threads=1`
+- **Run:** `cargo test -p qursor-core --release --lib baseline_ -- --ignored --nocapture --test-threads=1`
   (`baseline_throughput` and `baseline_echo` in `services/terminal.rs`).
 - **Sink:** an in-process closure that base64-decodes each data event. This is
   today's manager path, not Tauri IPC.
@@ -1243,3 +1243,38 @@ baseline's five (15901 us) plus 1000 us.
 
 ConPTY re-renders rather than relays, so about 53.2 MB reach the data events for
 the 50 MB file; the figure is not comparable with a POSIX run.
+
+### Result: qursor-core meets both budgets
+
+- **Machine:** the same, Windows 11 Pro 26200, Intel Core Ultra 7 155H, release.
+- **Run:** `core_throughput` and `core_echo` in
+  `crates/qursor-core/tests/pty_throughput.rs`, alternated run by run with the
+  baseline: `cargo test -p qursor-core --release --test pty_throughput -- --ignored --nocapture --test-threads=1`.
+- **Path:** a core started in-process, a tokio-tungstenite client past `hello`,
+  the terminal marked visible with `terminal.visibility`; each binary `Output`
+  frame and the `terminalExit` event are stamped on arrival by the client.
+- **Workload:** the wire spawns no arbitrary argv, so the baseline's children
+  are typed into a footer shell (`shell.spawn`, Windows PowerShell):
+  `cmd /c type <file>; exit $LASTEXITCODE` for throughput (the clock starts
+  when that line is sent; the exit code checked is the shell's, which is the
+  child's), `cmd /q` for echo. The same child writes the same bytes into the
+  same PTY with the shell idle above it; the 69 extra bytes received are the
+  command line's echo. Measurement definitions are the baseline's.
+
+| Measure | Variant | Runs (5, alternated) | Min | Median | Max |
+|---|---|---|---|---|---|
+| `throughput_50mb_ms` | baseline | 26993, 32116, 28847, 31300, 30189 | 26993 | **30189** | 32116 |
+| `throughput_50mb_ms` | core | 28116, 30716, 30773, 28967, 28703 | 28116 | **28967** | 30773 |
+| `echo_p95_us` | baseline | 15883, 15915, 15896, 15845, 15837 | 15837 | **15883** | 15915 |
+| `echo_p95_us` | core | 16502, 16210, 16590, 16467, 16390 | 16210 | **16467** | 16590 |
+
+(`echo_p50_us` medians: baseline 8062, core 8678.)
+
+- Throughput: core median 28967 lies within this run's baseline [26993, 32116].
+  **Pass.**
+- Echo: core median p95 16467 ≤ 15883 + 1000 = 16883 (and ≤ 15901 + 1000 from
+  the first baseline). **Pass.** The hop costs about 0.6 ms at both p50 and p95.
+
+The POSIX branches of both the baseline and the core measures (`cat`, the exact
+byte count, which on the core is a floor because of the command line's echo)
+have never been run: every figure here is Windows.
