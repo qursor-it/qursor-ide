@@ -318,6 +318,14 @@ fn vault_and_servers_answer_over_rpc() {
 		assert_eq!(err["error"]["kind"], "NotFound", "{err}");
 		let err = reply(&mut ws, 3, "no.such", Value::Null).await;
 		assert_eq!(err["type"], "rpc_error");
+		let book = request(&mut ws, 4, "server.list", Value::Null).await;
+		assert!(book["servers"].as_array().is_some_and(|s| s.is_empty()), "{book}");
+		let tunnels = request(&mut ws, 5, "tunnel.list", json!({"serverId":"nope"})).await;
+		assert_eq!(tunnels, json!([]));
+		let err = reply(&mut ws, 6, "sftp.list", json!({"serverId":"nope","path":""})).await;
+		assert_eq!(err["error"]["kind"], "NotFound", "{err}");
+		let counts = request(&mut ws, 7, "core.counts", Value::Null).await;
+		assert_eq!(counts, json!({"live":0,"working":0,"sessionIds":[]}));
 		shutdown(&mut ws, server).await;
 	});
 }

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use rusqlite::OptionalExtension;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::db::Db;
@@ -26,7 +26,7 @@ use crate::services::terminal::{AlertContext, TerminalId, TerminalStatus, Termin
 pub const SETTLE: Duration = Duration::from_millis(1000);
 
 /// What the app shows: title and body already composed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttentionNotice {
 	pub session_id: Option<String>,

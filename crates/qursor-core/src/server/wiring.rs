@@ -16,6 +16,7 @@ use crate::services::event_sink::{CoreEvent, EventSink};
 use crate::services::ide::ui_state::UiState;
 use crate::services::ssh::pool::Pool;
 use crate::services::ssh::sftp::RemoteFiles;
+use crate::services::ssh::tunnel::Tunnels;
 use crate::services::ssh::KnownHosts;
 use crate::services::terminal::{
 	CanvasStore, PolicyCb, RoutineStore, TerminalManager, WorktreeStore,
@@ -43,6 +44,8 @@ pub struct Core {
 	pub files: Arc<RemoteFiles>,
 	/// Agent commands waiting for the human (ADR-0110).
 	pub confirmations: Arc<Confirmations>,
+	/// Running local port forwards (F48).
+	pub tunnels: Arc<Tunnels>,
 }
 
 pub fn build_manager(data_dir: &Path, sink: Arc<dyn EventSink>) -> anyhow::Result<Core> {
@@ -230,7 +233,17 @@ pub fn build_manager(data_dir: &Path, sink: Arc<dyn EventSink>) -> anyhow::Resul
 	// from firing, so every exit path calls `kill_all` first.
 	let context = terminals.clone();
 	let _ = notify.context.set(Box::new(move |id| context.alert_context(id)));
-	Ok(Core { terminals, db, ui, attention, vault, ssh, files, confirmations })
+	Ok(Core {
+		terminals,
+		db,
+		ui,
+		attention,
+		vault,
+		ssh,
+		files,
+		confirmations,
+		tunnels: Arc::default(),
+	})
 }
 
 /// What an agent may do on each server (ADR-0110): decided per command from the

@@ -6,6 +6,7 @@
 
 mod client;
 pub mod record;
+mod remote;
 pub mod wiring;
 
 use std::collections::HashMap;
@@ -42,6 +43,9 @@ pub const GRACE: Duration = Duration::from_secs(10);
 
 /// How often a `--parent-pid` is checked.
 const PARENT_POLL: Duration = Duration::from_millis(500);
+
+/// How often an idle SSH login is looked for (ADR-0105).
+const SSH_REAP: Duration = Duration::from_secs(20);
 
 pub struct Config {
 	pub data_dir: PathBuf,
@@ -148,6 +152,7 @@ pub async fn start(config: Config) -> anyhow::Result<Server> {
 	if let Some(pid) = config.parent_pid {
 		tokio::spawn(watch_parent(pid, shared.clone()));
 	}
+	tokio::spawn(reap_ssh(shared.clone()));
 	info!(port, "qursor-core listening");
 	Ok(Server { port, secret, exited, shared })
 }
@@ -173,6 +178,21 @@ async fn watch_parent(pid: u32, shared: Arc<Shared>) {
 	}
 	info!(pid, "parent process gone; shutting down");
 	shared.shutdown();
+}
+
+/// The last tab on a server closing ends its login (ADR-0105), unless a tunnel
+/// still rides it.
+async fn reap_ssh(shared: Arc<Shared>) {
+	let mut stop = shared.stop.subscribe();
+	loop {
+		tokio::select! {
+			_ = stop.wait_for(|stopped| *stopped) => return,
+			_ = tokio::time::sleep(SSH_REAP) => {
+				let core = &shared.core;
+				core.ssh.reap(|id| core.terminals.has_ssh_for(id) || core.tunnels.uses(id));
+			}
+		}
+	}
 }
 
 #[derive(Deserialize)]
@@ -511,6 +531,7 @@ impl Shared {
 				terminals.link_agent(&terminal_id, &session_id, mode)?;
 				Ok(Value::Null)
 			}
+			"agentTerminal.links" => to_value(terminals.agent_links()),
 			"agentTerminal.unlink" => {
 				let TerminalParams { terminal_id } = parse(params)?;
 				terminals.unlink_agent(&terminal_id);
@@ -570,8 +591,23 @@ impl Shared {
 				self.core.attention.set_focused(focused);
 				Ok(Value::Null)
 			}
-			"core.counts" => {
-				Ok(json!({ "live": terminals.live_count(), "working": terminals.working_count() }))
+			// `sessionIds`: both ids of an adopted session, for the app's indexer
+			// and routines, which must not touch a live one.
+			"core.counts" => Ok(json!({
+				"live": terminals.live_count(),
+				"working": terminals.working_count(),
+				"sessionIds": terminals.live_session_ids(),
+			})),
+			// A footer shell whose own directory has gone (ADR-0032); the app's
+			// scan is the trigger.
+			"shell.reapMissingCwd" => {
+				let terminals = terminals.clone();
+				blocking(move || {
+					terminals.reap_shells_with_missing_cwd();
+					Ok(())
+				})
+				.await?;
+				Ok(Value::Null)
 			}
 			"core.shutdown" => {
 				#[derive(Deserialize)]
@@ -588,7 +624,10 @@ impl Shared {
 				self.shutdown();
 				Ok(Value::Null)
 			}
-			other => Err(AppError::NotFound(format!("method {other}"))),
+			other => match self.remote_rpc(other, params).await {
+				Some(result) => result,
+				None => Err(AppError::NotFound(format!("method {other}"))),
+			},
 		}
 	}
 }
