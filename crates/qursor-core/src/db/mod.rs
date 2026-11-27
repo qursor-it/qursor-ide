@@ -196,10 +196,18 @@ impl Db {
 		conn.busy_timeout(std::time::Duration::from_secs(5))?;
 		conn.pragma_update(None, "foreign_keys", "ON")?;
 		conn.pragma_update(None, "synchronous", "NORMAL")?;
-		let applied: Vec<String> = conn
+		// No `_meta` table means nothing was migrated; any other error (busy,
+		// not a database, I/O) is a real failure, not a `NotReady`.
+		let applied: Vec<String> = match conn
 			.prepare("SELECT substr(key, 11) FROM _meta WHERE key LIKE 'migration:%'")
 			.and_then(|mut st| st.query_map([], |r| r.get(0))?.collect())
-			.unwrap_or_default();
+		{
+			Ok(applied) => applied,
+			Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg == "no such table: _meta" => {
+				Vec::new()
+			}
+			Err(e) => return Err(e.into()),
+		};
 		let missing: Vec<String> = MIGRATIONS
 			.iter()
 			.map(|(name, _)| name.to_string())
@@ -400,6 +408,37 @@ mod tests {
 		let dir = tempfile::TempDir::new().unwrap();
 		assert!(matches!(not_ready(dir.path()), NotReady::Missing(_)));
 		assert!(!dir.path().join("factorai.db").exists(), "the refusal created the file");
+	}
+
+	#[test]
+	fn the_core_refuses_an_unmigrated_file() {
+		let dir = tempfile::TempDir::new().unwrap();
+		std::fs::write(dir.path().join("factorai.db"), b"").unwrap();
+		assert!(
+			matches!(not_ready(dir.path()), NotReady::Ledger { unknown, .. } if unknown.is_empty())
+		);
+	}
+
+	#[test]
+	fn a_file_that_is_not_a_database_is_an_error_not_not_ready() {
+		let dir = tempfile::TempDir::new().unwrap();
+		std::fs::write(dir.path().join("factorai.db"), [0x5a_u8; 4096]).unwrap();
+		match Db::open_existing(dir.path()) {
+			Ok(_) => panic!("the core opened a file that is not a database"),
+			Err(e) => assert!(e.downcast_ref::<NotReady>().is_none(), "{e:#}"),
+		}
+	}
+
+	#[test]
+	fn a_ledger_it_cannot_read_is_an_error_not_not_ready() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let conn = Connection::open(dir.path().join("factorai.db")).unwrap();
+		conn.execute("CREATE TABLE _meta(name TEXT)", []).unwrap();
+		drop(conn);
+		match Db::open_existing(dir.path()) {
+			Ok(_) => panic!("the core opened a database whose ledger it cannot read"),
+			Err(e) => assert!(e.downcast_ref::<NotReady>().is_none(), "{e:#}"),
+		}
 	}
 
 	#[test]
