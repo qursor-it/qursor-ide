@@ -2619,6 +2619,10 @@ impl TerminalManager {
 	pub fn kill_all(&self) {
 		let ids: Vec<TerminalId> = self.terminals.iter().map(|e| e.key().clone()).collect();
 		debug!(count = ids.len(), "kill_all");
+		// Nothing to wait the grace out for: every quit comes through here.
+		if ids.is_empty() {
+			return;
+		}
 		// Delegates before everything else, so none is left without its parent
 		// even for the half-second below (ADR-0126).
 		// Collected before asking the store: never hold the map while taking its lock.
