@@ -6,6 +6,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 const RECORD: &str = "core.json";
 const LOCK: &str = "core.lock";
@@ -51,8 +52,14 @@ pub fn write(dir: &Path, record: &Record) -> io::Result<()> {
 	Ok(())
 }
 
+/// Gone already is fine. One that will not go (permissions, a scanner holding
+/// it) stays stale until a client's pid check sees through it, so it is logged.
 pub fn remove(dir: &Path) {
-	let _ = std::fs::remove_file(dir.join(RECORD));
+	match std::fs::remove_file(dir.join(RECORD)) {
+		Ok(()) => {}
+		Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+		Err(error) => warn!(%error, "could not remove core.json"),
+	}
 }
 
 /// The single-instance lock, held for as long as the returned file lives.
