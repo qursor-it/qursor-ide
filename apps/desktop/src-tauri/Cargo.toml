@@ -36,7 +36,6 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 notify = "6"
 notify-debouncer-mini = "0.4"
 parking_lot = "0.12"
-base64 = "0.22"
 dashmap = "6"
 # One call: `kill(-pid, SIGKILL)` to end an analysis process group
 # (services/intelligence/provider). Already in the tree via tokio, so this makes

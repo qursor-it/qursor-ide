@@ -4316,7 +4316,6 @@ name = "qursor-ide"
 version = "0.58.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
  "chrono",
  "dashmap",
  "dirs 5.0.1",
