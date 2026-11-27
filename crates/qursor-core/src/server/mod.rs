@@ -22,16 +22,19 @@ use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 use self::client::Client;
 use crate::error::{AppError, AppResult};
 use crate::protocol::frame::{self, Op};
 use crate::protocol::messages::ServerMsg;
+use crate::services::agent_policy::Answer;
 use crate::services::event_sink::{CoreEvent, EventSink};
 use crate::services::ide::protocol::Mention;
 use crate::services::ide::ui_state::UiSnapshot;
 use crate::services::routines::Runner;
-use crate::services::terminal::{ShellSpawnOpts, SpawnOpts};
+use crate::services::terminal::{LinkMode, ShellSpawnOpts, SpawnOpts};
+use crate::services::{servers, ssh};
 
 /// How long the core waits for a client after the last one left: a webview
 /// reload (ADR-0059) reconnects well inside it.
@@ -235,9 +238,79 @@ impl Shared {
 			if let Err(error) = tokio::task::spawn_blocking(move || terminals.kill_all()).await {
 				warn!(%error, "kill_all failed");
 			}
+			me.core.ssh.disconnect_all();
 			me.stop.send_replace(true);
 			let _ = exited.send(());
 		});
+	}
+
+	/// A shell tab on a server, as the app's `server_open_shell`. An unknown host
+	/// key comes back as `AppError::HostKey(fingerprint)`; the client asks the
+	/// human and calls again with `acceptFingerprint`.
+	async fn open_shell(
+		&self,
+		server_id: String,
+		client_key: String,
+		cols: u16,
+		rows: u16,
+		accept_fingerprint: Option<String>,
+	) -> AppResult<String> {
+		let terminals = &self.core.terminals;
+		let server = self.core.db.with(|c| servers::get(c, &server_id))?;
+		let label = server.start_dir.clone().unwrap_or_else(|| "~".into());
+		if server.auth == "system" {
+			let argv = servers::system_argv(&server);
+			return terminals.spawn_ssh_command(&server.id, client_key, argv, cols, rows);
+		}
+		let vault = self.core.vault.clone();
+		let for_target = server.clone();
+		let conn = self
+			.core
+			.ssh
+			.connection(
+				&server.id,
+				|| async move { servers::target_for(&for_target, &vault) },
+				accept_fingerprint,
+			)
+			.await?;
+		// Persistent only where the server has tmux (F49).
+		let tmux = if server.persistent && self.core.files.has_tmux(&server.id).await {
+			Some(ssh::tmux_name(&client_key))
+		} else {
+			None
+		};
+		let channel =
+			ssh::open_shell(&conn, cols, rows, server.start_dir.as_deref(), tmux.as_deref())
+				.await?;
+		let (master, child) = ssh::pty::bridge(channel, cols, rows);
+		let id = terminals.attach_ssh(&server.id, client_key, &label, master, child)?;
+		if let Some(name) = tmux {
+			terminals.set_tmux(&id, name);
+		}
+		Ok(id)
+	}
+
+	/// End a persistent tab's tmux session (F49), as the app's `server_end_tab`.
+	async fn end_tab(&self, server_id: String, client_key: String) -> AppResult<()> {
+		let server = self.core.db.with(|c| servers::get(c, &server_id))?;
+		if !server.persistent || server.auth == "system" {
+			return Ok(());
+		}
+		let name = ssh::tmux_name(&client_key);
+		self.core
+			.files
+			.with(&server_id, |conn, _| async move {
+				let ch = conn
+					.channel_open_session()
+					.await
+					.map_err(|e| AppError::Remote(e.to_string()))?;
+				// Best effort: a session that is already gone is the outcome wanted.
+				let _ = ch
+					.exec(true, format!("tmux kill-session -t {} 2>/dev/null", ssh::quote(&name)))
+					.await;
+				Ok(())
+			})
+			.await
 	}
 
 	/// The RPC methods (§3): the app's terminal commands, by their wire names.
@@ -331,7 +404,8 @@ impl Shared {
 				let P { project_id, agent, fresh } = parse(params)?;
 				let (terminals, db) = (terminals.clone(), self.core.db.clone());
 				let id = blocking(move || {
-					let folder = db.with(|conn| wiring::project_path(conn, &project_id))?;
+					let folder = db
+						.with(|conn| crate::services::workspace::project_path(conn, &project_id))?;
 					terminals.next_session_id(
 						&project_id,
 						&folder,
@@ -378,6 +452,96 @@ impl Shared {
 				let terminals = terminals.clone();
 				blocking(move || terminals.mention(&session_id, &mentions)).await?;
 				Ok(Value::Null)
+			}
+			"server.openShell" => {
+				#[derive(Deserialize)]
+				#[serde(rename_all = "camelCase")]
+				struct P {
+					server_id: String,
+					client_key: String,
+					cols: u16,
+					rows: u16,
+					accept_fingerprint: Option<String>,
+				}
+				let p: P = parse(params)?;
+				let id = self
+					.open_shell(p.server_id, p.client_key, p.cols, p.rows, p.accept_fingerprint)
+					.await?;
+				let slot = client.attach(&id)?;
+				Ok(json!({ "id": id, "slot": slot }))
+			}
+			"server.endTab" => {
+				#[derive(Deserialize)]
+				#[serde(rename_all = "camelCase")]
+				struct P {
+					server_id: String,
+					client_key: String,
+				}
+				let P { server_id, client_key } = parse(params)?;
+				self.end_tab(server_id, client_key).await?;
+				Ok(Value::Null)
+			}
+			"agentTerminal.link" => {
+				#[derive(Deserialize)]
+				#[serde(rename_all = "camelCase")]
+				struct P {
+					terminal_id: String,
+					session_id: String,
+					mode: LinkMode,
+				}
+				let P { terminal_id, session_id, mode } = parse(params)?;
+				terminals.link_agent(&terminal_id, &session_id, mode)?;
+				Ok(Value::Null)
+			}
+			"agentTerminal.unlink" => {
+				let TerminalParams { terminal_id } = parse(params)?;
+				terminals.unlink_agent(&terminal_id);
+				Ok(Value::Null)
+			}
+			"agentTerminal.answer" => {
+				#[derive(Deserialize)]
+				struct P {
+					id: String,
+					run: bool,
+					command: Option<String>,
+				}
+				let P { id, run, command } = parse(params)?;
+				let answer = match (run, command.filter(|c| !c.trim().is_empty())) {
+					(false, _) => Answer::Refuse,
+					(true, Some(c)) => Answer::RunEdited(c),
+					(true, None) => Answer::Run,
+				};
+				if !self.core.confirmations.answer(&id, answer) {
+					return Err(AppError::NotFound(
+						"that confirmation is no longer waiting".into(),
+					));
+				}
+				Ok(Value::Null)
+			}
+			// The password crosses once, on the authenticated socket, and is
+			// never logged (§5a); no answer carries a secret.
+			"vault.status" => to_value(self.core.vault.status()),
+			"vault.unlock" => {
+				#[derive(Deserialize)]
+				struct P {
+					password: String,
+				}
+				let password = Zeroizing::new(parse::<P>(params)?.password);
+				self.core.vault.unlock(&password)?;
+				to_value(self.core.vault.status())
+			}
+			"vault.lock" => {
+				self.core.vault.lock();
+				to_value(self.core.vault.status())
+			}
+			"vault.setMasterPassword" => {
+				#[derive(Deserialize)]
+				struct P {
+					password: Option<String>,
+				}
+				let password = parse::<P>(params)?.password.map(Zeroizing::new);
+				self.core.vault.set_master_password(password.as_deref().map(String::as_str))?;
+				to_value(self.core.vault.status())
 			}
 			"attention.focus" => {
 				#[derive(Deserialize)]

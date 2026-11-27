@@ -26,7 +26,9 @@ use crate::models::{
 };
 use crate::services::hash::sha256_hex;
 use crate::services::server_files::{self as files, FileFolder, FileServer, ScanProject};
+use crate::services::ssh::{self, Auth, Target};
 use crate::services::vault::Vault;
+use zeroize::Zeroizing;
 
 const ENVIRONMENTS: &[&str] = &["dev", "staging", "prod"];
 const POLICIES: &[&str] = &["free", "confirm", "readonly"];
@@ -93,7 +95,7 @@ static INDEX: LazyLock<Mutex<Index>> = LazyLock::new(Default::default);
 
 /// Scan now and hand back the index, still locked.
 fn fresh(conn: &Connection) -> AppResult<MutexGuard<'static, Index>> {
-	let projects: Vec<ScanProject> = crate::commands::sidebar::list_sidebar_in(conn)?
+	let projects: Vec<ScanProject> = crate::services::workspace::list_sidebar_in(conn)?
 		.into_iter()
 		.flat_map(|r| match r {
 			SidebarRow::Project { project, .. } => vec![project],
@@ -814,9 +816,85 @@ pub fn expand_home(p: &str) -> PathBuf {
 	}
 }
 
+fn secret(vault: &Vault, server_id: &str, kind: &str) -> AppResult<Option<Zeroizing<String>>> {
+	vault
+		.get(&secret_id(server_id, kind))?
+		.map(|bytes| {
+			String::from_utf8(bytes.to_vec())
+				.map(Zeroizing::new)
+				.map_err(|_| AppError::Io(format!("the saved {kind} is not text")))
+		})
+		.transpose()
+}
+
+/// How to log into `s`: its address and the secret the vault holds for it.
+pub fn target_for(s: &Server, vault: &Vault) -> AppResult<Target> {
+	let auth = match s.auth.as_str() {
+		"password" => Auth::Password(secret(vault, &s.id, "password")?.ok_or_else(|| {
+			AppError::Unauthenticated(format!("no password is saved for {}", s.name))
+		})?),
+		"key" => Auth::Key {
+			pem: secret(vault, &s.id, "key")?.ok_or_else(|| {
+				AppError::Unauthenticated(format!("no private key is saved for {}", s.name))
+			})?,
+			passphrase: secret(vault, &s.id, "passphrase")?,
+		},
+		"keyFile" => Auth::KeyFile {
+			path: expand_home(s.key_path.as_deref().unwrap_or_default()),
+			passphrase: secret(vault, &s.id, "passphrase")?,
+		},
+		"agent" => Auth::Agent,
+		other => return Err(AppError::InvalidInput(format!("{other} is not a library login"))),
+	};
+	Ok(Target { host: s.host.clone(), port: s.port, user: s.username.clone(), auth })
+}
+
+/// The `ssh -t` command line for a server on the system client.
+pub fn system_argv(s: &Server) -> Vec<String> {
+	let mut v = vec!["ssh".to_string(), "-t".into(), "-p".into(), s.port.to_string()];
+	// `--`: nothing from the address, even from a cloned file, is read as an option.
+	v.push("--".into());
+	v.push(format!("{}@{}", s.username, s.host));
+	if let Some(dir) = s.start_dir.as_deref().filter(|d| !d.is_empty()) {
+		v.extend(ssh::start_in(Some(dir), None));
+	}
+	v
+}
+
+/// Where trusted host keys are written: the app's own file, never the user's.
+pub fn known_hosts_path(data_dir: &std::path::Path) -> PathBuf {
+	data_dir.join("known_hosts")
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn the_system_client_gets_a_quoted_start_folder() {
+		let s = Server {
+			id: "1".into(),
+			name: "web".into(),
+			host: "web01".into(),
+			port: 2222,
+			username: "deploy".into(),
+			start_dir: Some("/srv/my app".into()),
+			folder_id: None,
+			environment: "dev".into(),
+			agent_policy: "free".into(),
+			auth: "system".into(),
+			key_path: None,
+			persistent: false,
+			has_password: false,
+			has_private_key: false,
+			has_passphrase: false,
+			connected: false,
+			source: crate::models::ServerSource::Local,
+		};
+		let argv = system_argv(&s);
+		assert_eq!(&argv[..6], ["ssh", "-t", "-p", "2222", "--", "deploy@web01"]);
+		assert!(argv[6].starts_with("exec /bin/sh -c 'cd '\\''/srv/my app"), "{argv:?}");
+	}
 
 	#[test]
 	fn ssh_config_import_reads_concrete_hosts_and_skips_patterns() {
@@ -916,13 +994,37 @@ mod tests {
 		}
 	}
 
+	/// A workspace project with its sidebar row, as `add_project` leaves one.
+	fn add_project(db: &Db, dir: &std::path::Path) -> crate::models::Project {
+		let real = dir.canonicalize().unwrap();
+		#[cfg(windows)]
+		let real = dunce::simplified(&real).to_path_buf();
+		let (id, real) = (uuid::Uuid::new_v4().to_string(), real.to_string_lossy().to_string());
+		db.with_mut(|conn| {
+			let tx = conn.transaction()?;
+			tx.execute(
+				"INSERT INTO projects(id, real_path, display_name, opened_at) VALUES (?1, ?2, ?2, 0)",
+				params![id, real],
+			)?;
+			crate::services::workspace::ensure_project_row(&tx, &id)?;
+			tx.commit()?;
+			Ok(())
+		})
+		.unwrap();
+		db.with(crate::services::workspace::list_projects_in)
+			.unwrap()
+			.into_iter()
+			.find(|p| p.id == id)
+			.unwrap()
+	}
+
 	fn env() -> Env {
 		let turn = SERIAL.lock();
 		let tmp = tempfile::tempdir().unwrap();
 		let db = Db::open(&tmp.path().join("data")).unwrap();
 		let dir = tmp.path().join("proj");
 		std::fs::create_dir_all(&dir).unwrap();
-		let p = crate::commands::projects::add_project_in(&db, dir.to_str().unwrap()).unwrap();
+		let p = add_project(&db, &dir);
 		let vault = Vault::open(
 			tmp.path().join("v.vault"),
 			Box::new(MemStore(parking_lot::Mutex::new(None))),
@@ -1264,7 +1366,7 @@ mod tests {
 		let e = env();
 		let dir2 = e._tmp.path().join("proj2");
 		std::fs::create_dir_all(&dir2).unwrap();
-		let p2 = crate::commands::projects::add_project_in(&e.db, dir2.to_str().unwrap()).unwrap();
+		let p2 = add_project(&e.db, &dir2);
 		let root2 = PathBuf::from(&p2.real_path);
 		e.put(
 			"servers/My Web.server",

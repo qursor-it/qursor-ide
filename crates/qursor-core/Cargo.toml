@@ -64,6 +64,11 @@ tempfile = "3"
 # The core's secret (design §1): 32 bytes from the OS CSPRNG. Already in the tree
 # through uuid; named here because we call it directly.
 getrandom = "0.4"
+# The OpenCode Go usage read behind the agents' usage tool (design §5b). Same
+# version and features as the app, which already builds it.
+ureq = "2"
+# The core binary's log file, `<data_dir>/core/core.log`, the way the app logs.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Server sessions over SSH (F45, ADR-0105): one connection per server carrying
 # every shell tab, SFTP and tunnels as channels. `ring` instead of the default
 # `aws-lc-rs`, which needs cmake and NASM to build on Windows; `ring` is already

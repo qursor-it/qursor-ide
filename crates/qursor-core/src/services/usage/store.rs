@@ -22,24 +22,29 @@ pub struct UsageStore {
 	/// Serialises writing and notifying: two source threads share one temp
 	/// file, and subscribers must hear changes in the order they were made.
 	persist_lock: Mutex<()>,
+	/// The core's copy: the app's poller owns the file (design §5b).
+	read_only: bool,
 }
 
 impl UsageStore {
 	/// A missing or unreadable file is an empty store: usage is a cache of what
 	/// the sources last said, and they will say it again.
 	pub fn load(path: PathBuf) -> Self {
-		let list: Vec<ProviderUsage> = std::fs::read(&path)
-			.ok()
-			.and_then(|b| serde_json::from_slice(&b).ok())
-			.unwrap_or_default();
-		let entries =
-			list.into_iter().map(|u| ((u.agent.clone(), u.profile_id.clone()), u)).collect();
+		let entries = read_file(&path).into_iter().map(|u| (key(&u), u)).collect();
 		Self {
 			path,
 			entries: Mutex::new(entries),
 			on_change: Mutex::new(Vec::new()),
 			persist_lock: Mutex::new(()),
+			read_only: false,
 		}
+	}
+
+	/// The core's store (design §5b): the file is re-read on every snapshot and
+	/// never written, since the app's poller keeps it. Go readings, which the file
+	/// never holds, are kept in memory.
+	pub fn read_only(path: PathBuf) -> Self {
+		Self { read_only: true, ..Self::load(path) }
 	}
 
 	pub fn add_on_change(&self, f: OnChange) {
@@ -131,6 +136,12 @@ impl UsageStore {
 
 	/// Actual observations for MCP consumers, with original usage after a reset.
 	pub fn observed_snapshot(&self) -> Vec<ProviderUsage> {
+		if self.read_only {
+			let file = read_file(&self.path);
+			let mut map = self.entries.lock();
+			map.retain(|_, u| u.source == UsageSource::OpenCodeGo);
+			map.extend(file.into_iter().map(|u| (key(&u), u)));
+		}
 		sorted(self.entries.lock().values().cloned().collect())
 	}
 
@@ -151,6 +162,9 @@ impl UsageStore {
 
 	/// Temp file then rename, so a crash mid-write leaves the old file whole.
 	fn write(&self, list: &[ProviderUsage]) {
+		if self.read_only {
+			return;
+		}
 		let tmp = self.path.with_extension("json.tmp");
 		let result = serde_json::to_vec(
 			&list.iter().filter(|u| u.source != UsageSource::OpenCodeGo).collect::<Vec<_>>(),
@@ -162,6 +176,14 @@ impl UsageStore {
 			warn!(error = %e, "could not persist usage");
 		}
 	}
+}
+
+fn read_file(path: &std::path::Path) -> Vec<ProviderUsage> {
+	std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn key(u: &ProviderUsage) -> (String, String) {
+	(u.agent.clone(), u.profile_id.clone())
 }
 
 fn sorted(mut list: Vec<ProviderUsage>) -> Vec<ProviderUsage> {
@@ -249,6 +271,21 @@ mod tests {
 		assert_eq!(snap[0].source, UsageSource::StatusLine);
 		assert_eq!(snap[0].updated_at, 100);
 		assert_eq!(snap[0].profile_name, "Main");
+	}
+
+	#[test]
+	fn read_only_follows_the_file_and_never_writes_it() {
+		let (_d, path, writer) = store();
+		let core = UsageStore::read_only(path.clone());
+		assert!(core.observed_snapshot().is_empty());
+		writer.record("claude", &profile(), reading(Some(win(40.0, None)), None, 100));
+		assert_eq!(core.observed_snapshot()[0].updated_at, 100);
+		let before = std::fs::read(&path).unwrap();
+		core.record("claude", &profile(), reading(Some(win(90.0, None)), None, 200));
+		assert_eq!(std::fs::read(&path).unwrap(), before, "the core wrote usage.json");
+		// The app's newer file wins over what the core held.
+		writer.record("claude", &profile(), reading(Some(win(45.0, None)), None, 300));
+		assert_eq!(core.observed_snapshot()[0].updated_at, 300);
 	}
 
 	#[test]

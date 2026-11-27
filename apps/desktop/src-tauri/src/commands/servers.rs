@@ -4,17 +4,17 @@
 //! **No command returns a secret.** The vault's contents go one way: from the
 //! form into the vault, and from the vault into an SSH login.
 
-use std::path::PathBuf;
-
 use tauri::State;
 use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{Server, ServerBook, ServerFolder, ServerInput, ServerSource, SshConfigHost};
-use crate::services::servers::{self, secret_id};
-use crate::services::ssh::{self, pty, Auth, Target};
+pub use crate::services::servers::known_hosts_path;
+pub(crate) use crate::services::servers::target_for;
+use crate::services::servers::{self, system_argv};
+use crate::services::ssh::{self, pty};
 use crate::services::terminal::{LinkDto, LinkMode, TerminalId};
-use crate::services::vault::{Vault, VaultStatus};
+use crate::services::vault::VaultStatus;
 use crate::state::AppState;
 
 fn flagged(state: &AppState, s: Server) -> Server {
@@ -124,38 +124,6 @@ pub fn vault_set_master_password(
 	Ok(state.vault.status())
 }
 
-fn secret(vault: &Vault, server_id: &str, kind: &str) -> AppResult<Option<Zeroizing<String>>> {
-	vault
-		.get(&secret_id(server_id, kind))?
-		.map(|bytes| {
-			String::from_utf8(bytes.to_vec())
-				.map(Zeroizing::new)
-				.map_err(|_| AppError::Io(format!("the saved {kind} is not text")))
-		})
-		.transpose()
-}
-
-pub(crate) fn target_for(s: &Server, vault: &Vault) -> AppResult<Target> {
-	let auth = match s.auth.as_str() {
-		"password" => Auth::Password(secret(vault, &s.id, "password")?.ok_or_else(|| {
-			AppError::Unauthenticated(format!("no password is saved for {}", s.name))
-		})?),
-		"key" => Auth::Key {
-			pem: secret(vault, &s.id, "key")?.ok_or_else(|| {
-				AppError::Unauthenticated(format!("no private key is saved for {}", s.name))
-			})?,
-			passphrase: secret(vault, &s.id, "passphrase")?,
-		},
-		"keyFile" => Auth::KeyFile {
-			path: servers::expand_home(s.key_path.as_deref().unwrap_or_default()),
-			passphrase: secret(vault, &s.id, "passphrase")?,
-		},
-		"agent" => Auth::Agent,
-		other => return Err(AppError::InvalidInput(format!("{other} is not a library login"))),
-	};
-	Ok(Target { host: s.host.clone(), port: s.port, user: s.username.clone(), auth })
-}
-
 /// Another home gives a server's tunnels other ids, orphaning running ones.
 fn home_changed(before: &ServerSource, after: &ServerSource) -> bool {
 	let home = |s: &ServerSource| match s {
@@ -163,18 +131,6 @@ fn home_changed(before: &ServerSource, after: &ServerSource) -> bool {
 		ServerSource::Project { project_id, .. } => Some(project_id.clone()),
 	};
 	home(before) != home(after)
-}
-
-/// The `ssh -t` command line for a server on the system client.
-fn system_argv(s: &Server) -> Vec<String> {
-	let mut v = vec!["ssh".to_string(), "-t".into(), "-p".into(), s.port.to_string()];
-	// `--`: nothing from the address, even from a cloned file, is read as an option.
-	v.push("--".into());
-	v.push(format!("{}@{}", s.username, s.host));
-	if let Some(dir) = s.start_dir.as_deref().filter(|d| !d.is_empty()) {
-		v.extend(ssh::start_in(Some(dir), None));
-	}
-	v
 }
 
 /// Open a shell tab on a server.
@@ -236,40 +192,9 @@ pub fn server_disconnect(state: State<'_, AppState>, server_id: String) {
 	state.ssh.disconnect(&server_id);
 }
 
-/// Where trusted host keys are written: the app's own file, never the user's.
-pub fn known_hosts_path(data_dir: &std::path::Path) -> PathBuf {
-	data_dir.join("known_hosts")
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	#[test]
-	fn the_system_client_gets_a_quoted_start_folder() {
-		let s = Server {
-			id: "1".into(),
-			name: "web".into(),
-			host: "web01".into(),
-			port: 2222,
-			username: "deploy".into(),
-			start_dir: Some("/srv/my app".into()),
-			folder_id: None,
-			environment: "dev".into(),
-			agent_policy: "free".into(),
-			auth: "system".into(),
-			key_path: None,
-			persistent: false,
-			has_password: false,
-			has_private_key: false,
-			has_passphrase: false,
-			connected: false,
-			source: crate::models::ServerSource::Local,
-		};
-		let argv = system_argv(&s);
-		assert_eq!(&argv[..6], ["ssh", "-t", "-p", "2222", "--", "deploy@web01"]);
-		assert!(argv[6].starts_with("exec /bin/sh -c 'cd '\\''/srv/my app"), "{argv:?}");
-	}
 
 	#[test]
 	fn a_change_of_home_is_noticed() {

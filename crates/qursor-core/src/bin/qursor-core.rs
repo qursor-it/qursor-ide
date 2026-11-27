@@ -38,16 +38,34 @@ fn main() -> ExitCode {
 	match run(data_dir, parent_pid) {
 		Ok(code) => code,
 		Err(error) => {
+			tracing::error!("{error:#}");
 			eprintln!("qursor-core: {error:#}");
 			ExitCode::FAILURE
 		}
 	}
 }
 
+/// Appends to `<data_dir>/core/core.log`: a detached process has no terminal,
+/// so stderr goes nowhere. Same filter as the app's: `RUST_LOG`, else `info`.
+fn init_log(dir: &std::path::Path) -> anyhow::Result<()> {
+	let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("core.log"))?;
+	tracing_subscriber::fmt()
+		.with_env_filter(
+			tracing_subscriber::EnvFilter::try_from_default_env()
+				.unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+		)
+		.with_ansi(false)
+		.with_writer(std::sync::Mutex::new(file))
+		.init();
+	Ok(())
+}
+
 fn run(data_dir: PathBuf, parent_pid: Option<u32>) -> anyhow::Result<ExitCode> {
 	let dir = record::core_dir(&data_dir)?;
+	init_log(&dir)?;
 	// Held until the process ends.
 	let Some(_lock) = record::lock(&dir)? else {
+		tracing::warn!("another core already serves this data folder");
 		eprintln!("qursor-core: another core already serves {}", data_dir.display());
 		return Ok(ExitCode::from(3));
 	};

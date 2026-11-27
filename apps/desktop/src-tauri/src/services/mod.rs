@@ -1,4 +1,3 @@
-pub mod agent_policy;
 pub mod attention;
 pub mod file_watch;
 pub mod gh;
@@ -16,18 +15,15 @@ pub mod menu;
 pub mod profiles;
 pub mod reveal;
 pub mod search;
-pub mod server_files;
-pub mod servers;
 pub mod session_plan;
 pub mod sessions;
 pub mod updates;
 pub mod usage;
 pub mod watcher;
 pub mod webview_health;
-pub mod wsl;
 
 pub use qursor_core::services::{
-	agent_cli, agent_tools, canvas, canvas_tools, child_env, event_sink, files, git, hash, ide,
-	jsonl, mcp_wire, osc_title, routines, settings, shell_path, sops, ssh, term_capture, terminal,
-	vault,
+	agent_cli, agent_policy, agent_tools, canvas, canvas_tools, child_env, event_sink, files, git,
+	hash, ide, jsonl, mcp_wire, osc_title, routines, server_files, servers, settings, shell_path,
+	sops, ssh, term_capture, terminal, vault, workspace, wsl,
 };

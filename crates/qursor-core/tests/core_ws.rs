@@ -61,16 +61,22 @@ async fn next_json(ws: &mut Ws) -> Value {
 	}
 }
 
-async fn request(ws: &mut Ws, id: u64, method: &str, params: Value) -> Value {
+/// The reply to one request: a `response` or an `rpc_error`.
+async fn reply(ws: &mut Ws, id: u64, method: &str, params: Value) -> Value {
 	let msg = json!({"type":"request","requestId":id,"method":method,"params":params});
 	ws.send(Message::Text(msg.to_string().into())).await.unwrap();
 	loop {
 		let v = next_json(ws).await;
 		if v["requestId"] == id {
-			assert_eq!(v["type"], "response", "{v}");
-			return v["result"].clone();
+			return v;
 		}
 	}
+}
+
+async fn request(ws: &mut Ws, id: u64, method: &str, params: Value) -> Value {
+	let v = reply(ws, id, method, params).await;
+	assert_eq!(v["type"], "response", "{v}");
+	v["result"].clone()
 }
 
 async fn spawn_shell(ws: &mut Ws, cwd: &std::path::Path) -> (String, u16) {
@@ -293,5 +299,22 @@ fn slow_client_closed_over_8mib() {
 		assert!(list.as_array().unwrap().iter().any(|t| t["id"] == id.as_str()), "{list}");
 		drop(slow);
 		shutdown(&mut watcher, server).await;
+	});
+}
+
+#[test]
+fn vault_and_servers_answer_over_rpc() {
+	runtime().block_on(async {
+		let (server, _dir) = start(NO_GRACE).await;
+		let mut ws = client(&server).await;
+		let status = request(&mut ws, 1, "vault.status", Value::Null).await;
+		assert!(status["locked"].is_boolean(), "{status}");
+		let opts = json!({"serverId":"nope","clientKey":"k","cols":80,"rows":24});
+		let err = reply(&mut ws, 2, "server.openShell", opts).await;
+		assert_eq!(err["type"], "rpc_error");
+		assert_eq!(err["error"]["kind"], "NotFound", "{err}");
+		let err = reply(&mut ws, 3, "no.such", Value::Null).await;
+		assert_eq!(err["type"], "rpc_error");
+		shutdown(&mut ws, server).await;
 	});
 }

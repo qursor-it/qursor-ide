@@ -1,8 +1,14 @@
 //! The part of the usage monitor the terminal manager needs: the status-line
-//! helper a Claude session runs, and the thresholds setting it is stored beside.
+//! helper a Claude session runs, the thresholds setting it is stored beside,
+//! and the read side of the limits sessions ask for over MCP (design §5b).
 
 pub mod child_guard;
+pub mod mcp;
 pub mod statusline;
+pub mod store;
+
+/// A reading older than this (15 min) is shown dimmed.
+pub const STALE_MS: i64 = 15 * 60 * 1000;
 
 /// Bar colour thresholds, percent used: amber from `warn`, red from `critical`.
 /// The user's two settings; the defaults are what the colours were before they
