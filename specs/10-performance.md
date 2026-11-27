@@ -1270,8 +1270,11 @@ the 50 MB file; the figure is not comparable with a POSIX run.
 
 (`echo_p50_us` medians: baseline 8062, core 8678.)
 
-- Throughput: core median 28967 lies within this run's baseline [26993, 32116].
-  **Pass.**
+- Throughput: core median 28967 lies within this run's baseline [26993, 32116]
+  (and within the first baseline's [22582, 33882]). **Pass.** The baseline was
+  re-run alternated with the core because ConPTY throughput drifts between
+  sessions on this machine: this run's baseline median is 30189 against the
+  first run's 25727, so only same-session pairs are compared.
 - Echo: core median p95 16467 ≤ 15883 + 1000 = 16883 (and ≤ 15901 + 1000 from
   the first baseline). **Pass.** The hop costs about 0.6 ms at both p50 and p95.
 
