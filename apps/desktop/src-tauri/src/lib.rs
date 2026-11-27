@@ -144,18 +144,21 @@ pub fn run() {
 			let core = Arc::new(CoreCell::new(
 				data_dir.clone(),
 				app.package_info().version.to_string(),
+				core_link::sidecar().expect("the app's executable has a folder"),
 				go_key,
 			));
 			{
 				let (core, app) = (core.clone(), app.handle().clone());
 				tauri::async_runtime::spawn(async move {
-					let Ok(link) = core.link().await else { return };
-					// The window may have taken focus before the link was up.
-					let focused = app
-						.get_webview_window("main")
-						.and_then(|w| w.is_focused().ok())
-						.unwrap_or(false);
-					tell_focus(&link, focused);
+					core.keep_linked(|link| {
+						// The window may have changed focus while there was no link.
+						let focused = app
+							.get_webview_window("main")
+							.and_then(|w| w.is_focused().ok())
+							.unwrap_or(false);
+						tell_focus(link, focused);
+					})
+					.await;
 				});
 			}
 			let live = core.clone();
@@ -322,23 +325,24 @@ pub fn run() {
 					// An analysis is a child process too (ADR-0005, ADR-0084): it ends
 					// with the window whether or not a session is asking to be kept.
 					state.intelligence.cancel_all();
-					let link = state.core.ready();
 					// Asked now, not the last counts heard: a terminal that has not
-					// changed status since it started has sent no event.
-					if let Some(link) = &link {
-						let asked = tauri::async_runtime::block_on(async {
-							tokio::time::timeout(COUNTS_AT_CLOSE, link.refresh()).await
-						});
-						match asked {
-							Ok(Ok(())) => {}
-							Ok(Err(error)) => warn!("quit guard: no fresh counts: {error:#}"),
-							Err(_) => warn!("quit guard: qursor-core did not answer in time"),
-						}
+					// changed status since it started has sent no event. A link that
+					// dropped is coming back (`keep_linked`), and is waited for within
+					// the same bound; past it, the last counts heard decide, never an
+					// assumed zero.
+					let asked = tauri::async_runtime::block_on(tokio::time::timeout(
+						COUNTS_AT_CLOSE,
+						async { state.core.link().await?.refresh().await },
+					));
+					match asked {
+						Ok(Ok(())) => {}
+						Ok(Err(error)) => warn!("quit guard: no fresh counts: {error:#}"),
+						Err(_) => warn!("quit guard: qursor-core did not answer in time"),
 					}
 					// **What is working decides whether we ask; what is live decides
 					// what dies** (ADR-0020). Both go to the renderer so the dialog
 					// can say the second thing rather than imply it.
-					let (live, working) = link.as_ref().map(CoreLink::counts).unwrap_or((0, 0));
+					let (live, working) = state.core.last_counts();
 					if working > 0 {
 						api.prevent_close();
 						// Emit via the AppHandle, NOT `window.emit`: in Tauri v2 the
@@ -352,7 +356,7 @@ pub fn run() {
 							"app:quit-requested",
 							json!({ "liveCount": live, "workingCount": working }),
 						);
-					} else if link.is_some() {
+					} else {
 						// Nothing is working, so nothing is asked — but kill-on-quit
 						// is still non-optional (ADR-0005): the core stops with every
 						// terminal it holds, footer shells included.

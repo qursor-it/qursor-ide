@@ -44,6 +44,9 @@ const HOLDER: Duration = Duration::from_secs(10);
 const HOLDER_POLL: Duration = Duration::from_millis(250);
 /// The core closes a client silent for two of these (§3).
 const PING: Duration = Duration::from_secs(10);
+/// Between two tries at linking again, doubling, as the renderer's client.
+const RELINK_MIN: Duration = Duration::from_millis(100);
+const RELINK_MAX: Duration = Duration::from_secs(2);
 
 type Ws = tokio_tungstenite::WebSocketStream<TcpStream>;
 
@@ -177,6 +180,12 @@ impl CoreLink {
 	/// Whether the core has closed the connection: it stopped or died.
 	pub fn is_closed(&self) -> bool {
 		*self.0.closed.borrow()
+	}
+
+	/// Returns once the connection has closed.
+	pub async fn closed(&self) {
+		let mut closed = self.0.closed.clone();
+		let _ = closed.wait_for(|closed| *closed).await;
 	}
 
 	/// Ask the core for its counts now, for a decision that cannot use the
@@ -487,30 +496,61 @@ pub fn sidecar() -> anyhow::Result<PathBuf> {
 	Ok(dir.join(format!("qursor-core{}", std::env::consts::EXE_SUFFIX)))
 }
 
-/// The link once it exists. Setup starts it off the main thread and whoever
+/// The link once it exists. Setup starts it off the main thread with
+/// [`CoreCell::keep_linked`], which links again whenever it closes, and whoever
 /// asks waits for it. A failure is not kept: the next ask tries again, and so
 /// does an ask after the core has gone away, until the app stops it on quit.
 pub struct CoreCell {
+	/// The last link, closed or not: its counts are the last ones heard.
 	link: Mutex<Option<CoreLink>>,
 	/// One `ensure` at a time.
 	starting: tokio::sync::Mutex<()>,
+	/// Set under `link`'s lock, so a link stored after it is impossible.
 	stopped: std::sync::atomic::AtomicBool,
 	data_dir: PathBuf,
 	app_version: String,
+	binary: PathBuf,
 	/// The OpenCode Go key the app took out of its environment, for the core
 	/// to read (design §5a: the core owns the key).
 	go_key: Option<Zeroizing<String>>,
 }
 
 impl CoreCell {
-	pub fn new(data_dir: PathBuf, app_version: String, go_key: Option<Zeroizing<String>>) -> Self {
+	pub fn new(
+		data_dir: PathBuf,
+		app_version: String,
+		binary: PathBuf,
+		go_key: Option<Zeroizing<String>>,
+	) -> Self {
 		Self {
 			link: Mutex::new(None),
 			starting: tokio::sync::Mutex::new(()),
 			stopped: Default::default(),
 			data_dir,
 			app_version,
+			binary,
 			go_key,
+		}
+	}
+
+	/// Link, and link again each time the link closes (a sleep, a reset, a core
+	/// that died), until [`CoreCell::shutdown`]: the quit guard, the indexer and
+	/// routines read what this keeps up. `on_link` runs on every new link.
+	pub async fn keep_linked(&self, on_link: impl Fn(&CoreLink)) {
+		let mut backoff = RELINK_MIN;
+		while !self.stopped.load(Ordering::SeqCst) {
+			match self.link().await {
+				Ok(link) => {
+					backoff = RELINK_MIN;
+					on_link(&link);
+					link.closed().await;
+				}
+				// `link` has logged why.
+				Err(_) => {
+					tokio::time::sleep(backoff).await;
+					backoff = (backoff * 2).min(RELINK_MAX);
+				}
+			}
 		}
 	}
 
@@ -525,13 +565,22 @@ impl CoreCell {
 		if self.stopped.load(Ordering::SeqCst) {
 			return Err(AppError::Process("qursor-core was stopped for the quit".into()));
 		}
-		let binary = sidecar().map_err(|e| AppError::Process(format!("{e:#}")))?;
 		let env: Vec<(&str, &str)> =
 			self.go_key.iter().map(|key| (GO_KEY_ENV, key.as_str())).collect();
-		match CoreLink::ensure_with(&self.data_dir, &self.app_version, &binary, &env).await {
+		match CoreLink::ensure_with(&self.data_dir, &self.app_version, &self.binary, &env).await {
 			Ok(link) => {
-				*self.link.lock() = Some(link.clone());
-				Ok(link)
+				{
+					let mut slot = self.link.lock();
+					if !self.stopped.load(Ordering::SeqCst) {
+						*slot = Some(link.clone());
+						return Ok(link);
+					}
+				}
+				// `shutdown` ran while this was starting and found no link to stop.
+				if let Err(error) = link.shutdown().await {
+					warn!("qursor-core did not stop cleanly: {error:#}");
+				}
+				Err(AppError::Process("qursor-core was stopped for the quit".into()))
 			}
 			Err(error) => {
 				warn!("qursor-core is not available: {error:#}");
@@ -548,16 +597,28 @@ impl CoreCell {
 	/// Stop the core with every terminal it holds (kill-on-quit), and start no
 	/// other: the app is going away.
 	pub async fn shutdown(&self) {
-		self.stopped.store(true, Ordering::SeqCst);
-		if let Some(link) = self.ready() {
+		let link = {
+			let slot = self.link.lock();
+			self.stopped.store(true, Ordering::SeqCst);
+			slot.as_ref().filter(|link| !link.is_closed()).cloned()
+		};
+		if let Some(link) = link {
 			if let Err(error) = link.shutdown().await {
 				warn!("qursor-core did not stop cleanly: {error:#}");
 			}
 		}
 	}
 
-	/// No link yet means no core, and no core has no live sessions.
+	/// `(live, working)` as last heard, from a link that may have closed since
+	/// and is coming back. No link ever means no core was reached, and so no
+	/// terminal was started.
+	pub fn last_counts(&self) -> (usize, usize) {
+		self.link.lock().as_ref().map(CoreLink::counts).unwrap_or((0, 0))
+	}
+
+	/// As last heard, like [`CoreCell::last_counts`]: a link coming back must
+	/// not make the indexer reap a session that is still running.
 	pub fn live_session_ids(&self) -> HashSet<String> {
-		self.ready().map(|link| link.live_session_ids()).unwrap_or_default()
+		self.link.lock().as_ref().map(CoreLink::live_session_ids).unwrap_or_default()
 	}
 }

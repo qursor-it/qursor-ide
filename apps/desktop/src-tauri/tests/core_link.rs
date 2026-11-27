@@ -6,9 +6,11 @@
 //! `cargo build -p qursor-core` first.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use factorai_lib::core_link::CoreLink;
+use factorai_lib::core_link::{CoreCell, CoreLink};
 use futures_util::{SinkExt, StreamExt};
 use qursor_core::protocol::frame::{self, Op};
 use qursor_core::server::record::{self, Record};
@@ -145,6 +147,119 @@ fn a_core_on_its_way_out_is_waited_for() {
 		assert!(!pid_is_alive(first.pid()) || first.is_closed());
 		second.request("core.counts", Value::Null).await.unwrap();
 		second.shutdown().await.unwrap();
+	});
+}
+
+/// Forwards to a core and can cut what it carries, as a sleep or a TCP reset
+/// does to the app's socket while the core stays up.
+struct Proxy {
+	port: u16,
+	carried: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+}
+
+impl Proxy {
+	async fn start(core_port: u16) -> Self {
+		let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+		let port = listener.local_addr().unwrap().port();
+		let carried = Arc::new(Mutex::new(Vec::new()));
+		let held = carried.clone();
+		tokio::spawn(async move {
+			while let Ok((mut inbound, _)) = listener.accept().await {
+				held.lock().unwrap().push(tokio::spawn(async move {
+					let mut outbound =
+						tokio::net::TcpStream::connect(("127.0.0.1", core_port)).await.unwrap();
+					let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+				}));
+			}
+		});
+		Self { port, carried }
+	}
+
+	fn cut(&self) {
+		for task in self.carried.lock().unwrap().drain(..) {
+			task.abort();
+		}
+	}
+}
+
+async fn until(what: &str, mut done: impl FnMut() -> bool) {
+	let deadline = Instant::now() + Duration::from_secs(10);
+	while !done() {
+		assert!(Instant::now() < deadline, "timed out waiting for {what}");
+		tokio::time::sleep(Duration::from_millis(20)).await;
+	}
+}
+
+/// The app's socket drops while the core keeps its terminals: the cell links
+/// again to the same core, its counts come back without any terminal event,
+/// and `shutdown` ends the re-linking for good.
+#[test]
+fn a_dropped_link_comes_back_with_fresh_counts() {
+	runtime().block_on(async {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let dir = data_dir(tmp.path());
+		let core = ensure(&dir).await;
+		core.request(
+			"shell.spawn",
+			json!({"clientKey":"shell:t","projectId":"p1","cwd":tmp.path(),"cols":80,"rows":24}),
+		)
+		.await
+		.unwrap();
+		let mut rec = read_record(&dir);
+		let proxy = Proxy::start(rec.port).await;
+		rec.port = proxy.port;
+		record::write(&record::core_dir(&dir).unwrap(), &rec).unwrap();
+
+		let cell = Arc::new(CoreCell::new(dir.clone(), "test".into(), core_binary(), None));
+		let links = Arc::new(AtomicUsize::new(0));
+		let relinking = {
+			let (cell, links) = (cell.clone(), links.clone());
+			tokio::spawn(async move {
+				cell.keep_linked(|_| {
+					links.fetch_add(1, Ordering::SeqCst);
+				})
+				.await
+			})
+		};
+		until("the first link's counts", || cell.ready().is_some_and(|l| l.counts().0 == 1)).await;
+		assert_eq!(links.load(Ordering::SeqCst), 1);
+
+		proxy.cut();
+		until("a second link", || links.load(Ordering::SeqCst) == 2).await;
+		let again = cell.ready().expect("the second link is up");
+		assert_eq!(again.pid(), core.pid(), "a new core was started for a dropped socket");
+		until("the second link's counts", || again.counts().0 == 1).await;
+
+		cell.shutdown().await;
+		tokio::time::timeout(Duration::from_secs(5), relinking)
+			.await
+			.expect("keep_linked outlived shutdown")
+			.unwrap();
+		assert!(cell.link().await.is_err(), "a stopped cell linked again");
+		until("the core to stop", || core.is_closed()).await;
+	});
+}
+
+/// A quit while the cell is still starting its core: the core it was starting
+/// is stopped, not kept.
+#[test]
+fn shutdown_during_a_start_stops_the_core_started() {
+	runtime().block_on(async {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let dir = data_dir(tmp.path());
+		let cell = Arc::new(CoreCell::new(dir.clone(), "test".into(), core_binary(), None));
+		let linking = {
+			let cell = cell.clone();
+			tokio::spawn(async move { cell.link().await })
+		};
+		// Inside `ensure`, waiting on the core's ready line.
+		tokio::time::sleep(Duration::from_millis(50)).await;
+		cell.shutdown().await;
+		assert!(linking.await.unwrap().is_err(), "a link was kept after the quit");
+		assert!(cell.ready().is_none());
+		// A core removes its record on the way out.
+		let rec = dir.join("core").join("core.json");
+		until("the core started to stop", || !rec.exists()).await;
 	});
 }
 
