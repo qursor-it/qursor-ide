@@ -16,7 +16,8 @@ speaks the protocol a phone or a VPS would later use. C is deferred.
 dependency, and it owns every terminal (agent, footer shell, SSH), the SSH pool,
 the vault, agent policy, the server and workspace listings, and attention
 decisions. The app keeps the window, the migrations, the usage poller and the
-OS notification, and depends on the library, re-exporting the old module paths.
+OS notification, and depends on the library, re-exporting the module paths it
+still uses.
 The core never migrates: it opens the database only when the `_meta`
 `migration:*` ledger matches exactly, and exits 4 otherwise.
 
@@ -28,9 +29,11 @@ through Tauri IPC. The app owns no terminal. The wire format, exit codes and
 timings are in `specs/03-backend-rust.md` § "Where the code lives".
 
 In this plan kill-on-quit is unchanged in effect. A confirmed or idle quit
-calls `core_shutdown`, which kills every PTY and stops the core. When the last
-client is gone the core waits 10 s (the reload of ADR-0059 reconnects inside
-it), kills them and exits, and it follows `--parent-pid` out the same way.
+sends the wire method `core.shutdown`, which kills every PTY and stops the core;
+the updater reaches the same method through the Tauri command `core_shutdown`.
+When the last client is gone the core waits 10 s (the reload of ADR-0059
+reconnects inside it), kills them and exits. When the `--parent-pid` process is
+gone, which the core checks every 500 ms, it shuts down at once, with no wait.
 
 ## Consequences
 
