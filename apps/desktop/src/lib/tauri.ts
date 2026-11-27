@@ -542,8 +542,6 @@ export const cmd = {
 	terminalSpawn: (opts: SpawnOpts) => core<Spawned>('terminal.spawn', opts),
 	terminalWrite: async (id: TerminalId, data: string) =>
 		coreClient().write(await terminalSlot(id), new TextEncoder().encode(data)),
-	terminalResize: async (id: TerminalId, cols: number, rows: number) =>
-		coreClient().resize(await terminalSlot(id), cols, rows),
 	terminalKill: (id: TerminalId) => core<void>('terminal.kill', { id }),
 	terminalList: () => core<TerminalStatusDto[]>('terminal.list'),
 	/** Open a shell in a project's footer (F23). A separate command from

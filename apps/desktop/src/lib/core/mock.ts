@@ -105,7 +105,9 @@ export function mockCore(): CoreClient {
 			outputs.set(terminalId, onOutput);
 			return {
 				slot: slotOf(terminalId),
-				detach: () => outputs.delete(terminalId),
+				detach: () => {
+					if (outputs.get(terminalId) === onOutput) outputs.delete(terminalId);
+				},
 			};
 		},
 		write(slot, bytes) {

@@ -1,6 +1,6 @@
 import type { AppError, ClientMsg, CoreEndpoint, CoreEvent, ServerMsg } from '@factorai/types';
 import { invoke } from '@tauri-apps/api/core';
-import { formatError } from '@lib/errors';
+import { formatError, isAppError } from '@lib/errors';
 import { isTauri } from '@lib/tauri';
 import { decodeFrame, encodeFrame, encodeResize, Op } from './frames';
 import { mockCore } from './mock';
@@ -40,6 +40,15 @@ interface Attachment {
 
 const lostError = (message: string): AppError => ({ kind: 'Process', message });
 
+/** For a send whose only expected failure is the connection dropping: the
+ *  core's state for this client went with it, so there is nothing to undo. */
+const unlessLost = (what: string) => (e: unknown) => {
+	if (!isAppError(e) || e.kind !== 'Process') console.error(`${what} failed`, e);
+};
+
+/** The methods that answer with a slot already attached for the caller. */
+const SPAWNS = new Set(['terminal.spawn', 'shell.spawn', 'server.openShell']);
+
 /** One connection to one core, kept alive: reconnects with backoff and puts
  *  every attached terminal back on the new socket. */
 export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
@@ -52,8 +61,11 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 	let nextRequestId = 1;
 	const pending = new Map<
 		number,
-		{ resolve: (v: unknown) => void; reject: (e: AppError) => void }
+		{ method: string; resolve: (v: unknown) => void; reject: (e: AppError) => void }
 	>();
+	/** Slots a spawn on this connection handed back, by terminal, until `attach`
+	 *  takes them: no second round trip, so less output falls in the gap. */
+	const spawned = new Map<string, number>();
 	const listeners = new Map<string, Set<(payload: unknown) => void>>();
 	const attachments = new Set<Attachment>();
 	const bySlot = new Map<number, Attachment>();
@@ -80,7 +92,7 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 	const send = <T>(method: string, params: unknown): Promise<T> => {
 		const requestId = nextRequestId++;
 		return new Promise<T>((resolve, reject) => {
-			pending.set(requestId, { resolve: (v) => resolve(v as T), reject });
+			pending.set(requestId, { method, resolve: (v) => resolve(v as T), reject });
 			// `params` is required on the wire, so an absent one is `null`.
 			sendJson({ type: 'request', requestId, method, params: params ?? null });
 		});
@@ -91,15 +103,24 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 		return send<T>(method, params);
 	};
 
+	const detachSlot = (slot: number) =>
+		void send('terminal.detach', { slot }).catch(unlessLost('terminal.detach'));
+
 	const reattach = (att: Attachment) => {
 		send<{ slot: number }>('terminal.attach', { terminalId: att.terminalId }).then(
 			({ slot }) => {
-				if (!attachments.has(att)) return;
+				// Detached while the answer was on its way: give the slot back.
+				if (!attachments.has(att)) return detachSlot(slot);
 				att.slot = slot;
 				bySlot.set(slot, att);
 			},
-			// The terminal ended while we were away: nothing left to stream.
-			() => attachments.delete(att),
+			(e: unknown) => {
+				if (!isAppError(e)) return console.error('terminal.attach (re-attach) failed', e);
+				// The terminal ended while we were away: nothing left to stream.
+				if (e.kind === 'NotFound') attachments.delete(att);
+				// Lost again: the next handshake re-attaches it.
+				else if (e.kind !== 'Process') console.error('terminal.attach (re-attach) failed', e);
+			},
 		);
 	};
 
@@ -112,7 +133,9 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 		}, PING_MS);
 		for (const att of attachments) reattach(att);
 		for (const terminalId of shown) {
-			void send('terminal.visibility', { terminalId, visible: true }).catch(() => undefined);
+			void send('terminal.visibility', { terminalId, visible: true }).catch(
+				unlessLost('terminal.visibility'),
+			);
 		}
 		ready.resolve();
 	};
@@ -127,8 +150,12 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 			case 'rpc_error': {
 				const call = pending.get(msg.requestId);
 				pending.delete(msg.requestId);
-				if (msg.type === 'response') call?.resolve(msg.result);
-				else call?.reject(msg.error);
+				if (msg.type === 'rpc_error') return call?.reject(msg.error);
+				if (call && SPAWNS.has(call.method)) {
+					const { id, slot } = msg.result as { id: string; slot: number };
+					spawned.set(id, slot);
+				}
+				call?.resolve(msg.result);
 				return;
 			}
 			case 'event':
@@ -145,7 +172,11 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 		ws = undefined;
 		handshaken = false;
 		clearInterval(pinger);
+		// Slots are per connection and the next one numbers from 1 again: an old
+		// number may name another terminal there, so nothing may use it.
 		bySlot.clear();
+		spawned.clear();
+		for (const att of attachments) att.slot = 0;
 		for (const call of pending.values()) call.reject(lostError(why));
 		pending.clear();
 		retry(why);
@@ -201,7 +232,9 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 			return () => set.delete(fn);
 		},
 		async attach(terminalId, onOutput) {
-			const { slot } = await request<{ slot: number }>('terminal.attach', { terminalId });
+			let slot = spawned.get(terminalId);
+			spawned.delete(terminalId);
+			slot ??= (await request<{ slot: number }>('terminal.attach', { terminalId })).slot;
 			const att: Attachment = { terminalId, slot, onOutput };
 			attachments.add(att);
 			bySlot.set(slot, att);
@@ -213,18 +246,18 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 					attachments.delete(att);
 					if (bySlot.get(att.slot) !== att) return;
 					bySlot.delete(att.slot);
-					// A connection lost meanwhile took the slot with it.
-					void send('terminal.detach', { slot: att.slot }).catch(() => undefined);
+					detachSlot(att.slot);
 				},
 			};
 		},
-		// Input typed while there is no socket is dropped, never replayed: a
-		// keystroke sent twice is worse than one lost.
+		// Input for a slot this connection has not attached (no socket, or a
+		// re-attach still on its way) is dropped, never replayed: a keystroke sent
+		// twice, or to another terminal, is worse than one lost.
 		write(slot, bytes) {
-			if (handshaken) ws?.send(encodeFrame(Op.Input, slot, bytes));
+			if (handshaken && bySlot.has(slot)) ws?.send(encodeFrame(Op.Input, slot, bytes));
 		},
 		resize(slot, cols, rows) {
-			if (handshaken) ws?.send(encodeResize(slot, cols, rows));
+			if (handshaken && bySlot.has(slot)) ws?.send(encodeResize(slot, cols, rows));
 		},
 		setVisible(terminalId, visible) {
 			if (visible === shown.has(terminalId)) return;
@@ -232,7 +265,9 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 			else shown.delete(terminalId);
 			// Not connected: `onServerInfo` sends every shown terminal.
 			if (handshaken) {
-				void send('terminal.visibility', { terminalId, visible }).catch(() => undefined);
+				void send('terminal.visibility', { terminalId, visible }).catch(
+					unlessLost('terminal.visibility'),
+				);
 			}
 		},
 	};

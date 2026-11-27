@@ -1,4 +1,4 @@
-import type { ClientMsg, ServerMsg } from '@factorai/types';
+import type { AppError, ClientMsg, ServerMsg } from '@factorai/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { connectCore } from './client';
 import { encodeFrame, Op } from './frames';
@@ -45,6 +45,17 @@ class FakeWebSocket {
 		if (req?.type !== 'request') throw new Error(`no ${method} request was sent`);
 		this.receive({ type: 'response', requestId: req.requestId, result });
 	}
+	/** Fail the last request for `method`. */
+	fail(method: string, error: AppError) {
+		const req = this.json()
+			.filter((m) => m.type === 'request' && m.method === method)
+			.pop();
+		if (req?.type !== 'request') throw new Error(`no ${method} request was sent`);
+		this.receive({ type: 'rpc_error', requestId: req.requestId, error });
+	}
+	requests(method: string) {
+		return this.json().filter((m) => m.type === 'request' && m.method === method);
+	}
 }
 
 const SERVER_INFO: ServerMsg = {
@@ -84,6 +95,17 @@ async function attach(
 	ws.answer('terminal.attach', { slot });
 	const handle = await pending;
 	return { handle, out };
+}
+
+/** Close `ws`, let the client dial again, and finish the handshake. */
+async function reconnect(ws: FakeWebSocket) {
+	ws.onclose?.();
+	await vi.advanceTimersByTimeAsync(2_000);
+	const next = latest();
+	next.onopen?.();
+	next.receive(SERVER_INFO);
+	await flush();
+	return next;
 }
 
 beforeEach(() => {
@@ -185,5 +207,63 @@ describe('core client', () => {
 		ws.receive({ type: 'pong' });
 		await vi.advanceTimersByTimeAsync(10_000);
 		expect(ws.closed).toBe(false);
+	});
+	it('no_input_on_a_stale_slot_before_reattach', async () => {
+		const { client, ws } = await connected();
+		const { handle } = await attach(client, ws, 't1', 1);
+		const next = await reconnect(ws);
+		// The re-attach has not been answered: slot 1 may be another terminal here.
+		client.write(handle.slot, new Uint8Array([1]));
+		client.write(1, new Uint8Array([1]));
+		client.resize(1, 80, 24);
+		expect(next.binary()).toEqual([]);
+	});
+
+	it('reattach_lost_again_keeps_the_terminal', async () => {
+		const { client, ws } = await connected();
+		const { handle, out } = await attach(client, ws, 't1', 1);
+		const second = await reconnect(ws);
+		expect(second.requests('terminal.attach')).toHaveLength(1);
+		const third = await reconnect(second);
+		expect(third.requests('terminal.attach')).toHaveLength(1);
+		third.answer('terminal.attach', { slot: 2 });
+		await flush();
+		expect(handle.slot).toBe(2);
+		third.receiveBinary(encodeFrame(Op.Output, 2, new Uint8Array([9])));
+		expect(out).toEqual([new Uint8Array([9])]);
+	});
+
+	it('reattach_not_found_drops_the_terminal', async () => {
+		const { client, ws } = await connected();
+		await attach(client, ws, 't1', 1);
+		const second = await reconnect(ws);
+		second.fail('terminal.attach', { kind: 'NotFound', message: 'terminal t1' });
+		await flush();
+		const third = await reconnect(second);
+		expect(third.requests('terminal.attach')).toEqual([]);
+	});
+
+	it('detach_during_reattach_frees_the_new_slot', async () => {
+		const { client, ws } = await connected();
+		const { handle } = await attach(client, ws, 't1', 1);
+		const next = await reconnect(ws);
+		handle.detach();
+		next.answer('terminal.attach', { slot: 9 });
+		await flush();
+		expect(next.requests('terminal.detach')).toMatchObject([{ params: { slot: 9 } }]);
+	});
+
+	it('attach_uses_the_slot_a_spawn_returned', async () => {
+		const { client, ws } = await connected();
+		const spawn = client.request<{ id: string }>('terminal.spawn', { sessionId: 's' });
+		await flush();
+		ws.answer('terminal.spawn', { id: 't9', agent: null, slot: 3 });
+		await spawn;
+		const out: Uint8Array[] = [];
+		const handle = await client.attach('t9', (b) => out.push(b.slice()));
+		expect(ws.requests('terminal.attach')).toEqual([]);
+		expect(handle.slot).toBe(3);
+		ws.receiveBinary(encodeFrame(Op.Output, 3, new Uint8Array([7])));
+		expect(out).toEqual([new Uint8Array([7])]);
 	});
 });
