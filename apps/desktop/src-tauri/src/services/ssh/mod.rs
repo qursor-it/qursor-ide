@@ -566,6 +566,28 @@ mod tests {
 		assert!(matches!(res, Err(SshError::HostKeyChanged { .. })), "got {:?}", res.err());
 	}
 
+	/// The reaper is a plain thread with no runtime: dropping a login from there
+	/// must reach the pool's own runtime rather than panic (and abort the app).
+	#[cfg(unix)]
+	#[test]
+	fn the_reaper_thread_can_drop_a_connection_without_a_runtime() {
+		let d = test_sshd::start();
+		let (t, known) = target(&d);
+		let pool = Arc::new(pool::Pool::new(known.clone(), crate::test_support::handle()));
+		crate::test_support::block_on(async {
+			let Err(SshError::UnknownHost { fingerprint }) = connect(&t, &known, None).await else {
+				panic!("expected an unknown host");
+			};
+			let (target, _) = target(&d);
+			pool.connection("s", || async move { Ok(target) }, Some(fingerprint))
+				.await
+				.expect("connect");
+		});
+		let reaper = pool.clone();
+		std::thread::spawn(move || reaper.reap(|_| false)).join().expect("reap must not panic");
+		assert!(!pool.is_connected("s"));
+	}
+
 	#[test]
 	fn quote_survives_single_quotes_and_spaces() {
 		assert_eq!(quote("/srv/my app"), "'/srv/my app'");

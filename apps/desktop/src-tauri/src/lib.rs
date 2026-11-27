@@ -187,175 +187,177 @@ pub fn run() {
 				warn!(%error, "could not prepare the OpenCode session signal folder");
 			}
 			let sink: Arc<dyn EventSink> = Arc::new(TauriSink::new(app.handle().clone()));
-			let terminals = TerminalManager::new(sink.clone(), cd.clone(), ui.clone())
-				.with_opencode_signal_dir(opencode_signals)
-				.with_status_tap(move |e| attention_tap.on_status(e))
-				// Claude's limits, forwarded by each session's status line.
-				.with_usage_sink_dir(statusline_dir.clone())
-				.with_usage_limits({
-					let (db, usage) = (db.clone(), usage.clone());
-					let go = go_usage.clone();
-					Arc::new(move |project, filter| {
-						services::usage::mcp::read(&db, &usage, &go, project, filter)
-					})
+			let terminals = TerminalManager::new(
+				sink.clone(),
+				cd.clone(),
+				ui.clone(),
+				tokio::runtime::Handle::current(),
+			)
+			.with_opencode_signal_dir(opencode_signals)
+			.with_status_tap(move |e| attention_tap.on_status(e))
+			// Claude's limits, forwarded by each session's status line.
+			.with_usage_sink_dir(statusline_dir.clone())
+			.with_usage_limits({
+				let (db, usage) = (db.clone(), usage.clone());
+				let go = go_usage.clone();
+				Arc::new(move |project, filter| {
+					services::usage::mcp::read(&db, &usage, &go, project, filter)
 				})
-				// Switchable: our status line hides Claude Code's footer hints for
-				// a user with none of their own. Unset = on.
-				.with_usage_statusline_enabled({
-					let db = db.clone();
-					Arc::new(move || {
-						let value = db
-							.with(|conn| {
-								services::settings::get(conn, models::SettingKey::UsageStatusLine)
-							})
-							.ok()
-							.flatten();
-						value.as_deref() != Some("off")
-					})
-				})
-				.with_delegation_confirmation({
-					let db = db.clone();
-					Arc::new(move || {
-						db.with(|conn| {
-							services::settings::get(
-								conn,
-								models::SettingKey::ConfirmAgentDelegations,
-							)
+			})
+			// Switchable: our status line hides Claude Code's footer hints for
+			// a user with none of their own. Unset = on.
+			.with_usage_statusline_enabled({
+				let db = db.clone();
+				Arc::new(move || {
+					let value = db
+						.with(|conn| {
+							services::settings::get(conn, models::SettingKey::UsageStatusLine)
 						})
 						.ok()
-						.flatten()
-						.as_deref() != Some("off")
-					})
+						.flatten();
+					value.as_deref() != Some("off")
 				})
-				.with_user_binary(Arc::new(move |agent| {
-					services::settings::binary_override(&settings_db, agent)
-				}))
-				// Which agent a project's next session runs (F30). Read per spawn
-				// for the same reason as the profile below.
-				.with_agent_of({
+			})
+			.with_delegation_confirmation({
+				let db = db.clone();
+				Arc::new(move || {
+					db.with(|conn| {
+						services::settings::get(conn, models::SettingKey::ConfirmAgentDelegations)
+					})
+					.ok()
+					.flatten()
+					.as_deref() != Some("off")
+				})
+			})
+			.with_user_binary(Arc::new(move |agent| {
+				services::settings::binary_override(&settings_db, agent)
+			}))
+			// Which agent a project's next session runs (F30). Read per spawn
+			// for the same reason as the profile below.
+			.with_agent_of({
+				let db = db.clone();
+				Arc::new(move |project_id, session_id| {
+					services::profiles::agent_for_spawn(&db, project_id, session_id)
+				})
+			})
+			.with_session_cwd(Arc::new(move |session_id| {
+				services::sessions::recorded_cwds(&session_db, session_id)
+			}))
+			.with_session_key({
+				let db = db.clone();
+				Arc::new(move |session_id| services::sessions::recorded_key(&db, session_id))
+			})
+			// Which identity a project's next session runs as (F25, ADR-0036).
+			// Read per spawn out of the same database and for the same reason as
+			// the two above: changing the default profile changes the next
+			// session without touching the ones already running.
+			.with_profile_dir({
+				let db = db.clone();
+				Arc::new(move |agent, project_id, session_id| {
+					services::profiles::config_dir_for_spawn(&db, agent, project_id, session_id)
+						.or_else(|| {
+							if agent != agents::OPENCODE {
+								return None;
+							}
+							let descriptor = agents::descriptor(agent)?;
+							let root = agents::ambient_dir(descriptor);
+							services::profiles::ensure_default_for(&db, agent, &root)
+								.ok()
+								.map(|profile| PathBuf::from(profile.config_dir))
+						})
+				})
+			})
+			// Which checkout each session is working in (F21). Written by the
+			// bridge's signal path only — the agent calling `setWorktree`, or an
+			// `openFile` landing in another worktree — and read back so a resumed
+			// session comes up in the tree it was working in.
+			.with_worktree_store(services::terminal::WorktreeStore {
+				get: {
+					let db = db.clone();
+					Arc::new(move |session_id| {
+						services::sessions::worktree(&db, session_id).map(PathBuf::from)
+					})
+				},
+				set: {
+					let db = db.clone();
+					Arc::new(move |session_id, path| {
+						// Logged rather than propagated: the caller is a socket handler
+						// answering an agent, and a failed write must not become a
+						// failed tool call the agent then retries.
+						if let Err(e) = services::sessions::set_worktree(
+							&db,
+							session_id,
+							&path.to_string_lossy(),
+							epoch_ms(),
+						) {
+							warn!(error = %e, session_id, "could not record a session's worktree");
+						}
+					})
+				},
+			})
+			// A project's routines, for the bridge's tool group (F22 slice 3,
+			// ADR-0028). Both writes go through the announcing layer the editor's
+			// own commands use, so a schedule an agent changed reaches an open
+			// Routines tab — the one case the renderer cannot fix for itself,
+			// since it never hears about that write.
+			//
+			// **Which project and which session are not decided here.** They are
+			// bound per bridge in `start_bridge`, where they are known; this layer
+			// only knows how to reach the table.
+			.with_routine_store(services::terminal::RoutineStore {
+				list: {
+					let db = db.clone();
+					Arc::new(move |project_id| {
+						db.with(|conn| services::routines::list(conn, project_id, epoch_ms()))
+					})
+				},
+				create: {
+					let db = db.clone();
+					let sink = sink.clone();
+					Arc::new(move |input, author| {
+						services::routines::create_and_announce(
+							&db,
+							sink.as_ref(),
+							input,
+							Some(author),
+							epoch_ms(),
+						)
+					})
+				},
+				update: {
+					let db = db.clone();
+					let sink = sink.clone();
+					Arc::new(move |id, patch, author| {
+						services::routines::update_and_announce(
+							&db,
+							sink.as_ref(),
+							id,
+							patch,
+							Some(author),
+							epoch_ms(),
+						)
+					})
+				},
+			})
+			// The agent's canvas tools (F44, ADR-0104): a project's folder, and the
+			// canvas a session is linked to. Project and session are bound per
+			// session in `start_agent_tools`.
+			.with_canvas_store(services::terminal::CanvasStore {
+				root: {
+					let db = db.clone();
+					Arc::new(move |project_id| {
+						db.with(|conn| commands::projects::project_path(conn, project_id))
+					})
+				},
+				linked: {
 					let db = db.clone();
 					Arc::new(move |project_id, session_id| {
-						services::profiles::agent_for_spawn(&db, project_id, session_id)
+						db.with(|conn| {
+							services::canvas::canvas_for_session(conn, project_id, session_id)
+						})
 					})
-				})
-				.with_session_cwd(Arc::new(move |session_id| {
-					services::sessions::recorded_cwds(&session_db, session_id)
-				}))
-				.with_session_key({
-					let db = db.clone();
-					Arc::new(move |session_id| services::sessions::recorded_key(&db, session_id))
-				})
-				// Which identity a project's next session runs as (F25, ADR-0036).
-				// Read per spawn out of the same database and for the same reason as
-				// the two above: changing the default profile changes the next
-				// session without touching the ones already running.
-				.with_profile_dir({
-					let db = db.clone();
-					Arc::new(move |agent, project_id, session_id| {
-						services::profiles::config_dir_for_spawn(&db, agent, project_id, session_id)
-							.or_else(|| {
-								if agent != agents::OPENCODE {
-									return None;
-								}
-								let descriptor = agents::descriptor(agent)?;
-								let root = agents::ambient_dir(descriptor);
-								services::profiles::ensure_default_for(&db, agent, &root)
-									.ok()
-									.map(|profile| PathBuf::from(profile.config_dir))
-							})
-					})
-				})
-				// Which checkout each session is working in (F21). Written by the
-				// bridge's signal path only — the agent calling `setWorktree`, or an
-				// `openFile` landing in another worktree — and read back so a resumed
-				// session comes up in the tree it was working in.
-				.with_worktree_store(services::terminal::WorktreeStore {
-					get: {
-						let db = db.clone();
-						Arc::new(move |session_id| {
-							services::sessions::worktree(&db, session_id).map(PathBuf::from)
-						})
-					},
-					set: {
-						let db = db.clone();
-						Arc::new(move |session_id, path| {
-							// Logged rather than propagated: the caller is a socket handler
-							// answering an agent, and a failed write must not become a
-							// failed tool call the agent then retries.
-							if let Err(e) = services::sessions::set_worktree(
-								&db,
-								session_id,
-								&path.to_string_lossy(),
-								epoch_ms(),
-							) {
-								warn!(error = %e, session_id, "could not record a session's worktree");
-							}
-						})
-					},
-				})
-				// A project's routines, for the bridge's tool group (F22 slice 3,
-				// ADR-0028). Both writes go through the announcing layer the editor's
-				// own commands use, so a schedule an agent changed reaches an open
-				// Routines tab — the one case the renderer cannot fix for itself,
-				// since it never hears about that write.
-				//
-				// **Which project and which session are not decided here.** They are
-				// bound per bridge in `start_bridge`, where they are known; this layer
-				// only knows how to reach the table.
-				.with_routine_store(services::terminal::RoutineStore {
-					list: {
-						let db = db.clone();
-						Arc::new(move |project_id| {
-							db.with(|conn| services::routines::list(conn, project_id, epoch_ms()))
-						})
-					},
-					create: {
-						let db = db.clone();
-						let sink = sink.clone();
-						Arc::new(move |input, author| {
-							services::routines::create_and_announce(
-								&db,
-								sink.as_ref(),
-								input,
-								Some(author),
-								epoch_ms(),
-							)
-						})
-					},
-					update: {
-						let db = db.clone();
-						let sink = sink.clone();
-						Arc::new(move |id, patch, author| {
-							services::routines::update_and_announce(
-								&db,
-								sink.as_ref(),
-								id,
-								patch,
-								Some(author),
-								epoch_ms(),
-							)
-						})
-					},
-				})
-				// The agent's canvas tools (F44, ADR-0104): a project's folder, and the
-				// canvas a session is linked to. Project and session are bound per
-				// session in `start_agent_tools`.
-				.with_canvas_store(services::terminal::CanvasStore {
-					root: {
-						let db = db.clone();
-						Arc::new(move |project_id| {
-							db.with(|conn| commands::projects::project_path(conn, project_id))
-						})
-					},
-					linked: {
-						let db = db.clone();
-						Arc::new(move |project_id, session_id| {
-							db.with(|conn| {
-								services::canvas::canvas_for_session(conn, project_id, session_id)
-							})
-						})
-					},
-				});
+				},
+			});
 			let mut terminals = terminals;
 			// Every session a delegate runs under stays out of the lists for good (ADR-0126).
 			{
@@ -375,6 +377,7 @@ pub fn run() {
 			let tunnels = Arc::new(services::ssh::tunnel::Tunnels::default());
 			let ssh = Arc::new(services::ssh::pool::Pool::new(
 				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
+				tokio::runtime::Handle::current(),
 			));
 			// Files on servers for agents (F47), on the same pooled logins as the tabs.
 			{
@@ -820,6 +823,10 @@ pub(crate) mod test_support {
 	pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
 		static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 		RT.get_or_init(|| tokio::runtime::Runtime::new().expect("test runtime"))
+	}
+
+	pub(crate) fn handle() -> tokio::runtime::Handle {
+		runtime().handle().clone()
 	}
 
 	#[cfg(unix)]

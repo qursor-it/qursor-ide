@@ -18,7 +18,12 @@ pub trait EventSink: Send + Sync + 'static {
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "event", content = "payload", rename_all = "camelCase")]
+#[serde(
+	tag = "event",
+	content = "payload",
+	rename_all = "camelCase",
+	rename_all_fields = "camelCase"
+)]
 pub enum CoreEvent {
 	/// Raw bytes: encoding them for the wire is the sink's business.
 	TerminalData {

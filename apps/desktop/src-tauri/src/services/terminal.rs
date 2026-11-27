@@ -881,19 +881,13 @@ pub struct TerminalManager {
 	runtime: tokio::runtime::Handle,
 }
 
-/// The runtime this manager's servers live on: the caller's, which in the app
-/// is Tauri's (entered in `run`) and in the core is its own. Tests have none per
-/// thread, so they share one.
-fn current_runtime() -> tokio::runtime::Handle {
-	#[cfg(test)]
-	return tokio::runtime::Handle::try_current()
-		.unwrap_or_else(|_| crate::test_support::runtime().handle().clone());
-	#[cfg(not(test))]
-	tokio::runtime::Handle::current()
-}
-
 impl TerminalManager {
-	pub fn new(sink: Arc<dyn EventSink>, claude_dir: PathBuf, ui: Arc<UiState>) -> Self {
+	pub fn new(
+		sink: Arc<dyn EventSink>,
+		claude_dir: PathBuf,
+		ui: Arc<UiState>,
+		runtime: tokio::runtime::Handle,
+	) -> Self {
 		// One store per app; it announces every change for the renderer (F50).
 		let delegations = Arc::new(Delegations::default());
 		let s = sink.clone();
@@ -917,6 +911,7 @@ impl TerminalManager {
 				let s = sink.clone();
 				Arc::new(move |e| s.emit(CoreEvent::TerminalExit(e)))
 			},
+			runtime,
 		);
 		mgr.ui = ui;
 		mgr.delegations = delegations;
@@ -948,6 +943,7 @@ impl TerminalManager {
 		on_data: DataCb,
 		on_status: StatusCb,
 		on_exit: ExitCb,
+		runtime: tokio::runtime::Handle,
 	) -> Self {
 		Self {
 			terminals: Arc::new(DashMap::new()),
@@ -983,7 +979,7 @@ impl TerminalManager {
 			server_label: None,
 			remote_files: None,
 			tmux: Arc::new(DashMap::new()),
-			runtime: current_runtime(),
+			runtime,
 		}
 	}
 
@@ -3119,6 +3115,7 @@ mod tests {
 			Arc::new(|_| {}),
 			Arc::new(move |e: TerminalStatusEvent| e2.lock().unwrap().push(e.status)),
 			Arc::new(|_| {}),
+			crate::test_support::handle(),
 		)
 		.with_status_tap(move |e| t2.lock().unwrap().push(e.status));
 		(mgr.on_status)(TerminalStatusEvent {
@@ -3159,6 +3156,7 @@ mod tests {
 			sink.clone(),
 			PathBuf::from(NO_STORE),
 			Arc::new(UiState::default()),
+			crate::test_support::handle(),
 		);
 		let argv: Vec<String> = if cfg!(windows) {
 			["cmd", "/c", "echo hi"].map(String::from).to_vec()
@@ -3223,6 +3221,7 @@ mod tests {
 			Arc::new(move |e| dc.lock().unwrap().push(e)),
 			Arc::new(|_| {}),
 			Arc::new(move |e| ec.lock().unwrap().push(e)),
+			crate::test_support::handle(),
 		);
 		(mgr, data, exit)
 	}
@@ -3571,7 +3570,7 @@ mod tests {
 		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
 		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
 		mgr.set_remote_files(Arc::new(RemoteFiles::new(
-			Arc::new(Pool::new(known)),
+			Arc::new(Pool::new(known, crate::test_support::handle())),
 			Arc::new(move |_| {
 				Ok(Target {
 					host: "127.0.0.1".into(),
@@ -3650,7 +3649,10 @@ mod tests {
 		let (mut mgr, _data, exit) = make_manager();
 		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
 		mgr.set_remote_files(Arc::new(crate::services::ssh::sftp::RemoteFiles::new(
-			Arc::new(crate::services::ssh::pool::Pool::new(known.clone())),
+			Arc::new(crate::services::ssh::pool::Pool::new(
+				known.clone(),
+				crate::test_support::handle(),
+			)),
 			Arc::new(move |_| {
 				Ok(Target {
 					host: "127.0.0.1".into(),
@@ -4069,6 +4071,7 @@ mod tests {
 			Arc::new(|_| {}),
 			Arc::new(move |e| sc.lock().unwrap().push(e)),
 			Arc::new(|_| {}),
+			crate::test_support::handle(),
 		);
 
 		// The idle title, exactly as the CLI writes it: OSC 0, U+2733, BEL.
@@ -4217,6 +4220,7 @@ mod tests {
 			}),
 			Arc::new(move |e| sc.lock().unwrap().push(e)),
 			Arc::new(|_| {}),
+			crate::test_support::handle(),
 		);
 
 		let id = mgr
@@ -5124,8 +5128,9 @@ mod tests {
 	}
 
 	/// A manager whose data events are stamped on arrival, and whose exit is too.
-	/// The sink is an in-process closure that base64-decodes, i.e. today's manager
-	/// path, not Tauri IPC.
+	/// The sink is an in-process closure that base64-encodes (what `TauriSink`
+	/// does) and decodes (what the renderer does) each data event, i.e. today's
+	/// cost, not Tauri IPC.
 	fn baseline_manager() -> (TerminalManager, Stamps, ExitStamp) {
 		let data: Stamps = Arc::new(StdMutex::new(Vec::new()));
 		let exit = Arc::new(StdMutex::new(None));
@@ -5133,13 +5138,17 @@ mod tests {
 		let mgr = TerminalManager::with_callbacks(
 			PathBuf::from(NO_STORE),
 			Arc::new(move |e: TerminalDataEvent| {
-				let n = e.bytes.len();
+				use base64::Engine;
+				let b64 = base64::engine::general_purpose::STANDARD.encode(&e.bytes);
+				let n =
+					base64::engine::general_purpose::STANDARD.decode(b64).map_or(0, |b| b.len());
 				dc.lock().unwrap().push((Instant::now(), n));
 			}),
 			Arc::new(|_| {}),
 			Arc::new(move |e: TerminalExitEvent| {
 				*ec.lock().unwrap() = Some((Instant::now(), e.code))
 			}),
+			crate::test_support::handle(),
 		);
 		(mgr, data, exit)
 	}
@@ -5257,6 +5266,7 @@ mod windows_tests {
 			Arc::new(move |event| data_callback.lock().unwrap().push(event)),
 			Arc::new(|_| {}),
 			Arc::new(|_| {}),
+			crate::test_support::handle(),
 		);
 		(manager, data)
 	}

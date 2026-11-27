@@ -36,6 +36,8 @@ type WriteHalf = Arc<ChannelWriteHalf<Msg>>;
 struct Closer {
 	write: WriteHalf,
 	stop: Arc<Notify>,
+	/// `close` runs on any thread, so the runtime it spawns on is kept here.
+	rt: tokio::runtime::Handle,
 }
 
 /// Exit code reported when the channel closed without an exit status — the
@@ -61,7 +63,11 @@ pub fn bridge(
 	let (exit_tx, exit_rx) = mpsc::channel::<u32>();
 
 	let stop = Arc::new(Notify::new());
-	let closer = Closer { write: write_half.clone(), stop: stop.clone() };
+	let closer = Closer {
+		write: write_half.clone(),
+		stop: stop.clone(),
+		rt: tokio::runtime::Handle::current(),
+	};
 	let writer = write_half.clone();
 	tokio::spawn(async move {
 		while let Some(c) = ctl_rx.recv().await {
@@ -111,7 +117,7 @@ pub fn bridge(
 /// its session), which is the remote half of kill-on-quit (ADR-0005).
 fn close(c: &Closer) {
 	let c = c.clone();
-	tokio::spawn(async move {
+	c.rt.clone().spawn(async move {
 		let _ = c.write.close().await;
 		c.stop.notify_one();
 	});

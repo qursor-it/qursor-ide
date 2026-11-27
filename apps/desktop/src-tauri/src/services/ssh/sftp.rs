@@ -416,7 +416,7 @@ mod tests {
 				connect(&target, &known, Some(fingerprint)).await.expect("trust");
 			}
 		});
-		let pool = Arc::new(Pool::new(known));
+		let pool = Arc::new(Pool::new(known, crate::test_support::handle()));
 		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
 		let files = RemoteFiles::new(
 			pool,

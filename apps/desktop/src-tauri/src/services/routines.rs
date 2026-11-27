@@ -892,12 +892,9 @@ impl Runner {
 	/// not a separate mechanism: an occurrence missed while the app was closed
 	/// is simply one whose latest instance is in the past (see
 	/// [`due_occurrence`]).
-	/// **A named thread, not `tokio::spawn`** — found by running it. `setup()` is
-	/// called before Tauri's runtime exists, so spawning a task there panics with
-	/// *"there is no reactor running"* on the main thread, before the window
-	/// appears. The indexer's scan and the watcher are threads for the same
-	/// reason, and this loop blocks on a sleep rather than doing async work
-	/// anyway.
+	/// **A named thread, not a task**: this loop blocks on a sleep rather than
+	/// doing async work, and the indexer's scan and the watcher are threads for
+	/// the same reason.
 	pub fn start(self: std::sync::Arc<Self>) {
 		std::thread::Builder::new()
 			.name("routine-runner".into())

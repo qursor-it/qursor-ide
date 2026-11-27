@@ -14,11 +14,14 @@ pub struct Pool {
 	/// login instead of racing two.
 	connecting: DashMap<String, Arc<tokio::sync::Mutex<()>>>,
 	known: KnownHosts,
+	/// `disconnect` is called from plain threads (the reaper), which have no
+	/// runtime to spawn on.
+	rt: tokio::runtime::Handle,
 }
 
 impl Pool {
-	pub fn new(known: KnownHosts) -> Self {
-		Self { conns: DashMap::new(), connecting: DashMap::new(), known }
+	pub fn new(known: KnownHosts, rt: tokio::runtime::Handle) -> Self {
+		Self { conns: DashMap::new(), connecting: DashMap::new(), known, rt }
 	}
 
 	pub fn is_connected(&self, server_id: &str) -> bool {
@@ -56,7 +59,7 @@ impl Pool {
 	/// terminals report as an exit.
 	pub fn disconnect(&self, server_id: &str) {
 		if let Some((_, conn)) = self.conns.remove(server_id) {
-			tokio::spawn(async move {
+			self.rt.spawn(async move {
 				let _ = conn.disconnect(russh::Disconnect::ByApplication, "", "en").await;
 			});
 		}
