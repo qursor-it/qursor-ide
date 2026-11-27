@@ -266,4 +266,59 @@ describe('core client', () => {
 		ws.receiveBinary(encodeFrame(Op.Output, 3, new Uint8Array([7])));
 		expect(out).toEqual([new Uint8Array([7])]);
 	});
+
+	it('a_throwing_websocket_rejects_waiters_and_retries', async () => {
+		let throwOnce = true;
+		class Throwing extends FakeWebSocket {
+			constructor(url: string) {
+				if (throwOnce) {
+					throwOnce = false;
+					throw new SyntaxError('bad url');
+				}
+				super(url);
+			}
+		}
+		vi.stubGlobal('WebSocket', Throwing);
+		const client = connectCore(async () => ({ url: 'nope', secret: 's', hostId: 'h' }));
+		const rejected = expect(client.request('core.counts')).rejects.toMatchObject({
+			kind: 'Process',
+			message: expect.stringContaining('could not open a connection to the core'),
+		});
+		await flush();
+		await rejected;
+		await vi.advanceTimersByTimeAsync(100);
+		expect(FakeWebSocket.all).toHaveLength(1);
+	});
+
+	it('a_wrong_secret_is_reported_not_retried_forever', async () => {
+		const client = connectCore(async () => ({ url: 'ws://x', secret: 'wrong', hostId: 'h' }));
+		for (let i = 0; i < 3; i++) {
+			await vi.advanceTimersByTimeAsync(2_000);
+			const ws = latest();
+			ws.onopen?.();
+			// As a browser reports it: an error, then the close.
+			ws.onerror?.();
+			ws.onclose?.();
+		}
+		await expect(client.request('core.counts')).rejects.toMatchObject({
+			message: expect.stringContaining('refused this window'),
+		});
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(FakeWebSocket.all).toHaveLength(3);
+	});
+
+	it('another_protocol_version_is_an_explicit_error', async () => {
+		const client = connectCore(async () => ({ url: 'ws://x', secret: 's', hostId: 'h' }));
+		const rejected = expect(client.request('core.counts')).rejects.toMatchObject({
+			message: expect.stringContaining('protocol 2'),
+		});
+		await flush();
+		const ws = latest();
+		ws.onopen?.();
+		ws.receive({ ...SERVER_INFO, protocolVersion: 2 });
+		await rejected;
+		expect(ws.closed).toBe(true);
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(FakeWebSocket.all).toHaveLength(1);
+	});
 });

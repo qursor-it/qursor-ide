@@ -550,9 +550,9 @@ export const cmd = {
 	shellSpawn: (opts: ShellSpawnOpts) =>
 		core<{ id: TerminalId }>('shell.spawn', opts).then((s) => s.id),
 	// ── Servers (F45) ──
-	listServers: () => invoke<ServerBook>('list_servers'),
-	saveServer: (input: ServerInput) => invoke<Server>('save_server', { input }),
-	deleteServer: (id: string) => invoke<void>('delete_server', { id }),
+	listServers: () => core<ServerBook>('server.list'),
+	saveServer: (input: ServerInput) => core<Server>('server.save', { input }),
+	deleteServer: (id: string) => core<void>('server.delete', { id }),
 	createServerFolder: (name: string, projectId?: string) =>
 		invoke<ServerFolder>('create_server_folder', { name, projectId }),
 	fixServerFile: (projectId: string, relPath: string) =>
@@ -583,7 +583,7 @@ export const cmd = {
 			rows,
 			acceptFingerprint,
 		}).then((s) => s.id),
-	serverDisconnect: (serverId: string) => invoke<void>('server_disconnect', { serverId }),
+	serverDisconnect: (serverId: string) => core<void>('server.disconnect', { serverId }),
 	/** End a persistent tab's tmux session: the human closed the tab (F49). */
 	serverEndTab: (serverId: string, clientKey: string) =>
 		core<void>('server.endTab', { serverId, clientKey }),
@@ -597,23 +597,23 @@ export const cmd = {
 	agentTerminalAnswer: (id: string, run: boolean, command?: string) =>
 		core<void>('agentTerminal.answer', { id, run, command }),
 	// ── Tunnels (F48) ──
-	listTunnels: (serverId: string) => invoke<Tunnel[]>('list_tunnels', { serverId }),
-	saveTunnel: (tunnel: Tunnel) => invoke<Tunnel>('save_tunnel', { tunnel }),
-	deleteTunnel: (id: string) => invoke<void>('delete_tunnel', { id }),
-	tunnelStart: (id: string) => invoke<void>('tunnel_start', { id }),
-	tunnelStop: (id: string) => invoke<void>('tunnel_stop', { id }),
+	listTunnels: (serverId: string) => core<Tunnel[]>('tunnel.list', { serverId }),
+	saveTunnel: (tunnel: Tunnel) => core<Tunnel>('tunnel.save', { tunnel }),
+	deleteTunnel: (id: string) => core<void>('tunnel.delete', { id }),
+	tunnelStart: (id: string) => core<void>('tunnel.start', { id }),
+	tunnelStop: (id: string) => core<void>('tunnel.stop', { id }),
 	// ── SFTP (F47) ──
 	sftpList: (serverId: string, path: string) =>
-		invoke<RemoteListing>('sftp_list', { serverId, path }),
+		core<RemoteListing>('sftp.list', { serverId, path }),
 	sftpDownload: (serverId: string, remote: string, local: string) =>
-		invoke<void>('sftp_download', { serverId, remote, local }),
+		core<void>('sftp.download', { serverId, remote, local }),
 	sftpUpload: (serverId: string, local: string, remoteDir: string) =>
-		invoke<string>('sftp_upload', { serverId, local, remoteDir }),
-	sftpMkdir: (serverId: string, path: string) => invoke<void>('sftp_mkdir', { serverId, path }),
+		core<string>('sftp.upload', { serverId, local, remoteDir }),
+	sftpMkdir: (serverId: string, path: string) => core<void>('sftp.mkdir', { serverId, path }),
 	sftpRename: (serverId: string, from: string, to: string) =>
-		invoke<void>('sftp_rename', { serverId, from, to }),
+		core<void>('sftp.rename', { serverId, from, to }),
 	sftpRemove: (serverId: string, path: string, isDir: boolean) =>
-		invoke<void>('sftp_remove', { serverId, path, isDir }),
+		core<void>('sftp.remove', { serverId, path, isDir }),
 	/** The project a server's agent sessions run in, created on first use (F46). */
 	serverAgentProject: (serverId: string) => invoke<Project>('server_agent_project', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by

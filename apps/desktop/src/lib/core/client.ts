@@ -31,6 +31,9 @@ const PING_MS = 10_000;
 const SILENCE_MS = 2 * PING_MS;
 const BACKOFF_MIN_MS = 100;
 const BACKOFF_MAX_MS = 2_000;
+/** Connections the core closes before its `server_info` — a wrong secret —
+ *  before the client gives up rather than retry forever. */
+const MAX_REFUSALS = 3;
 
 interface Attachment {
 	terminalId: string;
@@ -55,6 +58,10 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 	const clientId = crypto.randomUUID();
 	let ws: WebSocket | undefined;
 	let handshaken = false;
+	/** Set when retrying cannot help (refused, another protocol): every request
+	 *  fails with it from then on. */
+	let failed: AppError | undefined;
+	let refusals = 0;
 	let backoff = BACKOFF_MIN_MS;
 	let lastHeard = 0;
 	let pinger: ReturnType<typeof setInterval> | undefined;
@@ -99,6 +106,7 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 	};
 
 	const request = async <T>(method: string, params?: unknown): Promise<T> => {
+		if (failed) throw failed;
 		if (!handshaken) await ready.promise;
 		return send<T>(method, params);
 	};
@@ -124,8 +132,15 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 		);
 	};
 
-	const onServerInfo = () => {
+	const onServerInfo = (version: number) => {
+		if (version !== PROTOCOL_VERSION) {
+			return fail(
+				ws,
+				lostError(`the core speaks protocol ${version}; this window speaks ${PROTOCOL_VERSION}`),
+			);
+		}
 		handshaken = true;
+		refusals = 0;
 		backoff = BACKOFF_MIN_MS;
 		pinger = setInterval(() => {
 			if (Date.now() - lastHeard >= SILENCE_MS) lost(ws, 'the core stopped answering');
@@ -143,7 +158,7 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 	const onText = (msg: ServerMsg) => {
 		switch (msg.type) {
 			case 'server_info':
-				return onServerInfo();
+				return onServerInfo(msg.protocolVersion);
 			case 'pong':
 				return;
 			case 'response':
@@ -163,10 +178,10 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 		}
 	};
 
-	/** Drop this socket and try again. Also what liveness does: a dead TCP
-	 *  connection may take minutes to report its own close. */
-	const lost = (sock: WebSocket | undefined, why: string) => {
-		if (!sock || sock !== ws) return;
+	/** Drop this socket and everything that lived on it; false if it is not
+	 *  the current one. */
+	const teardown = (sock: WebSocket | undefined, error: AppError): boolean => {
+		if (!sock || sock !== ws) return false;
 		sock.onopen = sock.onmessage = sock.onclose = sock.onerror = null;
 		sock.close();
 		ws = undefined;
@@ -177,9 +192,30 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 		bySlot.clear();
 		spawned.clear();
 		for (const att of attachments) att.slot = 0;
-		for (const call of pending.values()) call.reject(lostError(why));
+		for (const call of pending.values()) call.reject(error);
 		pending.clear();
-		retry(why);
+		return true;
+	};
+
+	/** Drop this socket and try again. Also what liveness does: a dead TCP
+	 *  connection may take minutes to report its own close. */
+	const lost = (sock: WebSocket | undefined, why: string) => {
+		if (teardown(sock, lostError(why))) retry(why);
+	};
+
+	/** Drop this socket and stop: no retry would succeed. */
+	const fail = (sock: WebSocket | undefined, error: AppError) => {
+		if (!teardown(sock, error)) return;
+		failed = error;
+		console.error(`qursor-core: ${error.message}`);
+		ready.reject(error);
+	};
+
+	/** Closed after it opened, before any `server_info`: the core turned us away. */
+	const refused = (sock: WebSocket) => {
+		refusals += 1;
+		if (refusals < MAX_REFUSALS) return lost(sock, 'the core closed the connection at hello');
+		fail(sock, lostError('the core refused this window: its secret is not the one it was given'));
 	};
 
 	const retry = (why: string) => {
@@ -196,10 +232,17 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 		} catch (e) {
 			return retry(`the core is not reachable: ${formatError(e)}`);
 		}
-		const sock = new WebSocket(ep.url);
+		let sock: WebSocket;
+		try {
+			sock = new WebSocket(ep.url);
+		} catch (e) {
+			return retry(`could not open a connection to the core: ${formatError(e)}`);
+		}
 		ws = sock;
 		sock.binaryType = 'arraybuffer';
-		sock.onopen = () =>
+		let opened = false;
+		sock.onopen = () => {
+			opened = true;
 			sendJson({
 				type: 'hello',
 				secret: ep.secret,
@@ -209,6 +252,7 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 				appVersion: __APP_VERSION__,
 				capabilities: [],
 			});
+		};
 		sock.onmessage = (e: MessageEvent) => {
 			lastHeard = Date.now();
 			if (typeof e.data === 'string') return onText(JSON.parse(e.data) as ServerMsg);
@@ -216,8 +260,10 @@ export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
 			const frame = decodeFrame(e.data as ArrayBuffer);
 			if (frame.op === Op.Output) bySlot.get(frame.slot)?.onOutput(frame.payload);
 		};
-		sock.onclose = () => lost(sock, 'the connection to the core closed');
-		sock.onerror = () => lost(sock, 'the connection to the core failed');
+		// A browser may report a refusal as an error before the close.
+		const dropped = (why: string) => (opened && !handshaken ? refused(sock) : lost(sock, why));
+		sock.onclose = () => dropped('the connection to the core closed');
+		sock.onerror = () => dropped('the connection to the core failed');
 	}
 
 	void open();
@@ -279,7 +325,17 @@ const clients = new Map<string, CoreClient>();
 export function coreClient(hostId = 'local'): CoreClient {
 	let client = clients.get(hostId);
 	if (!client) {
-		client = isTauri() ? connectCore(() => invoke<CoreEndpoint>('core_endpoint')) : mockCore();
+		if (isTauri()) {
+			client = connectCore(() => invoke<CoreEndpoint>('core_endpoint'));
+			// The core decides that a session wants you; only the app can show it (F32).
+			client.on('attention', (notice) => {
+				invoke('attention_show', { notice }).catch((e: unknown) =>
+					console.error('attention_show failed', e),
+				);
+			});
+		} else {
+			client = mockCore();
+		}
 		clients.set(hostId, client);
 	}
 	return client;

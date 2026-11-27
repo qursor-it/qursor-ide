@@ -58,4 +58,6 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
-          args: --config src-tauri/tauri.windows.conf.json --config src-tauri/tauri.windows.release.conf.json
+          # `tauri.bundle.conf.json` builds qursor-core for the target and ships
+          # it beside the app as `qursor-core.exe` (externalBin, design §1).
+          args: --config src-tauri/tauri.windows.conf.json --config src-tauri/tauri.windows.release.conf.json --config src-tauri/tauri.bundle.conf.json

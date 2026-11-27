@@ -68,6 +68,11 @@ zeroize = "1"
 # no PNG codec in release builds.
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 fontdue = "0.9"
+# The app's own connection to qursor-core (docs/superpowers/specs/
+# 2026-11-26-local-core-design.md §1): the same client the core's tests use,
+# already in the tree through the core.
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
 
 # WebKitGTK's `web-process-terminated`, which is the only warning we get that
 # the renderer has died (ADR-0059). The same version wry already builds — the

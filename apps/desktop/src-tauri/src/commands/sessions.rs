@@ -537,7 +537,7 @@ pub async fn delete_session(
 	state: State<'_, AppState>,
 	session_id: String,
 ) -> AppResult<()> {
-	let is_live = state.terminals.live_session_ids().contains(&session_id);
+	let is_live = state.core.live_session_ids().contains(&session_id);
 	// Off the main thread (PERF-07): moving a transcript to the OS trash is a
 	// filesystem operation on a directory we do not own the speed of.
 	let project_id = {

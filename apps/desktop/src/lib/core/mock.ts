@@ -26,6 +26,21 @@ const COMMANDS: Record<string, string> = {
 	'vault.unlock': 'vault_unlock',
 	'vault.lock': 'vault_lock',
 	'vault.setMasterPassword': 'vault_set_master_password',
+	'server.list': 'list_servers',
+	'server.save': 'save_server',
+	'server.delete': 'delete_server',
+	'server.disconnect': 'server_disconnect',
+	'tunnel.list': 'list_tunnels',
+	'tunnel.save': 'save_tunnel',
+	'tunnel.delete': 'delete_tunnel',
+	'tunnel.start': 'tunnel_start',
+	'tunnel.stop': 'tunnel_stop',
+	'sftp.list': 'sftp_list',
+	'sftp.download': 'sftp_download',
+	'sftp.upload': 'sftp_upload',
+	'sftp.mkdir': 'sftp_mkdir',
+	'sftp.rename': 'sftp_rename',
+	'sftp.remove': 'sftp_remove',
 };
 
 const EVENTS: Record<CoreEvent['event'], string> = {

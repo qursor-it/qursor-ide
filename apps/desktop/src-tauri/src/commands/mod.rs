@@ -11,10 +11,10 @@
 use crate::error::{AppError, AppResult};
 
 pub mod canvas;
+pub mod core;
 pub mod files;
 pub mod gh;
 pub mod git;
-pub mod ide;
 pub mod intelligence;
 pub mod profiles;
 pub mod projects;

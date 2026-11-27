@@ -26,7 +26,7 @@ import { currentTheme, onThemeChange } from '@lib/theme';
 import { terminalOptions } from '@lib/monoFont';
 import { useGitModeStore } from '@store/gitModeStore';
 import { currentPrefs, usePrefsStore } from '@store/prefsStore';
-import { useTerminalStore } from '@store/terminalStore';
+import { liveAdopted, useTerminalStore } from '@store/terminalStore';
 
 /**
  * What a click on a URL in the terminal does (specs/05-features.md F5).
@@ -1118,17 +1118,28 @@ function ensureTerminal(
 			initialPrompt === undefined
 				? useTerminalStore.getState().takeLaunch(sessionId)
 				: { prompt: undefined, cwd: undefined };
-		pending = cmd
-			.terminalSpawn({
-				sessionId,
-				projectId,
-				cwd: launch.cwd ?? projectCwd ?? undefined,
-				cols,
-				rows,
-				initialPrompt: initialPrompt ?? launch.prompt,
-				agent,
+		pending = liveAdopted
+			.then(() => {
+				// Adopted from the core after a reload: attach, never spawn twice.
+				const adopted = useTerminalStore.getState().bySession[sessionId];
+				if (adopted) return { id: adopted.terminalId, agent: adopted.agent, adopted: true };
+				return cmd
+					.terminalSpawn({
+						sessionId,
+						projectId,
+						cwd: launch.cwd ?? projectCwd ?? undefined,
+						cols,
+						rows,
+						initialPrompt: initialPrompt ?? launch.prompt,
+						agent,
+					})
+					.then((s) => ({ ...s, adopted: false }));
 			})
-			.then(({ id, agent }) => {
+			.then(({ id, agent, adopted }) => {
+				if (adopted) {
+					spawnInFlight.delete(sessionId);
+					return id;
+				}
 				// A prompt *parameter* means a routine fired this (F22), and a
 				// routine's session gets no tab until a human opens it. A prompt a
 				// human brought (ADR-0078) is not the parameter, so it gets one.

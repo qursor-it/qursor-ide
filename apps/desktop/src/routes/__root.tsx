@@ -25,7 +25,7 @@ import { useShellStore } from '@store/shellStore';
 import { rebindTerminal } from '@components/terminal/Terminal';
 import { queryKeys } from '@lib/queryKeys';
 import { useAttentionStore } from '@store/attentionStore';
-import { findSessionByTerminal, useTerminalStore } from '@store/terminalStore';
+import { findSessionByTerminal, markLiveAdopted, useTerminalStore } from '@store/terminalStore';
 
 function RootLayout() {
 	const setProgress = useIndexerStore((s) => s.setProgress);
@@ -106,7 +106,8 @@ function RootLayout() {
 			})
 			// Nothing to surface: with no adopted terminals the app behaves exactly
 			// as it did before this call existed.
-			.catch((e) => console.error('terminal_list failed', e));
+			.catch((e) => console.error('terminal_list failed', e))
+			.finally(markLiveAdopted);
 		// What every shell chip is labelled (F23 as amended by F24). Asked once
 		// and persisted, so on every launch but the first the chips already have
 		// their name when they paint; this call is the refresh for a `$SHELL`

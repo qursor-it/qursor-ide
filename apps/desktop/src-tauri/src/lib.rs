@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod core_link;
 pub mod platform;
 pub mod services;
 pub mod state;
@@ -7,17 +8,16 @@ pub mod tauri_sink;
 pub use qursor_core::{agents, db, error, models};
 pub(crate) use qursor_core::{claude_dir, epoch_ms};
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::{Emitter, Manager, WindowEvent};
 use tracing::{info, warn};
 
+use crate::core_link::{CoreCell, CoreLink};
 use crate::db::Db;
-use crate::services::event_sink::{CoreEvent, EventSink};
+use crate::services::event_sink::EventSink;
 use crate::services::indexer::{spawn_initial_scan, Indexer};
-use crate::services::terminal::TerminalManager;
 use crate::services::watcher;
 use crate::state::AppState;
 use crate::tauri_sink::TauriSink;
@@ -33,8 +33,8 @@ pub fn run_usage_statusline_helper() -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 	// Held until the event loop ends. `setup()` and the synchronous commands run
-	// on this thread, and what they start (`TerminalManager::new`, an SSH
-	// disconnect) needs a runtime to be current rather than Tauri's own handle.
+	// on this thread, and core code they call may look for a current runtime
+	// rather than Tauri's own handle.
 	let _runtime = tauri::async_runtime::handle().inner().enter();
 	tracing_subscriber::fmt()
 		.with_env_filter(
@@ -132,271 +132,34 @@ pub fn run() {
 				info!(swept, "removed stale ide lockfiles from a previous run");
 			}
 
-			// What the renderer has on screen, for the IDE bridge's answers. Held
-			// by the manager (each session's bridge reads it) and by AppState (the
-			// command that writes it), so it is one shared cell rather than two
-			// that can disagree.
-			let ui = Arc::new(services::ide::ui_state::UiState::default());
-
-			// Terminals first: the indexer's reap pass asks them what is live
-			// before it deletes the row of a session whose transcript is gone.
-			// The binary override is read per spawn, out of the `settings` table
-			// (F11) — so editing it changes the next session without touching the
-			// ones already running, and `agent_cli` keeps no database of its own.
-			let settings_db = db.clone();
-			// The recorded cwd is read per spawn for the same reason and out of the
-			// same database: a session's transcript lives under the folder Claude
-			// ran in, and spawning it anywhere else turns a resume into a new
-			// conversation. See `TerminalManager::resume_cwd`.
-			let session_db = db.clone();
-			// Desktop notifications for a session that wants you (F32, ADR-0081).
-			let attention = Arc::new(services::attention::AttentionNotifier::new(
-				Arc::new(services::attention::TauriSink::new(app.handle().clone())),
-				services::attention::SETTLE,
-			));
-			let attention_tap = attention.clone();
 			let statusline_dir = data_dir.join("usage").join("statusline");
 			let usage =
 				Arc::new(services::usage::store::UsageStore::load(data_dir.join("usage.json")));
-			let opencode_signals = data_dir.join("opencode");
-			if let Err(error) = agents::opencode::prepare_signal_dir(&opencode_signals) {
-				warn!(%error, "could not prepare the OpenCode session signal folder");
-			}
 			let sink: Arc<dyn EventSink> = Arc::new(TauriSink::new(app.handle().clone()));
-			let terminals = TerminalManager::new(
-				sink.clone(),
-				cd.clone(),
-				ui.clone(),
-				tokio::runtime::Handle::current(),
-			)
-			.with_opencode_signal_dir(opencode_signals)
-			.with_status_tap(move |e| attention_tap.on_status(e))
-			// Claude's limits, forwarded by each session's status line.
-			.with_usage_sink_dir(statusline_dir.clone())
-			.with_usage_limits({
-				let (db, usage) = (db.clone(), usage.clone());
-				let go = go_usage.clone();
-				Arc::new(move |project, filter| {
-					services::usage::mcp::read(&db, &usage, &go, project, filter)
-				})
-			})
-			// Switchable: our status line hides Claude Code's footer hints for
-			// a user with none of their own. Unset = on.
-			.with_usage_statusline_enabled({
-				let db = db.clone();
-				Arc::new(move || {
-					let value = db
-						.with(|conn| {
-							services::settings::get(conn, models::SettingKey::UsageStatusLine)
-						})
-						.ok()
-						.flatten();
-					value.as_deref() != Some("off")
-				})
-			})
-			.with_delegation_confirmation({
-				let db = db.clone();
-				Arc::new(move || {
-					db.with(|conn| {
-						services::settings::get(conn, models::SettingKey::ConfirmAgentDelegations)
-					})
-					.ok()
-					.flatten()
-					.as_deref() != Some("off")
-				})
-			})
-			.with_user_binary(Arc::new(move |agent| {
-				services::settings::binary_override(&settings_db, agent)
-			}))
-			// Which agent a project's next session runs (F30). Read per spawn
-			// for the same reason as the profile below.
-			.with_agent_of({
-				let db = db.clone();
-				Arc::new(move |project_id, session_id| {
-					services::profiles::agent_for_spawn(&db, project_id, session_id)
-				})
-			})
-			.with_session_cwd(Arc::new(move |session_id| {
-				services::sessions::recorded_cwds(&session_db, session_id)
-			}))
-			.with_session_key({
-				let db = db.clone();
-				Arc::new(move |session_id| services::sessions::recorded_key(&db, session_id))
-			})
-			// Which identity a project's next session runs as (F25, ADR-0036).
-			// Read per spawn out of the same database and for the same reason as
-			// the two above: changing the default profile changes the next
-			// session without touching the ones already running.
-			.with_profile_dir({
-				let db = db.clone();
-				Arc::new(move |agent, project_id, session_id| {
-					services::profiles::config_dir_for_spawn(&db, agent, project_id, session_id)
-						.or_else(|| {
-							if agent != agents::OPENCODE {
-								return None;
-							}
-							let descriptor = agents::descriptor(agent)?;
-							let root = agents::ambient_dir(descriptor);
-							services::profiles::ensure_default_for(&db, agent, &root)
-								.ok()
-								.map(|profile| PathBuf::from(profile.config_dir))
-						})
-				})
-			})
-			// Which checkout each session is working in (F21). Written by the
-			// bridge's signal path only — the agent calling `setWorktree`, or an
-			// `openFile` landing in another worktree — and read back so a resumed
-			// session comes up in the tree it was working in.
-			.with_worktree_store(services::terminal::WorktreeStore {
-				get: {
-					let db = db.clone();
-					Arc::new(move |session_id| {
-						services::sessions::worktree(&db, session_id).map(PathBuf::from)
-					})
-				},
-				set: {
-					let db = db.clone();
-					Arc::new(move |session_id, path| {
-						// Logged rather than propagated: the caller is a socket handler
-						// answering an agent, and a failed write must not become a
-						// failed tool call the agent then retries.
-						if let Err(e) = services::sessions::set_worktree(
-							&db,
-							session_id,
-							&path.to_string_lossy(),
-							epoch_ms(),
-						) {
-							warn!(error = %e, session_id, "could not record a session's worktree");
-						}
-					})
-				},
-			})
-			// A project's routines, for the bridge's tool group (F22 slice 3,
-			// ADR-0028). Both writes go through the announcing layer the editor's
-			// own commands use, so a schedule an agent changed reaches an open
-			// Routines tab — the one case the renderer cannot fix for itself,
-			// since it never hears about that write.
-			//
-			// **Which project and which session are not decided here.** They are
-			// bound per bridge in `start_bridge`, where they are known; this layer
-			// only knows how to reach the table.
-			.with_routine_store(services::terminal::RoutineStore {
-				list: {
-					let db = db.clone();
-					Arc::new(move |project_id| {
-						db.with(|conn| services::routines::list(conn, project_id, epoch_ms()))
-					})
-				},
-				create: {
-					let db = db.clone();
-					let sink = sink.clone();
-					Arc::new(move |input, author| {
-						services::routines::create_and_announce(
-							&db,
-							sink.as_ref(),
-							input,
-							Some(author),
-							epoch_ms(),
-						)
-					})
-				},
-				update: {
-					let db = db.clone();
-					let sink = sink.clone();
-					Arc::new(move |id, patch, author| {
-						services::routines::update_and_announce(
-							&db,
-							sink.as_ref(),
-							id,
-							patch,
-							Some(author),
-							epoch_ms(),
-						)
-					})
-				},
-			})
-			// The agent's canvas tools (F44, ADR-0104): a project's folder, and the
-			// canvas a session is linked to. Project and session are bound per
-			// session in `start_agent_tools`.
-			.with_canvas_store(services::terminal::CanvasStore {
-				root: {
-					let db = db.clone();
-					Arc::new(move |project_id| {
-						db.with(|conn| commands::projects::project_path(conn, project_id))
-					})
-				},
-				linked: {
-					let db = db.clone();
-					Arc::new(move |project_id, session_id| {
-						db.with(|conn| {
-							services::canvas::canvas_for_session(conn, project_id, session_id)
-						})
-					})
-				},
-			});
-			let mut terminals = terminals;
-			// Every session a delegate runs under stays out of the lists for good (ADR-0126).
+
+			// Every terminal lives in qursor-core (docs/superpowers/specs/
+			// 2026-11-26-local-core-design.md §1). Found or started off the main
+			// thread: the window does not wait for it, and `core_endpoint` does.
+			// The database is migrated above, which the core needs before it starts.
+			let core =
+				Arc::new(CoreCell::new(data_dir.clone(), app.package_info().version.to_string()));
 			{
-				let db = db.clone();
-				terminals.delegations.set_on_session(Arc::new(move |session_id| {
-					if let Err(error) = db.with_mut(|conn| {
-						conn.execute(
-							"INSERT OR IGNORE INTO delegate_sessions(session_id) VALUES (?1)",
-							[session_id],
-						)?;
-						Ok(())
-					}) {
-						warn!(%error, "could not record a delegate session");
-					}
-				}));
+				let (core, app) = (core.clone(), app.handle().clone());
+				tauri::async_runtime::spawn(async move {
+					let Ok(link) = core.link().await else { return };
+					// The window may have taken focus before the link was up.
+					let focused = app
+						.get_webview_window("main")
+						.and_then(|w| w.is_focused().ok())
+						.unwrap_or(false);
+					tell_focus(link, focused);
+				});
 			}
-			let tunnels = Arc::new(services::ssh::tunnel::Tunnels::default());
-			let ssh = Arc::new(services::ssh::pool::Pool::new(
-				services::ssh::KnownHosts::for_user(commands::servers::known_hosts_path(&data_dir)),
-				tokio::runtime::Handle::current(),
-			));
-			// Files on servers for agents (F47), on the same pooled logins as the tabs.
-			{
-				let (db, vault) = (db.clone(), vault.clone());
-				terminals.set_remote_files(Arc::new(services::ssh::sftp::RemoteFiles::new(
-					ssh.clone(),
-					Arc::new(move |id| {
-						let server = db.with(|c| services::servers::get(c, id))?;
-						commands::servers::target_for(&server, &vault)
-					}),
-				)));
-			}
-			let confirmations = Arc::new(services::agent_policy::Confirmations::default());
-			// Agents using SSH terminals (F46): announce their commands, and name
-			// a server in `terminals_list` the way the address book does.
-			{
-				let run_sink = sink.clone();
-				terminals.set_agent_run_cb(Arc::new(move |e| {
-					run_sink.emit(CoreEvent::AgentTerminalRun(e));
-				}));
-				// What an agent may do on each server (ADR-0110), decided per
-				// command from the address book, asked of the human when the
-				// policy says so, and written to the local audit log.
-				let policy_db = db.clone();
-				let policy_sink = sink.clone();
-				let asks = confirmations.clone();
-				terminals.set_agent_policy(Arc::new(move |req| {
-					services::agent_policy::decide(&policy_db, &asks, req, |ev| {
-						policy_sink.emit(CoreEvent::AgentTerminalConfirm(ev.clone()));
-					})
-				}));
-				let db = db.clone();
-				terminals.set_server_label(Arc::new(move |id| {
-					db.with(|c| services::servers::get(c, id))
-						.map(|s| format!("{} ({}@{})", s.name, s.username, s.host))
-						.unwrap_or_else(|_| id.to_string())
-				}));
-			}
-			let live = terminals.clone();
-			let reap = terminals.clone();
+			let live = core.clone();
+			let reap = core.clone();
 			// Project Intelligence (F33). Asks the terminals which sessions are
 			// still running, so an analysis never reads one mid-turn.
-			let intelligence_live = terminals.clone();
+			let intelligence_live = core.clone();
 			let intelligence = services::intelligence::IntelligenceService::for_app(
 				db.clone(),
 				app.handle().clone(),
@@ -408,7 +171,16 @@ pub fn run() {
 					// A footer shell whose own directory has gone (ADR-0032). The
 					// scan is the trigger because it is already the pass that stats
 					// the filesystem — see `ReapShellsCb`.
-					.with_shell_reap(Arc::new(move || reap.reap_shells_with_missing_cwd())),
+					.with_shell_reap(Arc::new(move || {
+						let Some(link) = reap.ready().cloned() else { return };
+						tauri::async_runtime::spawn(async move {
+							if let Err(error) =
+								link.request("shell.reapMissingCwd", Value::Null).await
+							{
+								warn!("could not reap footer shells: {error:#}");
+							}
+						});
+					})),
 			);
 
 			// The routine scheduler (F22, ADR-0026). It decides *when*; the
@@ -416,7 +188,7 @@ pub fn run() {
 			// emits `routine:fire`. `live` is asked for rather than held — the
 			// cap and the overlap skip need the live set, and owning the
 			// terminal manager would make the runner the wrong kind of object.
-			let routine_live = terminals.clone();
+			let routine_live = core.clone();
 			let routines = Arc::new(services::routines::Runner::new(
 				db.clone(),
 				sink.clone(),
@@ -474,39 +246,22 @@ pub fn run() {
 
 			let usage_db = db.clone();
 			let usage_poll_store = usage.clone();
-			{
-				// The last tab on a server closing ends its login (ADR-0105).
-				let (ssh, terminals, tunnels) = (ssh.clone(), terminals.clone(), tunnels.clone());
-				std::thread::Builder::new()
-					.name("ssh-reaper".into())
-					.spawn(move || loop {
-						std::thread::sleep(std::time::Duration::from_secs(20));
-						ssh.reap(|id| terminals.has_ssh_for(id) || tunnels.uses(id));
-					})
-					.expect("spawn ssh reaper");
-			}
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),
-				terminals,
+				core,
 				claude_dir: cd,
 				data_dir,
-				ui,
 				routines: routines.clone(),
 				watch: watch.clone(),
 				file_watch: Arc::new(services::file_watch::FileWatch::new()),
 				canvas_watch: Arc::new(services::file_watch::FileWatch::new()),
 				media: Arc::new(std::sync::OnceLock::new()),
 				webview_health,
-				attention,
 				intelligence,
 				usage: usage.clone(),
 				go_usage: go_usage.clone(),
 				taskbar_widget: taskbar_widget.clone(),
-				vault,
-				ssh,
-				confirmations,
-				tunnels,
 			});
 			// On unless the setting says `off`; a no-op off Windows.
 			taskbar_widget.set_enabled(
@@ -551,10 +306,12 @@ pub fn run() {
 		})
 		.on_window_event(|window, event| {
 			if let WindowEvent::Focused(focused) = event {
-				// The notifier only notifies a window that is not in front, and stops
-				// asking for attention once it is (F32).
-				if let Some(state) = window.try_state::<AppState>() {
-					state.attention.set_focused(*focused);
+				// The core's notifier only notifies a window that is not in front,
+				// and cannot see the window itself (F32).
+				if let Some(link) =
+					window.try_state::<AppState>().and_then(|s| s.core.ready().cloned())
+				{
+					tell_focus(&link, *focused);
 				}
 				if *focused {
 					services::attention::clear_attention(window.app_handle());
@@ -565,11 +322,11 @@ pub fn run() {
 					// An analysis is a child process too (ADR-0005, ADR-0084): it ends
 					// with the window whether or not a session is asking to be kept.
 					state.intelligence.cancel_all();
-					let live = state.terminals.live_count();
+					let link = state.core.ready();
 					// **What is working decides whether we ask; what is live decides
 					// what dies** (ADR-0020). Both go to the renderer so the dialog
 					// can say the second thing rather than imply it.
-					let working = state.terminals.working_count();
+					let (live, working) = link.map(CoreLink::counts).unwrap_or((0, 0));
 					if working > 0 {
 						api.prevent_close();
 						// Emit via the AppHandle, NOT `window.emit`: in Tauri v2 the
@@ -583,18 +340,18 @@ pub fn run() {
 							"app:quit-requested",
 							json!({ "liveCount": live, "workingCount": working }),
 						);
-					} else if live > 0 {
+					} else if let Some(link) = link {
 						// Nothing is working, so nothing is asked — but kill-on-quit
-						// is still non-optional (ADR-0005). The dialog's confirm was
-						// the only thing that ever called `kill_all` on a close, so
-						// without this branch the sessions we chose not to ask about
-						// would be the ones left to `Drop`, which Tauri's exit is not
-						// obliged to run.
+						// is still non-optional (ADR-0005): the core stops with every
+						// terminal it holds, footer shells included.
 						//
 						// Synchronous on purpose, and the close proceeds when it
 						// returns: `kill_all`'s 500ms SIGTERM grace has to finish
-						// before the process goes or the grace period is a no-op.
-						state.terminals.kill_all();
+						// before the process goes or the grace period is a no-op. The
+						// core would also follow us out through `--parent-pid`.
+						if let Err(error) = tauri::async_runtime::block_on(link.shutdown()) {
+							warn!("qursor-core did not stop cleanly: {error:#}");
+						}
 					}
 					// The close goes ahead: the widget goes with it.
 					if working == 0 {
@@ -604,38 +361,15 @@ pub fn run() {
 			}
 		})
 		.invoke_handler(tauri::generate_handler![
-			commands::servers::list_servers,
-			commands::servers::save_server,
-			commands::servers::delete_server,
+			commands::core::core_endpoint,
+			commands::core::attention_show,
 			commands::servers::create_server_folder,
 			commands::servers::rename_server_folder,
 			commands::servers::delete_server_folder,
 			commands::servers::fix_server_file,
 			commands::servers::ssh_config_hosts,
-			commands::servers::vault_status,
-			commands::servers::vault_unlock,
-			commands::servers::vault_lock,
-			commands::servers::vault_set_master_password,
-			commands::servers::server_open_shell,
-			commands::servers::server_disconnect,
-			commands::servers::agent_link_terminal,
-			commands::servers::agent_unlink_terminal,
-			commands::servers::agent_links,
 			commands::servers::server_agent_project,
-			commands::servers::agent_terminal_answer,
 			commands::servers::agent_audit,
-			commands::servers::sftp_list,
-			commands::servers::sftp_download,
-			commands::servers::sftp_upload,
-			commands::servers::sftp_mkdir,
-			commands::servers::sftp_rename,
-			commands::servers::sftp_remove,
-			commands::servers::list_tunnels,
-			commands::servers::save_tunnel,
-			commands::servers::delete_tunnel,
-			commands::servers::tunnel_start,
-			commands::servers::tunnel_stop,
-			commands::servers::server_end_tab,
 			commands::profiles::list_profiles,
 			commands::profiles::create_profile,
 			commands::profiles::rename_profile,
@@ -690,9 +424,6 @@ pub fn run() {
 			commands::sops::sops_status,
 			commands::sops::sops_decrypt,
 			commands::sops::sops_encrypt,
-			commands::ide::ide_report_ui,
-			commands::ide::ide_resync,
-			commands::ide::ide_mention,
 			commands::git::git_status,
 			commands::git::git_blob,
 			commands::git::git_graph,
@@ -725,14 +456,6 @@ pub fn run() {
 			commands::settings::validate_claude_binary,
 			commands::settings::check_agent_cli,
 			commands::settings::validate_agent_binary,
-			commands::terminal::start_session,
-			commands::terminal::resolve_delegation,
-			commands::terminal::list_delegations,
-			commands::terminal::terminal_spawn,
-			commands::terminal::terminal_write,
-			commands::terminal::terminal_resize,
-			commands::terminal::terminal_kill,
-			commands::terminal::terminal_list,
 			commands::intelligence::get_intelligence_status,
 			commands::intelligence::preview_analysis,
 			commands::intelligence::start_analysis,
@@ -748,8 +471,6 @@ pub fn run() {
 			commands::intelligence::mark_retained,
 			commands::intelligence::prepare_revert,
 			commands::intelligence::record_revert,
-			commands::terminal::shell_spawn,
-			commands::terminal::shell_kill_for_project,
 			commands::terminal::shell_name,
 			commands::terminal::app_quit_confirmed,
 			commands::webview::webview_crash_notice,
@@ -763,6 +484,16 @@ pub fn run() {
 		])
 		.run(tauri::generate_context!())
 		.expect("error while running factorai");
+}
+
+/// Tell the core whether the window is in front; best effort, like an emit.
+fn tell_focus(link: &CoreLink, focused: bool) {
+	let link = link.clone();
+	tauri::async_runtime::spawn(async move {
+		if let Err(error) = link.request("attention.focus", json!({ "focused": focused })).await {
+			warn!("could not tell qursor-core about focus: {error:#}");
+		}
+	});
 }
 
 #[cfg(test)]

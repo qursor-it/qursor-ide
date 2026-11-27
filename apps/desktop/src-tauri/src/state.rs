@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
+use crate::core_link::CoreCell;
 use crate::db::Db;
 use crate::services::file_watch::FileWatch;
-use crate::services::ide::ui_state::UiState;
 use crate::services::indexer::Indexer;
 use crate::services::media_server::MediaServer;
 use crate::services::routines::Runner as RoutineRunner;
-use crate::services::terminal::TerminalManager;
 use crate::services::webview_health::Health;
 
 /// Application state shared across Tauri commands. Constructed in
@@ -15,12 +14,11 @@ use crate::services::webview_health::Health;
 pub struct AppState {
 	pub db: Db,
 	pub indexer: Arc<Indexer>,
-	pub terminals: TerminalManager,
+	/// The link to qursor-core, which owns every terminal
+	/// (docs/superpowers/specs/2026-11-26-local-core-design.md §1).
+	pub core: Arc<CoreCell>,
 	pub claude_dir: PathBuf,
 	pub data_dir: PathBuf,
-	/// What the renderer has on screen, reported by it so each session's IDE
-	/// bridge can answer honestly instead of guessing (F20).
-	pub ui: Arc<UiState>,
 	/// The routine scheduler (F22). Held so `run_routine_now` fires through the
 	/// same path the tick does, rather than growing a second one.
 	pub routines: Arc<RoutineRunner>,
@@ -43,8 +41,6 @@ pub struct AppState {
 	/// by the crash handler installed in `setup()` and drained by the renderer on
 	/// boot, which is the only pair of things that ever touch it.
 	pub webview_health: Arc<Health>,
-	/// Desktop notifications for a session that wants you (F32, ADR-0081).
-	pub attention: Arc<crate::services::attention::AttentionNotifier>,
 	/// Project Intelligence (F33, ADR-0084): analyses of a project's sessions and
 	/// the candidates they produce. Holds the analysis processes it started so
 	/// quitting the app ends them.
@@ -55,12 +51,4 @@ pub struct AppState {
 	/// The usage widget in the Windows taskbar (ADR-0086). Held so the setting
 	/// can start and stop it and the quit path can take it down.
 	pub taskbar_widget: Arc<crate::platform::taskbar_widget::TaskbarWidget>,
-	/// SSH passwords and keys for saved servers (F45, ADR-0106).
-	pub vault: Arc<crate::services::vault::Vault>,
-	/// One live connection per server, shared by its tabs (ADR-0105).
-	pub ssh: Arc<crate::services::ssh::pool::Pool>,
-	/// Agent commands waiting for the human's yes or no (ADR-0110).
-	pub confirmations: Arc<crate::services::agent_policy::Confirmations>,
-	/// Running local port forwards (F48).
-	pub tunnels: Arc<crate::services::ssh::tunnel::Tunnels>,
 }

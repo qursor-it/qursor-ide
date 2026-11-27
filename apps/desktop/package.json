@@ -7,10 +7,11 @@
 	"scripts": {
 		"dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
 		"dev:windows": "tauri dev --config src-tauri/tauri.windows.conf.json --config src-tauri/tauri.dev.conf.json",
-		"build": "tauri build",
-		"build:windows": "tauri build --config src-tauri/tauri.windows.conf.json",
+		"build": "tauri build --config src-tauri/tauri.bundle.conf.json",
+		"build:windows": "tauri build --config src-tauri/tauri.windows.conf.json --config src-tauri/tauri.bundle.conf.json",
 		"tauri": "tauri",
 		"vite:dev": "vite",
+		"core:build": "node ../../scripts/build-core.mjs",
 		"vite:build": "tsc --noEmit && vite build",
 		"typecheck": "tsc --noEmit",
 		"lint": "oxlint src",
