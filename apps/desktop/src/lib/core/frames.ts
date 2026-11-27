@@ -8,7 +8,11 @@ const HEADER = 3;
 
 export const Op = { Output: 1, Input: 2, Resize: 3 } as const satisfies Record<string, OpCode>;
 
-export function encodeFrame(op: OpCode, slot: number, payload: Uint8Array): Uint8Array {
+export function encodeFrame(
+	op: OpCode,
+	slot: number,
+	payload: Uint8Array,
+): Uint8Array<ArrayBuffer> {
 	const out = new Uint8Array(HEADER + payload.length);
 	new DataView(out.buffer).setUint16(1, slot);
 	out[0] = op;
@@ -29,7 +33,7 @@ export function decodeFrame(buf: ArrayBuffer): { op: OpCode; slot: number; paylo
 	return { op, slot: view.getUint16(1), payload };
 }
 
-export function encodeResize(slot: number, cols: number, rows: number): Uint8Array {
+export function encodeResize(slot: number, cols: number, rows: number): Uint8Array<ArrayBuffer> {
 	const payload = new Uint8Array(4);
 	const view = new DataView(payload.buffer);
 	view.setUint16(0, cols);

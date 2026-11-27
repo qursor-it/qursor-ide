@@ -1,0 +1,251 @@
+import type { AppError, ClientMsg, CoreEndpoint, CoreEvent, ServerMsg } from '@factorai/types';
+import { invoke } from '@tauri-apps/api/core';
+import { formatError } from '@lib/errors';
+import { isTauri } from '@lib/tauri';
+import { decodeFrame, encodeFrame, encodeResize, Op } from './frames';
+import { mockCore } from './mock';
+
+// The renderer's side of qursor-core's socket
+// (docs/superpowers/specs/2026-11-26-local-core-design.md §3-§4): JSON for
+// control, binary frames for terminal bytes in both directions.
+
+export type Payload<E extends CoreEvent['event']> = Extract<CoreEvent, { event: E }>['payload'];
+
+export interface CoreClient {
+	request<T>(method: string, params?: unknown): Promise<T>;
+	on<E extends CoreEvent['event']>(event: E, cb: (payload: Payload<E>) => void): () => void;
+	/** `slot` follows the terminal across a reconnect, which re-attaches it on a
+	 *  new one; read it at each `write`/`resize` rather than keeping a copy. */
+	attach(
+		terminalId: string,
+		onOutput: (bytes: Uint8Array) => void,
+	): Promise<{ readonly slot: number; detach(): void }>;
+	write(slot: number, bytes: Uint8Array): void;
+	resize(slot: number, cols: number, rows: number): void;
+	setVisible(terminalId: string, visible: boolean): void;
+}
+
+const PROTOCOL_VERSION = 1;
+const PING_MS = 10_000;
+/** Two ping windows with nothing arriving (§3). */
+const SILENCE_MS = 2 * PING_MS;
+const BACKOFF_MIN_MS = 100;
+const BACKOFF_MAX_MS = 2_000;
+
+interface Attachment {
+	terminalId: string;
+	slot: number;
+	onOutput: (bytes: Uint8Array) => void;
+}
+
+const lostError = (message: string): AppError => ({ kind: 'Process', message });
+
+/** One connection to one core, kept alive: reconnects with backoff and puts
+ *  every attached terminal back on the new socket. */
+export function connectCore(endpoint: () => Promise<CoreEndpoint>): CoreClient {
+	const clientId = crypto.randomUUID();
+	let ws: WebSocket | undefined;
+	let handshaken = false;
+	let backoff = BACKOFF_MIN_MS;
+	let lastHeard = 0;
+	let pinger: ReturnType<typeof setInterval> | undefined;
+	let nextRequestId = 1;
+	const pending = new Map<
+		number,
+		{ resolve: (v: unknown) => void; reject: (e: AppError) => void }
+	>();
+	const listeners = new Map<string, Set<(payload: unknown) => void>>();
+	const attachments = new Set<Attachment>();
+	const bySlot = new Map<number, Attachment>();
+	const shown = new Set<string>();
+
+	// Requests wait here for a handshaken socket. A failed attempt rejects the
+	// waiters rather than holding them across retries that may never succeed.
+	let ready!: { promise: Promise<void>; resolve: () => void; reject: (e: AppError) => void };
+	const newReady = () => {
+		let resolve!: () => void;
+		let reject!: (e: AppError) => void;
+		const promise = new Promise<void>((res, rej) => {
+			resolve = res;
+			reject = rej;
+		});
+		// Nobody may be waiting when an attempt fails.
+		promise.catch(() => undefined);
+		ready = { promise, resolve, reject };
+	};
+	newReady();
+
+	const sendJson = (msg: ClientMsg) => ws?.send(JSON.stringify(msg));
+
+	const send = <T>(method: string, params: unknown): Promise<T> => {
+		const requestId = nextRequestId++;
+		return new Promise<T>((resolve, reject) => {
+			pending.set(requestId, { resolve: (v) => resolve(v as T), reject });
+			// `params` is required on the wire, so an absent one is `null`.
+			sendJson({ type: 'request', requestId, method, params: params ?? null });
+		});
+	};
+
+	const request = async <T>(method: string, params?: unknown): Promise<T> => {
+		if (!handshaken) await ready.promise;
+		return send<T>(method, params);
+	};
+
+	const reattach = (att: Attachment) => {
+		send<{ slot: number }>('terminal.attach', { terminalId: att.terminalId }).then(
+			({ slot }) => {
+				if (!attachments.has(att)) return;
+				att.slot = slot;
+				bySlot.set(slot, att);
+			},
+			// The terminal ended while we were away: nothing left to stream.
+			() => attachments.delete(att),
+		);
+	};
+
+	const onServerInfo = () => {
+		handshaken = true;
+		backoff = BACKOFF_MIN_MS;
+		pinger = setInterval(() => {
+			if (Date.now() - lastHeard >= SILENCE_MS) lost(ws, 'the core stopped answering');
+			else sendJson({ type: 'ping' });
+		}, PING_MS);
+		for (const att of attachments) reattach(att);
+		for (const terminalId of shown) {
+			void send('terminal.visibility', { terminalId, visible: true }).catch(() => undefined);
+		}
+		ready.resolve();
+	};
+
+	const onText = (msg: ServerMsg) => {
+		switch (msg.type) {
+			case 'server_info':
+				return onServerInfo();
+			case 'pong':
+				return;
+			case 'response':
+			case 'rpc_error': {
+				const call = pending.get(msg.requestId);
+				pending.delete(msg.requestId);
+				if (msg.type === 'response') call?.resolve(msg.result);
+				else call?.reject(msg.error);
+				return;
+			}
+			case 'event':
+				for (const cb of listeners.get(msg.event) ?? []) cb(msg.payload);
+		}
+	};
+
+	/** Drop this socket and try again. Also what liveness does: a dead TCP
+	 *  connection may take minutes to report its own close. */
+	const lost = (sock: WebSocket | undefined, why: string) => {
+		if (!sock || sock !== ws) return;
+		sock.onopen = sock.onmessage = sock.onclose = sock.onerror = null;
+		sock.close();
+		ws = undefined;
+		handshaken = false;
+		clearInterval(pinger);
+		bySlot.clear();
+		for (const call of pending.values()) call.reject(lostError(why));
+		pending.clear();
+		retry(why);
+	};
+
+	const retry = (why: string) => {
+		ready.reject(lostError(why));
+		newReady();
+		setTimeout(open, backoff);
+		backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
+	};
+
+	async function open() {
+		let ep: CoreEndpoint;
+		try {
+			ep = await endpoint();
+		} catch (e) {
+			return retry(`the core is not reachable: ${formatError(e)}`);
+		}
+		const sock = new WebSocket(ep.url);
+		ws = sock;
+		sock.binaryType = 'arraybuffer';
+		sock.onopen = () =>
+			sendJson({
+				type: 'hello',
+				secret: ep.secret,
+				clientId,
+				clientType: 'renderer',
+				protocolVersion: PROTOCOL_VERSION,
+				appVersion: __APP_VERSION__,
+				capabilities: [],
+			});
+		sock.onmessage = (e: MessageEvent) => {
+			lastHeard = Date.now();
+			if (typeof e.data === 'string') return onText(JSON.parse(e.data) as ServerMsg);
+			// The view goes straight to xterm: no copy, no base64 (§4).
+			const frame = decodeFrame(e.data as ArrayBuffer);
+			if (frame.op === Op.Output) bySlot.get(frame.slot)?.onOutput(frame.payload);
+		};
+		sock.onclose = () => lost(sock, 'the connection to the core closed');
+		sock.onerror = () => lost(sock, 'the connection to the core failed');
+	}
+
+	void open();
+
+	return {
+		request,
+		on(event, cb) {
+			const fn = (payload: unknown) => cb(payload as Payload<typeof event>);
+			const set = listeners.get(event) ?? new Set();
+			set.add(fn);
+			listeners.set(event, set);
+			return () => set.delete(fn);
+		},
+		async attach(terminalId, onOutput) {
+			const { slot } = await request<{ slot: number }>('terminal.attach', { terminalId });
+			const att: Attachment = { terminalId, slot, onOutput };
+			attachments.add(att);
+			bySlot.set(slot, att);
+			return {
+				get slot() {
+					return att.slot;
+				},
+				detach() {
+					attachments.delete(att);
+					if (bySlot.get(att.slot) !== att) return;
+					bySlot.delete(att.slot);
+					// A connection lost meanwhile took the slot with it.
+					void send('terminal.detach', { slot: att.slot }).catch(() => undefined);
+				},
+			};
+		},
+		// Input typed while there is no socket is dropped, never replayed: a
+		// keystroke sent twice is worse than one lost.
+		write(slot, bytes) {
+			if (handshaken) ws?.send(encodeFrame(Op.Input, slot, bytes));
+		},
+		resize(slot, cols, rows) {
+			if (handshaken) ws?.send(encodeResize(slot, cols, rows));
+		},
+		setVisible(terminalId, visible) {
+			if (visible === shown.has(terminalId)) return;
+			if (visible) shown.add(terminalId);
+			else shown.delete(terminalId);
+			// Not connected: `onServerInfo` sends every shown terminal.
+			if (handshaken) {
+				void send('terminal.visibility', { terminalId, visible }).catch(() => undefined);
+			}
+		},
+	};
+}
+
+const clients = new Map<string, CoreClient>();
+
+/** One client per host; only the local core exists today (design §6 adds more). */
+export function coreClient(hostId = 'local'): CoreClient {
+	let client = clients.get(hostId);
+	if (!client) {
+		client = isTauri() ? connectCore(() => invoke<CoreEndpoint>('core_endpoint')) : mockCore();
+		clients.set(hostId, client);
+	}
+	return client;
+}

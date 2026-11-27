@@ -10,6 +10,7 @@ import {
 	releaseGpuRenderer,
 	type PooledTerm,
 	showOnly,
+	syncVisible,
 } from '@components/terminal/Terminal';
 import { closePane } from '@components/terminal/shells';
 import { useFileLinks } from '@hooks/useFileLinks';
@@ -269,6 +270,7 @@ function PaneHost({
 			ro.disconnect();
 			entry.host.style.visibility = 'hidden';
 			releaseGpuRenderer(entry);
+			syncVisible(entry);
 		};
 		// `dead` is in the list deliberately: a click on a dead chip has to re-run
 		// this effect, and the key alone does not change when it is respawned.

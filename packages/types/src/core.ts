@@ -20,6 +20,14 @@ export type Op = 1 | 2 | 3;
 
 export type ClientType = 'app' | 'renderer' | 'cli';
 
+/** Where the local core listens, from the app's `core_endpoint` command. The
+ *  secret never goes to storage or a log (design §3). */
+export interface CoreEndpoint {
+	url: string;
+	secret: string;
+	hostId: string;
+}
+
 export type ClientMsg =
 	| {
 			type: 'hello';
