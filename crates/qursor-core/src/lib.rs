@@ -5,6 +5,7 @@ pub mod agents;
 pub mod db;
 pub mod error;
 pub mod models;
+pub mod protocol;
 pub mod services;
 
 use std::path::PathBuf;

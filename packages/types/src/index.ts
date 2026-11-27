@@ -2195,3 +2195,5 @@ export interface Tunnel {
 	/** Listening right now. */
 	running: boolean;
 }
+
+export * from './core';
