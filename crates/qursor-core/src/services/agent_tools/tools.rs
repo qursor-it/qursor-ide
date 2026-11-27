@@ -1597,8 +1597,9 @@ mod tests {
 		}
 	}
 
-	const BOARD: &str =
-		include_str!("../../../../src/components/canvas/__fixtures__/containment.canvas");
+	const BOARD: &str = include_str!(
+		"../../../../../apps/desktop/src/components/canvas/__fixtures__/containment.canvas"
+	);
 
 	fn board(f: &Fixture) -> std::path::PathBuf {
 		let p = f.dir.path().join("canvas/b.canvas");

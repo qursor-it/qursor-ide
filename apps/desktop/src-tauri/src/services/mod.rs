@@ -1,48 +1,33 @@
-pub mod agent_cli;
 pub mod agent_policy;
-pub mod agent_tools;
 pub mod attention;
-pub mod canvas;
-pub mod canvas_tools;
-pub mod child_env;
-pub mod event_sink;
 pub mod file_watch;
-pub mod files;
 pub mod gh;
-pub mod git;
 pub mod git_agent;
 pub mod git_cli;
 pub mod git_ops;
 pub mod git_proposed;
-pub mod hash;
-pub mod ide;
 pub mod indexer;
 pub mod intelligence;
-pub mod jsonl;
-pub mod mcp_wire;
 pub mod media_server;
 // macOS only: the menu exists to give up `Cmd+W` (ADR-0046). Nothing to build
 // on Linux, where the same actions are renderer hotkeys.
 #[cfg(target_os = "macos")]
 pub mod menu;
-pub mod osc_title;
 pub mod profiles;
 pub mod reveal;
-pub mod routines;
 pub mod search;
 pub mod server_files;
 pub mod servers;
 pub mod session_plan;
 pub mod sessions;
-pub mod settings;
-pub mod shell_path;
-pub mod sops;
-pub mod ssh;
-pub mod term_capture;
-pub mod terminal;
 pub mod updates;
 pub mod usage;
-pub mod vault;
 pub mod watcher;
 pub mod webview_health;
 pub mod wsl;
+
+pub use qursor_core::services::{
+	agent_cli, agent_tools, canvas, canvas_tools, child_env, event_sink, files, git, hash, ide,
+	jsonl, mcp_wire, osc_title, routines, settings, shell_path, sops, ssh, term_capture, terminal,
+	vault,
+};

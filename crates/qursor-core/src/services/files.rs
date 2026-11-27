@@ -528,12 +528,7 @@ pub(crate) fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
 ///
 /// `true_size` is the size of the whole thing, which may exceed `bytes.len()`
 /// when the caller already stopped reading at the cap.
-pub(crate) fn contents_from_bytes(
-	path: &str,
-	bytes: &[u8],
-	true_size: u64,
-	cap: usize,
-) -> FileContents {
+pub fn contents_from_bytes(path: &str, bytes: &[u8], true_size: u64, cap: usize) -> FileContents {
 	if bytes.iter().take(SNIFF_BYTES).any(|b| *b == 0) {
 		return FileContents {
 			path: path.to_string(),

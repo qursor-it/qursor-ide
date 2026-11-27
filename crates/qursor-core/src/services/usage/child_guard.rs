@@ -7,8 +7,8 @@ use std::process::Child;
 /// panic or early return. An npm shim is powershell -> cmd -> node -> codex, so
 /// killing only the direct child would orphan the real app-server. On Unix the
 /// caller must start the child in its own process group (`process_group(0)`).
-pub(crate) struct KillOnDrop {
-	pub(crate) child: Child,
+pub struct KillOnDrop {
+	pub child: Child,
 	/// Windows: the job the whole tree lives in; closing it kills the tree.
 	#[cfg(windows)]
 	job: Option<std::os::windows::io::OwnedHandle>,
@@ -17,7 +17,7 @@ pub(crate) struct KillOnDrop {
 }
 
 impl KillOnDrop {
-	pub(crate) fn new(child: Child) -> Self {
+	pub fn new(child: Child) -> Self {
 		#[cfg(windows)]
 		{
 			let job = kill_on_close_job(&child);

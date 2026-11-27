@@ -265,13 +265,13 @@ pub struct Meta {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct Line {
+pub struct Line {
 	#[serde(default)]
-	pub(crate) timestamp: Option<String>,
+	pub timestamp: Option<String>,
 	#[serde(rename = "type")]
-	pub(crate) kind: String,
+	pub kind: String,
 	#[serde(default)]
-	pub(crate) payload: serde_json::Value,
+	pub payload: serde_json::Value,
 }
 
 /// The first line of a rollout, when it is a `session_meta`. `None` for a file
@@ -468,7 +468,7 @@ const INJECTED_INSTRUCTIONS: &str = "# AGENTS.md instructions for ";
 /// the person typed: the injected AGENTS.md, and the `<environment_context>`
 /// block it opens every thread with. Neither titles a session nor belongs in
 /// search.
-pub(crate) fn is_injected_context(text: &str) -> bool {
+pub fn is_injected_context(text: &str) -> bool {
 	let t = text.trim_start();
 	t.starts_with(INJECTED_INSTRUCTIONS)
 		|| t.starts_with("<environment_context>")
@@ -548,7 +548,7 @@ fn map_line(line: Line) -> Option<SessionEvent> {
 mod tests {
 	use super::*;
 
-	const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../tests/fixtures/codex");
+	const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/codex");
 
 	#[test]
 	fn a_new_session_carries_only_the_title_override() {

@@ -548,7 +548,7 @@ fn process_descendants(root_pid: u32) -> std::io::Result<Vec<u32>> {
 }
 
 #[cfg(windows)]
-pub(crate) fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
+pub fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
 	let mut process_ids = process_descendants(root_pid).unwrap_or_default();
 	process_ids.push(root_pid);
 	process_ids.reverse();
@@ -5109,7 +5109,7 @@ mod tests {
 
 	// Baseline for specs/10-performance.md P9: what the in-process PTY path costs
 	// today, so the qursor-core extraction can be compared against it. Run with
-	// `cargo test -p qursor-ide --release --lib baseline_ -- --ignored --nocapture --test-threads=1`.
+	// `cargo test -p qursor-core --release --lib baseline_ -- --ignored --nocapture --test-threads=1`.
 	type Stamps = Arc<StdMutex<Vec<(Instant, usize)>>>;
 	type ExitStamp = Arc<StdMutex<Option<(Instant, Option<i32>)>>>;
 

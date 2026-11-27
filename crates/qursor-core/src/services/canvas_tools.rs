@@ -486,8 +486,9 @@ pub fn to_text(doc: &Value) -> String {
 mod tests {
 	use super::*;
 
-	const FIXTURE: &str =
-		include_str!("../../../src/components/canvas/__fixtures__/containment.canvas");
+	const FIXTURE: &str = include_str!(
+		"../../../../apps/desktop/src/components/canvas/__fixtures__/containment.canvas"
+	);
 
 	fn doc() -> Value {
 		serde_json::from_str(FIXTURE).unwrap()

@@ -1,12 +1,11 @@
-pub mod agents;
 pub mod commands;
-pub mod db;
-pub mod error;
-pub mod models;
 pub mod platform;
 pub mod services;
 pub mod state;
 pub mod tauri_sink;
+
+pub use qursor_core::{agents, db, error, models};
+pub(crate) use qursor_core::{claude_dir, epoch_ms};
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,29 +21,6 @@ use crate::services::terminal::TerminalManager;
 use crate::services::watcher;
 use crate::state::AppState;
 use crate::tauri_sink::TauriSink;
-
-/// The Claude config directory this machine uses when nothing has been
-/// configured here — the *ambient* one.
-///
-/// Two things read it, and both want the same answer: `ensure_default` seeds the
-/// default profile from it (F25), and `TerminalManager` compares against it to
-/// decide whether a spawn needs `CLAUDE_CONFIG_DIR` set at all.
-///
-/// **`CLAUDE_CONFIG_DIR` first, because it is the CLI's own variable.** If it is
-/// exported in the environment factorai was launched from, that *is* this
-/// machine's config directory, and reading `~/.claude` instead would have us
-/// index one store while every session used another. `CLAUDE_HOME` stays honoured
-/// after it — see specs/07-open-questions.md Q3, which this refines.
-fn claude_dir() -> PathBuf {
-	for var in ["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"] {
-		if let Some(env) = std::env::var_os(var) {
-			if !env.is_empty() {
-				return PathBuf::from(env);
-			}
-		}
-	}
-	dirs::home_dir().expect("no home dir").join(".claude")
-}
 
 /// `factorai --usage-statusline <sink dir>`: the status line a factorai Claude
 /// session runs (`services::usage::statusline`). Returns whether this process
@@ -786,51 +762,5 @@ pub fn run() {
 		.expect("error while running factorai");
 }
 
-/// Wall-clock milliseconds, for the two writes to `session_worktrees` that do
-/// not come from the bridge — the setup callback below, and the human's picker
-/// in `commands::sessions`.
-///
-/// A local copy rather than reaching into `services::terminal`'s private helper:
-/// another caller is not a reason to widen that module's surface, and this is
-/// three lines.
-pub(crate) fn epoch_ms() -> i64 {
-	std::time::SystemTime::now()
-		.duration_since(std::time::UNIX_EPOCH)
-		.map(|d| d.as_millis() as i64)
-		.unwrap_or(0)
-}
-
 #[cfg(test)]
-pub(crate) mod test_support {
-	#[cfg(unix)]
-	use std::future::Future;
-	use std::sync::OnceLock;
-
-	use parking_lot::{Mutex, MutexGuard};
-
-	static SPAWN: Mutex<()> = Mutex::new(());
-
-	/// Held by every test that starts a shell (PowerShell, Git Bash, cmd, a
-	/// ConPTY child, the fake `codex`). Their start-up is CPU-bound and their
-	/// assertions are timed, so they run one at a time while the rest of the
-	/// suite stays parallel.
-	pub(crate) fn spawn_lock() -> MutexGuard<'static, ()> {
-		SPAWN.lock()
-	}
-
-	/// One runtime for the whole test binary, the way the app has one: a test
-	/// thread has none of its own, and what a test starts has to outlive it.
-	pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
-		static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-		RT.get_or_init(|| tokio::runtime::Runtime::new().expect("test runtime"))
-	}
-
-	pub(crate) fn handle() -> tokio::runtime::Handle {
-		runtime().handle().clone()
-	}
-
-	#[cfg(unix)]
-	pub(crate) fn block_on<F: Future>(f: F) -> F::Output {
-		runtime().block_on(f)
-	}
-}
+pub(crate) use qursor_core::test_support;
