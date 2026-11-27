@@ -4270,6 +4270,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "qursor-core"
+version = "0.58.0"
+
+[[package]]
 name = "qursor-ide"
 version = "0.58.0"
 dependencies = [

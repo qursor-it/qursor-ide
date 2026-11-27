@@ -1,0 +1,15 @@
+[package]
+name = "qursor-core"
+version = "0.58.0"
+description = "Qursor's terminal manager, headless"
+edition = "2021"
+
+[lib]
+name = "qursor_core"
+
+[features]
+# `test_support` (the spawn lock and the shared test runtime) for the app's own
+# tests, which share them with the code that moved here.
+test-support = []
+
+[dependencies]

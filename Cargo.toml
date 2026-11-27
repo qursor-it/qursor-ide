@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/desktop/src-tauri"]
+members = ["apps/desktop/src-tauri", "crates/qursor-core"]
 resolver = "2"
 
 # **Here and not in `apps/desktop/src-tauri/Cargo.toml`**, which is where this
