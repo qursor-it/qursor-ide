@@ -104,8 +104,12 @@ function RootLayout() {
 				// beside it.
 				useShellStore.getState().adoptLive(live);
 			})
-			// Nothing to surface: with no adopted terminals the app behaves exactly
-			// as it did before this call existed.
+			// Not retried: a failure (the core's socket failing its first attempt,
+			// or the core refusing this window) settles `liveAdopted` anyway, and a
+			// spawn then goes ahead without the list, so a session the core already
+			// runs can get a second process. Retrying needs the client to tell a
+			// reconnect from a refusal that never ends; it belongs with gating the
+			// footer's shells on `liveAdopted` too.
 			.catch((e) => console.error('terminal_list failed', e))
 			.finally(markLiveAdopted);
 		// What every shell chip is labelled (F23 as amended by F24). Asked once
