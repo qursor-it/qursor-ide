@@ -101,7 +101,7 @@ pnpm test
 pnpm e2e
 pnpm deps:check
 pnpm deps:unused
-cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
 CI runs all of it on every PR except `pnpm e2e`, so the PR template asks whether

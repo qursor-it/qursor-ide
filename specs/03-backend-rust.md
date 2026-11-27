@@ -10,9 +10,19 @@ paths and adds `CoreLink` (spawns and talks to the sidecar). The core never
 migrates: `Db::open_existing` requires the `_meta` `migration:*` ledger to match
 exactly, otherwise exit 4. `qursor-core --data-dir <path> [--parent-pid <pid>]`
 prints `{"ready":true,"port":N}`; exit 2 bad arguments, 3 lock held, 4 DB not
-ready. Binary frames are `op u8 | slot u16 BE | payload` (Output 1, Input 2,
-Resize 3). With the last client gone the core waits 10 s, kills every PTY and
-exits.
+ready. The first frame of a
+connection is a hello with the 32-byte hex secret (compared in constant time,
+redacted in `Debug`); `Origin` must be allowlisted or absent. Control traffic is
+JSON envelopes; terminal bytes are binary frames `op u8 | slot u16 BE |
+payload` (Output 1, Input 2, Resize 3; 4-6 reserved for snapshots). A client
+whose queue passes 8 MiB is closed. Output flushes every 16 ms for a visible
+client and 100 ms otherwise. Clients ping every 10 s and the core drops one
+silent for 20 s. `core_shutdown` (a confirmed or idle quit) kills every PTY and
+stops the core; with the last client gone the core waits 10 s, kills them and
+exits, and it follows `--parent-pid` out the same way.
+
+The terminal commands and `terminal:*` events below moved to this protocol and
+are listed only until the table is rewritten.
 
 ## Module layout (`apps/desktop/src-tauri/src/`)
 
@@ -342,7 +352,7 @@ routine_pending_fires() -> Vec<FireEvent>
 // prompt field is its only caller.
 list_skills(project_id: String) -> Vec<SkillInfo>
 
-// terminal
+// terminal: `terminal_*` and `shell_spawn` moved to the core protocol (ADR-0127)
 start_session(project_id: String, agent: Option<AgentId>, fresh: Option<bool>) -> SessionId  // see "Session ids" below
 terminal_spawn(opts: SpawnOpts) -> Spawned              // session_id, project_id, cwd?, cols, rows, initial_prompt?, agent? → { id, agent } (F30)
 terminal_write(id: TerminalId, data: String) -> ()
@@ -585,6 +595,8 @@ session_usage(session_id: String) -> Option<SessionUsage>
 ```
 
 ## Tauri events (Rust → JS only)
+
+`terminal:data/status/exit` now arrive over the core protocol (ADR-0127).
 
 | Event                  | Payload                              | Source              |
 | ---------------------- | ------------------------------------ | ------------------- |

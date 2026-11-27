@@ -112,7 +112,7 @@ them.
   `noFallthroughCasesInSwitch`. Don't disable these.
 - oxlint `typescript/no-explicit-any: error`, `no-unused-vars: error` (which
   covers unused imports), `prefer-const`, `prefer-template`, `eqeqeq`.
-- Rust: `cargo clippy --all-targets -- -D warnings`. `#[allow(...)]` needs a
+- Rust: `cargo clippy --workspace --all-targets -- -D warnings`. `#[allow(...)]` needs a
   comment explaining why.
 - Formatting is not a matter of taste and not reviewed by hand: `oxfmt` owns
   every JS/TS/CSS file and `rustfmt` owns every Rust one, both checked here.
@@ -140,9 +140,9 @@ pnpm deps:unused          # knip — dead code / deps
 pnpm vite:dev             # renderer only, no Tauri (mock the bridge)
 pnpm tauri build          # production build (.app/.dmg/.AppImage)
 
-# Inside apps/desktop/src-tauri:
-cargo fmt                 # rustfmt.toml is written to match the existing style
-cargo check
-cargo clippy --all-targets -- -D warnings
-cargo test
+# From the repo root (the workspace):
+cargo fmt --all           # rustfmt.toml is written to match the existing style
+cargo check --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
