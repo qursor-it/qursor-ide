@@ -141,9 +141,10 @@ fn check_origin(req: &Request, res: Response) -> Result<Response, ErrorResponse>
 }
 
 pub(crate) async fn serve(stream: TcpStream, shared: Arc<Shared>) {
-	let ws = match accept_hdr_async(stream, check_origin).await {
-		Ok(ws) => ws,
-		Err(error) => return debug!(%error, "handshake failed"),
+	let ws = match tokio::time::timeout(SILENCE, accept_hdr_async(stream, check_origin)).await {
+		Ok(Ok(ws)) => ws,
+		Ok(Err(error)) => return debug!(%error, "handshake failed"),
+		Err(_) => return debug!("handshake never finished"),
 	};
 	let (mut sink, mut stream) = ws.split();
 
@@ -165,10 +166,6 @@ pub(crate) async fn serve(stream: TcpStream, shared: Arc<Shared>) {
 		features: vec![],
 	};
 	let Ok(info) = serde_json::to_string(&info) else { return };
-	if sink.send(Message::Text(info.into())).await.is_err() {
-		return;
-	}
-
 	let (tx, mut rx) = mpsc::unbounded_channel();
 	let client = Arc::new(Client {
 		tx,
@@ -177,7 +174,14 @@ pub(crate) async fn serve(stream: TcpStream, shared: Arc<Shared>) {
 		dropped: Notify::new(),
 		slots: Mutex::default(),
 	});
-	let id = shared.joined(client.clone());
+	// Joined before `server_info`: a core already shutting down answers nothing,
+	// so no client is told it has terminals that are about to die.
+	let Some(id) = shared.joined(client.clone()) else {
+		return debug!("refused a client: the core is shutting down");
+	};
+	if sink.send(Message::Text(info.into())).await.is_err() {
+		return shared.left(id);
+	}
 	let mut stop = shared.stop.subscribe();
 
 	let write = async {

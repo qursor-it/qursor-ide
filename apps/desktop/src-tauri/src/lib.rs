@@ -556,6 +556,9 @@ pub fn run() {
 				if let Some(state) = window.try_state::<AppState>() {
 					state.attention.set_focused(*focused);
 				}
+				if *focused {
+					services::attention::clear_attention(window.app_handle());
+				}
 			}
 			if let WindowEvent::CloseRequested { api, .. } = event {
 				if let Some(state) = window.try_state::<AppState>() {

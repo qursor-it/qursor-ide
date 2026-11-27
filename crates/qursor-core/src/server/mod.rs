@@ -10,7 +10,7 @@ pub mod wiring;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -75,6 +75,9 @@ pub(crate) struct Shared {
 	routines: Arc<Runner>,
 	stop: watch::Sender<bool>,
 	exited: Mutex<Option<oneshot::Sender<()>>>,
+	/// Set before `kill_all`; written and read under the `clients` lock, so a
+	/// join and the grace's last look cannot interleave.
+	stopping: AtomicBool,
 	/// Bumped by every client that joins, so a grace timer knows it was overtaken.
 	joins: AtomicU64,
 	next_client: AtomicU64,
@@ -135,6 +138,7 @@ pub async fn start(config: Config) -> anyhow::Result<Server> {
 		routines,
 		stop: watch::channel(false).0,
 		exited: Mutex::new(Some(exited_tx)),
+		stopping: AtomicBool::new(false),
 		joins: AtomicU64::new(0),
 		next_client: AtomicU64::new(1),
 	});
@@ -200,11 +204,16 @@ async fn blocking<T: Send + 'static>(
 }
 
 impl Shared {
-	fn joined(&self, client: Arc<Client>) -> u64 {
+	/// `None` once the core is stopping.
+	fn joined(&self, client: Arc<Client>) -> Option<u64> {
+		let mut clients = self.clients.lock();
+		if self.stopping.load(Ordering::SeqCst) {
+			return None;
+		}
 		let id = self.next_client.fetch_add(1, Ordering::Relaxed);
 		self.joins.fetch_add(1, Ordering::SeqCst);
-		self.clients.lock().insert(id, client);
-		id
+		clients.insert(id, client);
+		Some(id)
 	}
 
 	fn left(self: &Arc<Self>, id: u64) {
@@ -222,15 +231,24 @@ impl Shared {
 		let me = self.clone();
 		tokio::spawn(async move {
 			tokio::time::sleep(me.grace).await;
-			if me.joins.load(Ordering::SeqCst) == joins && me.clients.lock().is_empty() {
-				info!("no client came back; shutting down");
-				me.shutdown();
+			{
+				let clients = me.clients.lock();
+				if me.joins.load(Ordering::SeqCst) != joins || !clients.is_empty() {
+					return;
+				}
+				me.stopping.store(true, Ordering::SeqCst);
 			}
+			info!("no client came back; shutting down");
+			me.shutdown();
 		});
 	}
 
 	/// Kill every terminal, stop serving, signal `exited`. Once.
 	fn shutdown(self: &Arc<Self>) {
+		// Under the lock, so it orders with `joined`.
+		let clients = self.clients.lock();
+		self.stopping.store(true, Ordering::SeqCst);
+		drop(clients);
 		let Some(exited) = self.exited.lock().take() else { return };
 		let me = self.clone();
 		tokio::spawn(async move {

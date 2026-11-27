@@ -11,7 +11,8 @@ const RECORD: &str = "core.json";
 const LOCK: &str = "core.lock";
 const HOST_ID: &str = "host-id";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `Debug` by hand: the secret never reaches a log.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
 	pub pid: u32,
@@ -19,6 +20,18 @@ pub struct Record {
 	pub app_version: String,
 	pub port: u16,
 	pub secret: String,
+}
+
+impl std::fmt::Debug for Record {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("Record")
+			.field("pid", &self.pid)
+			.field("protocol_version", &self.protocol_version)
+			.field("app_version", &self.app_version)
+			.field("port", &self.port)
+			.field("secret", &"<redacted>")
+			.finish()
+	}
 }
 
 /// `<data_dir>/core`, created.
@@ -121,6 +134,12 @@ mod tests {
 		assert!(lock(dir.path()).unwrap().is_none(), "a second holder got the lock");
 		drop(first);
 		assert!(lock(dir.path()).unwrap().is_some());
+	}
+
+	#[test]
+	fn debug_never_shows_the_secret() {
+		let r = Record { secret: "s3cr3t".into(), ..record() };
+		assert!(!format!("{r:?}").contains("s3cr3t"));
 	}
 
 	#[test]

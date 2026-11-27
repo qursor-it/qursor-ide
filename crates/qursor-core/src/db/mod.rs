@@ -166,7 +166,59 @@ pub struct Db {
 	path: Arc<Path>,
 }
 
+/// Why the core will not use a database (docs/superpowers/specs/2026-11-26-local-core-design.md
+/// §5): only the app migrates, and a core of another version must not touch it.
+#[derive(Debug, thiserror::Error)]
+pub enum NotReady {
+	#[error("{0} does not exist: the app creates and migrates it")]
+	Missing(String),
+	#[error(
+		"the database's migrations are not this core's: missing {missing:?}, unknown {unknown:?}"
+	)]
+	Ledger { missing: Vec<String>, unknown: Vec<String> },
+}
+
 impl Db {
+	/// The core's open: never creates, never migrates. The `_meta` ledger must
+	/// hold exactly the migrations this build knows, or the error is a
+	/// [`NotReady`] (§5).
+	pub fn open_existing(data_dir: &Path) -> anyhow::Result<Self> {
+		let path = data_dir.join("factorai.db");
+		if !path.is_file() {
+			return Err(NotReady::Missing(path.display().to_string()).into());
+		}
+		info!(?path, "opening sqlite db without migrating");
+		let conn = Connection::open_with_flags(
+			&path,
+			OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI,
+		)?;
+		// The app holds it too: wait for its writes rather than fail.
+		conn.busy_timeout(std::time::Duration::from_secs(5))?;
+		conn.pragma_update(None, "foreign_keys", "ON")?;
+		conn.pragma_update(None, "synchronous", "NORMAL")?;
+		let applied: Vec<String> = conn
+			.prepare("SELECT substr(key, 11) FROM _meta WHERE key LIKE 'migration:%'")
+			.and_then(|mut st| st.query_map([], |r| r.get(0))?.collect())
+			.unwrap_or_default();
+		let missing: Vec<String> = MIGRATIONS
+			.iter()
+			.map(|(name, _)| name.to_string())
+			.filter(|name| !applied.contains(name))
+			.collect();
+		let unknown: Vec<String> = applied
+			.into_iter()
+			.filter(|name| !MIGRATIONS.iter().any(|(known, _)| known == name))
+			.collect();
+		if !missing.is_empty() || !unknown.is_empty() {
+			return Err(NotReady::Ledger { missing, unknown }.into());
+		}
+		Ok(Self {
+			conn: Arc::new(Mutex::new(conn)),
+			readers: Arc::new(Mutex::new(Vec::new())),
+			path: Arc::from(path.as_path()),
+		})
+	}
+
 	pub fn open(data_dir: &Path) -> AppResult<Self> {
 		std::fs::create_dir_all(data_dir)?;
 		let path = data_dir.join("factorai.db");
@@ -321,4 +373,67 @@ fn record(conn: &Connection, name: &str) -> AppResult<()> {
 		[format!("migration:{name}"), chrono::Utc::now().to_rfc3339()],
 	)?;
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn not_ready(dir: &Path) -> NotReady {
+		match Db::open_existing(dir) {
+			Ok(_) => panic!("the core opened a database it should refuse"),
+			Err(e) => e.downcast::<NotReady>().expect("a NotReady"),
+		}
+	}
+
+	#[test]
+	fn the_core_opens_what_the_app_migrated() {
+		let dir = tempfile::TempDir::new().unwrap();
+		Db::open(dir.path()).unwrap();
+		let db = Db::open_existing(dir.path()).unwrap();
+		db.read(|c| Ok(c.query_row("SELECT COUNT(*) FROM projects", [], |r| r.get::<_, i64>(0))?))
+			.unwrap();
+	}
+
+	#[test]
+	fn the_core_refuses_a_missing_file() {
+		let dir = tempfile::TempDir::new().unwrap();
+		assert!(matches!(not_ready(dir.path()), NotReady::Missing(_)));
+		assert!(!dir.path().join("factorai.db").exists(), "the refusal created the file");
+	}
+
+	#[test]
+	fn the_core_refuses_a_missing_migration() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let db = Db::open(dir.path()).unwrap();
+		db.with(|c| {
+			Ok(c.execute("DELETE FROM _meta WHERE key = 'migration:9008_delegate_sessions'", [])?)
+		})
+		.unwrap();
+		drop(db);
+		match not_ready(dir.path()) {
+			NotReady::Ledger { missing, unknown } => {
+				assert_eq!(missing, ["9008_delegate_sessions"]);
+				assert!(unknown.is_empty());
+			}
+			other => panic!("{other:?}"),
+		}
+	}
+
+	#[test]
+	fn the_core_refuses_an_unknown_migration() {
+		let dir = tempfile::TempDir::new().unwrap();
+		let db = Db::open(dir.path()).unwrap();
+		db.with(|c| {
+			Ok(c.execute(
+				"INSERT INTO _meta(key, value) VALUES ('migration:9999_future', 'x')",
+				[],
+			)?)
+		})
+		.unwrap();
+		drop(db);
+		assert!(
+			matches!(not_ready(dir.path()), NotReady::Ledger { unknown, .. } if unknown == ["9999_future"])
+		);
+	}
 }

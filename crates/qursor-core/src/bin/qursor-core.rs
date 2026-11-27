@@ -2,7 +2,9 @@
 //! that owns every terminal (docs/superpowers/specs/2026-11-26-local-core-design.md §1).
 //!
 //! Prints one line, `{"ready":true,"port":N}`, once it listens, then nothing.
-//! Exits 3 when another core holds the data folder's lock.
+//! Exit codes: 2 bad arguments; 3 another core holds the data folder's lock;
+//! 4 the database is missing or not migrated to this core's schema (only the
+//! app migrates, design §5); 1 anything else.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -40,7 +42,11 @@ fn main() -> ExitCode {
 		Err(error) => {
 			tracing::error!("{error:#}");
 			eprintln!("qursor-core: {error:#}");
-			ExitCode::FAILURE
+			if error.downcast_ref::<qursor_core::db::NotReady>().is_some() {
+				ExitCode::from(4)
+			} else {
+				ExitCode::FAILURE
+			}
 		}
 	}
 }

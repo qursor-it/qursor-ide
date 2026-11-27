@@ -46,7 +46,8 @@ pub struct Core {
 }
 
 pub fn build_manager(data_dir: &Path, sink: Arc<dyn EventSink>) -> anyhow::Result<Core> {
-	let db = Db::open(data_dir)?;
+	// Only the app migrates (§5).
+	let db = Db::open_existing(data_dir)?;
 	// Before anything spawns a child: `GoUsage` takes the Go key out of the
 	// environment so no child inherits it.
 	let vault = Arc::new(vault::open_or_set_aside(data_dir.join("secrets.vault")));

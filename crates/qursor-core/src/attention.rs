@@ -335,6 +335,15 @@ mod tests {
 	}
 
 	#[test]
+	fn stopped_while_focused_forgets_the_terminal() {
+		let (_, n) = setup();
+		n.set_focused(true);
+		n.observe(&ev("t", Working));
+		assert_eq!(n.observe(&ev("t", Stopped)), None);
+		assert!(n.last.get("t").is_none());
+	}
+
+	#[test]
 	fn stale_check_does_not_swallow_a_later_exit() {
 		let (sink, n) = setup();
 		let id = "t".to_string();

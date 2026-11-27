@@ -20,6 +20,8 @@ const NO_GRACE: Duration = Duration::from_secs(600);
 
 async fn start(grace: Duration) -> (Server, tempfile::TempDir) {
 	let dir = tempfile::TempDir::new().unwrap();
+	// The app creates and migrates the database; the core only opens it.
+	qursor_core::db::Db::open(dir.path()).unwrap();
 	let server =
 		server::start(Config { data_dir: dir.path().to_path_buf(), grace, parent_pid: None })
 			.await
@@ -262,6 +264,7 @@ fn parent_death_shuts_down() {
 		#[cfg(not(windows))]
 		let mut parent = std::process::Command::new("sleep").arg("30").spawn().unwrap();
 		let dir = tempfile::TempDir::new().unwrap();
+		qursor_core::db::Db::open(dir.path()).unwrap();
 		let server = server::start(Config {
 			data_dir: dir.path().to_path_buf(),
 			grace: NO_GRACE,
@@ -316,5 +319,30 @@ fn vault_and_servers_answer_over_rpc() {
 		let err = reply(&mut ws, 3, "no.such", Value::Null).await;
 		assert_eq!(err["type"], "rpc_error");
 		shutdown(&mut ws, server).await;
+	});
+}
+
+#[test]
+fn no_join_once_the_grace_has_run_out() {
+	runtime().block_on(async {
+		let (server, _dir) = start(Duration::from_millis(200)).await;
+		// Past the grace, inside `kill_all`'s own 500 ms: still accepting, no
+		// longer letting anyone in.
+		tokio::time::sleep(Duration::from_millis(350)).await;
+		let mut ws = connect(server.port).await;
+		ws.send(hello(&server.secret)).await.unwrap();
+		assert_closed_without_info(&mut ws).await;
+		tokio::time::timeout(Duration::from_secs(3), server.exited).await.unwrap().unwrap();
+	});
+}
+
+#[test]
+fn refuses_a_data_folder_the_app_never_migrated() {
+	runtime().block_on(async {
+		let dir = tempfile::TempDir::new().unwrap();
+		let config =
+			Config { data_dir: dir.path().to_path_buf(), grace: NO_GRACE, parent_pid: None };
+		let Err(error) = server::start(config).await else { panic!("the core started") };
+		assert!(error.downcast_ref::<qursor_core::db::NotReady>().is_some(), "{error:#}");
 	});
 }
