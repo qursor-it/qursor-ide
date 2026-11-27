@@ -334,9 +334,16 @@ fn vault_and_servers_answer_over_rpc() {
 
 #[test]
 fn no_join_once_the_grace_has_run_out() {
+	let _spawn = spawn_lock();
 	runtime().block_on(async {
-		let (server, _dir) = start(Duration::from_millis(200)).await;
-		// Past the grace, inside `kill_all`'s own 500 ms: still accepting, no
+		let (server, dir) = start(Duration::from_millis(200)).await;
+		// A terminal, so `kill_all` spends its own 500 ms: with none it returns
+		// at once and the core stops accepting.
+		let mut first = client(&server).await;
+		spawn_shell(&mut first, dir.path()).await;
+		first.close(None).await.unwrap();
+		drop(first);
+		// Past the grace, inside `kill_all`'s 500 ms: still accepting, no
 		// longer letting anyone in.
 		tokio::time::sleep(Duration::from_millis(350)).await;
 		let mut ws = connect(server.port).await;
