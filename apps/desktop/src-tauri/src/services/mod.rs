@@ -23,7 +23,6 @@ pub mod watcher;
 pub mod webview_health;
 
 pub use qursor_core::services::{
-	agent_cli, agent_policy, agent_tools, canvas, canvas_tools, child_env, event_sink, files, git,
-	hash, ide, jsonl, mcp_wire, osc_title, routines, server_files, servers, settings, shell_path,
-	sops, ssh, term_capture, terminal, vault, workspace, wsl,
+	agent_cli, agent_policy, agent_tools, canvas, child_env, event_sink, files, git, hash, ide,
+	jsonl, routines, servers, settings, shell_path, sops, terminal,
 };
