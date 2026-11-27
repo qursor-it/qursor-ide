@@ -364,8 +364,8 @@ pub fn run() {
 						// Synchronous on purpose, and the close proceeds when it
 						// returns: the core's shutdown waits out the terminals' grace
 						// before it closes the connection, which a process already
-						// gone could not. The core would also follow us out through
-						// `--parent-pid`, after that grace.
+						// gone could not. Without it the core would still follow us out
+						// through `--parent-pid`, at once, with no grace.
 						tauri::async_runtime::block_on(state.core.shutdown());
 					}
 					// The close goes ahead: the widget goes with it.
