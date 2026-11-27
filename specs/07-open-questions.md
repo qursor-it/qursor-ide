@@ -176,6 +176,9 @@ as a follow-up for power users with many parallel agents.
 
 ## Q10 — Process orphans on quit → **always kill, confirm dialog**
 
+**Narrowed by ADR-0127:** `qursor-core` owns the PTYs and does the killing; the
+rule is unchanged.
+
 **Decision.** Kill-on-quit is **non-optional and not configurable**.
 On window close with live PTYs:
 

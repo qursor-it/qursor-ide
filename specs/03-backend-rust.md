@@ -1,5 +1,19 @@
 # Backend (Rust / Tauri)
 
+## Where the code lives (ADR-0127)
+
+`crates/qursor-core` holds the terminal manager, SSH pool/tunnels/SFTP, vault,
+agent policy, servers and workspace listings, attention decisions, the
+`usage.json` read, the DB opener and the protocol. It has no Tauri dependency;
+events leave through `EventSink` / `CoreEvent`. The app re-exports the old module
+paths and adds `CoreLink` (spawns and talks to the sidecar). The core never
+migrates: `Db::open_existing` requires the `_meta` `migration:*` ledger to match
+exactly, otherwise exit 4. `qursor-core --data-dir <path> [--parent-pid <pid>]`
+prints `{"ready":true,"port":N}`; exit 2 bad arguments, 3 lock held, 4 DB not
+ready. Binary frames are `op u8 | slot u16 BE | payload` (Output 1, Input 2,
+Resize 3). With the last client gone the core waits 10 s, kills every PTY and
+exits.
+
 ## Module layout (`apps/desktop/src-tauri/src/`)
 
 ```

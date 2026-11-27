@@ -17,7 +17,7 @@ pnpm test
 pnpm e2e
 pnpm deps:check
 pnpm deps:unused
-cd apps/desktop/src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
 
 Run each **exactly as written**: a scoped or filtered stand-in — `cargo test

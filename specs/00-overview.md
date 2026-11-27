@@ -56,7 +56,7 @@ and pretending they already agree would hide the decision.
 
 **The version fields in the repo hold the next stable** (ADR-0064, 2026-09-23;
 until then they sat at a `0.1.0` placeholder). `apps/desktop/package.json`,
-`tauri.conf.json`, `src-tauri/Cargo.toml` and `Cargo.lock` say e.g. `0.49.0`; an
+`tauri.conf.json`, the root `Cargo.toml` (`[workspace.package]`, the one place for every crate) and `Cargo.lock` say e.g. `0.49.0`; an
 alpha build is stamped `0.49.0-alpha.N` by `release.yml` without committing it,
 a dev build calls itself `0.49.0-dev`, and promoting `0.49.0` to stable commits
 the bump to `0.50.0`. Nobody bumps by hand and nobody tags by hand: alphas
