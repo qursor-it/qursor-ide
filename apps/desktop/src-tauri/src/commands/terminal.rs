@@ -1,145 +1,12 @@
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
-use crate::commands::off_main;
-use crate::commands::projects::project_path;
 use crate::error::AppResult;
-use crate::services::terminal::{SessionStart, ShellSpawnOpts, SpawnOpts, TerminalStatusDto};
 use crate::state::AppState;
 
-/// The session id to open for a "new session" in this project.
-///
-/// factorai names its own sessions (ADR-0008) so the id exists before any
-/// process does — the route, the xterm pool and the status store are all keyed
-/// by it. Reuses a live, never-messaged session rather than starting a second
-/// `claude` in the same project; see `TerminalManager::next_session_id`.
-///
-/// Takes the project's folder as well as its id, because "has this session been
-/// messaged" is answered by probing the transcript, and a uuid says nothing
-/// about where that is.
-///
-/// `agent` is the launch override (F30): the `+` menu naming an agent other
-/// than the project's. `None` resolves the project's agent.
-///
-/// `fresh` skips the reuse above and always mints a new id (ADR-0078): the
-/// caller is about to pass a first message, which a running session would drop.
-///
-/// **Off the main thread**, like `terminal_spawn` (PERF-07): the "messaged"
-/// probe stats the agent's store, and for Codex walks every rollout directory.
-#[tauri::command]
-pub async fn start_session(
-	state: State<'_, AppState>,
-	project_id: String,
-	agent: Option<String>,
-	fresh: Option<bool>,
-) -> AppResult<String> {
-	let db = state.db.clone();
-	let terminals = state.terminals.clone();
-	off_main(move || {
-		let folder = db.with(|conn| project_path(conn, &project_id))?;
-		terminals.next_session_id(&project_id, &folder, agent.as_deref(), fresh.unwrap_or(false))
-	})
-	.await
-}
+// Every terminal command is a qursor-core method now; the renderer calls the
+// core directly (docs/superpowers/specs/2026-11-26-local-core-design.md §3).
 
-/// The live delegations and retired delegates of one project (F50, ADR-0125).
-#[tauri::command]
-pub fn list_delegations(
-	state: State<'_, AppState>,
-	project_id: String,
-) -> crate::services::agent_tools::delegations::DelegationList {
-	state.terminals.delegations.list(&project_id)
-}
-
-/// Confirm or decline a model's delegation request in Qursor (F50).
-#[tauri::command]
-pub fn resolve_delegation(
-	state: State<'_, AppState>,
-	id: String,
-	approve: bool,
-) -> AppResult<Option<SessionStart>> {
-	state
-		.terminals
-		.delegations
-		.decide(&id, approve, |parent| state.terminals.can_start_delegate(parent))
-}
-
-/// Spawn the PTY for a session.
-///
-/// **Also where a routine's fire becomes a run** (F22, ADR-0030). This is the
-/// one place in the app a PTY comes into existence, so it is the only honest
-/// answer to *did the session start* — and ADR-0026 § 7 asks for the fire to be
-/// recorded exactly then. `mark_started` finds no claim for every session a
-/// human started, which is all of them but a routine's.
-///
-/// **Off the main thread** (PERF-07). A spawn is not one syscall: unless the
-/// F11 override is set it runs `which claude` and may ask a login shell for a
-/// `PATH`, it binds two loopback sockets and writes a lockfile, and then it
-/// forks. The first spawn of a run can also wait on the login shell's `PATH`
-/// resolution, which has a five-second timeout — five seconds of a window that
-/// does not repaint.
-///
-/// **Returns the agent beside the id** (F30). Which agent a session runs is
-/// resolved here, from the profile and the settings, and the renderer's
-/// header mark should not re-derive that from a second copy of the rules.
-#[tauri::command]
-pub async fn terminal_spawn(state: State<'_, AppState>, opts: SpawnOpts) -> AppResult<Spawned> {
-	let terminals = state.terminals.clone();
-	let routines = state.routines.clone();
-	off_main(move || {
-		let session_id = opts.session_id.clone();
-		let delegated =
-			terminals.delegations.begin(&opts, |parent| terminals.can_start_delegate(parent))?;
-		let result = terminals.spawn(opts);
-		if delegated {
-			terminals.delegations.started(&session_id, result.is_ok());
-		}
-		let terminal_id = result?;
-		let agent = terminals.agent_of_terminal(&terminal_id);
-		routines.mark_started(&session_id, crate::epoch_ms());
-		Ok(Spawned { id: terminal_id, agent })
-	})
-	.await
-}
-
-/// What `terminal_spawn` hands back. Mirrored as `Spawned` in `@factorai/types`.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Spawned {
-	pub id: String,
-	/// `claude` or `codex`; `None` only for a PTY that is not an agent's, which
-	/// this command never spawns.
-	pub agent: Option<String>,
-}
-
-/// Open a shell in the project's footer (F23).
-///
-/// Separate from `terminal_spawn` rather than a flag on it, because the two
-/// share only the PTY: this one runs no transcript probe, stands up no IDE
-/// bridge and no agent tool server, never marks a routine started, and has no
-/// session at all. See `TerminalManager::spawn_shell`, ADR-0031 and ADR-0032.
-///
-/// Off the main thread for the same reasons as `terminal_spawn`, minus the
-/// binary lookup and the two servers.
-#[tauri::command]
-pub async fn shell_spawn(state: State<'_, AppState>, opts: ShellSpawnOpts) -> AppResult<String> {
-	let terminals = state.terminals.clone();
-	off_main(move || terminals.spawn_shell(opts)).await
-}
-
-/// Kill every shell in one project's footer (ADR-0032).
-///
-/// **The renderer calls this from `Remove project` and from nowhere else.**
-/// Closing, deleting or navigating away from a session says nothing about the
-/// shells under it — that was F23's rule and the rescope removed it. Killing a
-/// session's agent is still the caller's own `terminal_kill`, on the id it
-/// already holds.
-#[tauri::command]
-pub fn shell_kill_for_project(state: State<'_, AppState>, project_id: String) -> AppResult<()> {
-	state.terminals.kill_shells_for_project(&project_id);
-	Ok(())
-}
-
-/// The basename of the shell `shell_spawn` runs — `zsh`, `bash`, `fish` — so a
+/// The basename of the shell `shell.spawn` runs — `zsh`, `bash`, `fish` — so a
 /// chip can be labelled before its process exists and after it is gone (F23 as
 /// amended by F24). One value per app: `$SHELL`, else `/bin/zsh`.
 #[tauri::command]
@@ -147,39 +14,14 @@ pub fn shell_name() -> String {
 	crate::services::shell_path::shell_name()
 }
 
-#[tauri::command]
-pub fn terminal_write(state: State<'_, AppState>, id: String, data: String) -> AppResult<()> {
-	state.terminals.write(&id, data.as_bytes())
-}
-
-#[tauri::command]
-pub fn terminal_resize(
-	state: State<'_, AppState>,
-	id: String,
-	cols: u16,
-	rows: u16,
-) -> AppResult<()> {
-	state.terminals.resize(&id, cols, rows)
-}
-
-#[tauri::command]
-pub fn terminal_kill(state: State<'_, AppState>, id: String) -> AppResult<()> {
-	state.terminals.kill(&id)
-}
-
-#[tauri::command]
-pub fn terminal_list(state: State<'_, AppState>) -> Vec<TerminalStatusDto> {
-	state.terminals.list()
-}
-
 /// User confirmed the quit dialog after the close-requested intercept.
-/// Kill every live PTY and tell Tauri to exit. See ADR-0005.
+/// Stop the core with every terminal it holds and tell Tauri to exit. See
+/// ADR-0005.
 #[tauri::command]
-pub fn app_quit_confirmed(app: AppHandle) -> AppResult<()> {
+pub async fn app_quit_confirmed(app: AppHandle) -> AppResult<()> {
 	if let Some(state) = app.try_state::<AppState>() {
 		state.intelligence.cancel_all();
-		state.terminals.kill_all();
-		state.ssh.disconnect_all();
+		state.core.shutdown().await;
 		state.taskbar_widget.stop();
 	}
 	app.exit(0);

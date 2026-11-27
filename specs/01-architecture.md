@@ -25,6 +25,8 @@ factorai/
 │       ├── vite.config.ts
 │       ├── tsconfig.json
 │       └── package.json
+├── crates/
+│   └── qursor-core/             # headless core: terminals, SSH, vault (ADR-0127)
 ├── packages/
 │   ├── types/                   # @factorai/types — shared TS types
 │   │   └── src/index.ts
@@ -38,7 +40,7 @@ factorai/
 ├── turbo.json
 ├── pnpm-workspace.yaml
 ├── package.json                 # root: turbo, oxlint, oxfmt, knip, syncpack
-├── Cargo.toml                   # cargo workspace, member: apps/desktop/src-tauri
+├── Cargo.toml                   # cargo workspace, members: apps/desktop/src-tauri, crates/qursor-core
 ├── knip.json
 ├── .syncpackrc.json
 ├── .mise.toml                   # node 24, pnpm 10, rust stable
@@ -86,6 +88,11 @@ same tooling versions.
 | Tauri bindings      | `@tauri-apps/api` + plugin packages mirroring Rust list              |
 
 ## IPC contract
+
+Terminals are the exception to the Tauri-only picture below (ADR-0127): they live
+in `qursor-core`, a sidecar the app starts, and the renderer reaches it over an
+authenticated loopback WebSocket (`core_endpoint` gives the address). The rest
+of this section is about the app's own commands.
 
 Strict layering, no exceptions:
 

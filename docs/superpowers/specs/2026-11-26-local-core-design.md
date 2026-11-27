@@ -209,7 +209,8 @@ Paseo (`docs/architecture.md` § WebSocket protocol), adattato:
 - Il core apre lo **stesso `factorai.db`** (WAL, sicuro tra processi) per ciò che il
   codice spostato già scrive: adozione delle sessioni, strumenti routine e canvas
   degli agenti. `busy_timeout` impostato. **Solo l'app esegue le migrazioni**; il
-  core legge `user_version` e, se non è quella che conosce, rifiuta di partire e lo
+  core controlla che il registro `migration:*` di `_meta` coincida con le
+  migrazioni che conosce e, se no, rifiuta di partire e lo
   dice nel log (l'app ne avvia uno della sua versione, §6).
 - Le callback che oggi l'app passa a `TerminalManager` (in `lib.rs`: store delle
   routine, store dei canvas, percorso del progetto) diventano funzioni del core sul DB.

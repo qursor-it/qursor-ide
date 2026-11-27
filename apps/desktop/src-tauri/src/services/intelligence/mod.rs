@@ -39,7 +39,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use sha2::{Digest, Sha256};
 
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
@@ -51,16 +50,7 @@ use crate::models::intelligence::{
 use crate::models::SettingKey;
 use provider::{AnalysisProvider, Availability, EvidenceItem, ProviderRequest, RunControl};
 
-/// Lowercase hex sha256. The one hash this feature uses: fingerprints, evidence
-/// ids, dedupe keys and the file hashes a change is verified against.
-pub fn sha256_hex(bytes: &[u8]) -> String {
-	let digest = Sha256::digest(bytes);
-	let mut out = String::with_capacity(64);
-	for byte in digest {
-		out.push_str(&format!("{byte:02x}"));
-	}
-	out
-}
+pub use crate::services::hash::sha256_hex;
 
 // ── Errors ─────────────────────────────────────────────────────────────────
 

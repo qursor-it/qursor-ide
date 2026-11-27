@@ -287,6 +287,8 @@ export type AgentId = 'claude' | 'codex' | 'opencode';
 export interface Spawned {
 	id: TerminalId;
 	agent: AgentId | null;
+	/** The slot the core already attached this terminal on, for this client. */
+	slot: number;
 }
 
 /** `session:adopted` (F30, ADR-0062): a session that started under an id
@@ -2195,3 +2197,5 @@ export interface Tunnel {
 	/** Listening right now. */
 	running: boolean;
 }
+
+export * from './core';

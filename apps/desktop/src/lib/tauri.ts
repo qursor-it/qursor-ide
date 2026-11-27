@@ -75,6 +75,7 @@ import type {
 	RemoteListing,
 	Tunnel,
 	ConfirmEvent,
+	CoreEvent,
 	LinkMode,
 	Server,
 	ServerBook,
@@ -88,7 +89,6 @@ import type {
 	SopsStatus,
 	SpawnOpts,
 	StartedRun,
-	TerminalDataEvent,
 	TerminalExitEvent,
 	UpdateCheck,
 	TerminalId,
@@ -107,6 +107,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 import { type UnlistenFn, listen as tauriListen } from '@tauri-apps/api/event';
 import { type DragDropEvent, getCurrentWebview } from '@tauri-apps/api/webview';
 import { DEFAULT_TASKBAR_WIDGET } from '@lib/taskbarWidget';
+import { coreClient, type Payload } from '@lib/core/client';
 
 export type { DragDropEvent };
 
@@ -128,6 +129,26 @@ async function invoke<T>(name: string, args?: Record<string, unknown>): Promise<
 async function listen<T>(name: string, handler: (payload: T) => void): Promise<UnlistenFn> {
 	if (isTauri()) return tauriListen<T>(name, (e) => handler(e.payload));
 	return mockListen<T>(name, handler);
+}
+
+/** A call into qursor-core, which owns every terminal (design §3). */
+function core<T>(method: string, params?: unknown): Promise<T> {
+	return coreClient().request<T>(method, params);
+}
+
+/** A qursor-core event, under the `listen` signature the callers already use. */
+async function onCore<E extends CoreEvent['event']>(
+	event: E,
+	cb: (payload: Payload<E>) => void,
+): Promise<UnlistenFn> {
+	return coreClient().on(event, cb);
+}
+
+/** The slot this connection reads a terminal on, for a caller that holds only
+ *  its id. Attaching is idempotent in the core, so an attached terminal answers
+ *  with the slot it already has. */
+async function terminalSlot(id: TerminalId): Promise<number> {
+	return (await core<{ slot: number }>('terminal.attach', { terminalId: id })).slot;
 }
 
 export const cmd = {
@@ -294,22 +315,22 @@ export const cmd = {
 	listCanvasOrigins: (projectId: string) =>
 		invoke<CanvasOrigin[]>('list_canvas_origins', { projectId }),
 	/** The cross-agent delegations requested by this project's sessions (F50). */
-	listDelegations: (projectId: string) => invoke<DelegationList>('list_delegations', { projectId }),
+	listDelegations: (projectId: string) => core<DelegationList>('delegations.list', { projectId }),
 	/** Tell the backend what is on screen, so the IDE bridge can answer for it
 	 *  rather than guess (F20). Fire-and-forget: a report that goes missing
 	 *  leaves a stale-but-honest picture. */
-	ideReportUi: (snapshot: UiSnapshot) => invoke<void>('ide_report_ui', { snapshot }),
+	ideReportUi: (snapshot: UiSnapshot) => core<void>('ide.reportUi', snapshot),
 	/** Ask every bridge to re-announce itself, as `ide:status` events. Called
 	 *  once at boot: a renderer reload loses the events that got us here while
 	 *  every bridge carries on (F20). */
-	ideResync: () => invoke<void>('ide_resync'),
+	ideResync: () => core<void>('ide.resync'),
 	/** Hand files, or a run of lines in one, to a session's agent (F20).
 	 *
 	 *  Rejects when the session has no bridge or Claude is not attached — this
 	 *  is a gesture the human just made, so it has to fail where they can see
 	 *  it rather than in a log. */
 	ideMention: (sessionId: string, mentions: Mention[]) =>
-		invoke<void>('ide_mention', { sessionId, mentions }),
+		core<void>('ide.mention', { sessionId, mentions }),
 
 	/** Forget which checkout a session was working in (F21) — the header badge's
 	 *  revert. Idempotent: a session that never signalled is a no-op. */
@@ -515,23 +536,23 @@ export const cmd = {
 	 *  uuid, or a live one that has never been messaged. See ADR-0008.
 	 *  `fresh` skips that reuse for a caller bringing a first message (ADR-0078). */
 	resolveDelegation: (id: string, approve: boolean) =>
-		invoke<AgentSessionStartEvent | null>('resolve_delegation', { id, approve }),
+		core<AgentSessionStartEvent | null>('delegations.resolve', { id, approve }),
 	startSession: (projectId: string, agent?: AgentId, fresh?: boolean) =>
-		invoke<string>('start_session', { projectId, agent, fresh }),
-	terminalSpawn: (opts: SpawnOpts) => invoke<Spawned>('terminal_spawn', { opts }),
-	terminalWrite: (id: TerminalId, data: string) => invoke<void>('terminal_write', { id, data }),
-	terminalResize: (id: TerminalId, cols: number, rows: number) =>
-		invoke<void>('terminal_resize', { id, cols, rows }),
-	terminalKill: (id: TerminalId) => invoke<void>('terminal_kill', { id }),
-	terminalList: () => invoke<TerminalStatusDto[]>('terminal_list'),
+		core<string>('session.start', { projectId, agent, fresh }),
+	terminalSpawn: (opts: SpawnOpts) => core<Spawned>('terminal.spawn', opts),
+	terminalWrite: async (id: TerminalId, data: string) =>
+		coreClient().write(await terminalSlot(id), new TextEncoder().encode(data)),
+	terminalKill: (id: TerminalId) => core<void>('terminal.kill', { id }),
+	terminalList: () => core<TerminalStatusDto[]>('terminal.list'),
 	/** Open a shell in a project's footer (F23). A separate command from
 	 *  `terminalSpawn` because a shell runs no transcript probe, stands up no
 	 *  IDE bridge and no tool server, and starts no routine. */
-	shellSpawn: (opts: ShellSpawnOpts) => invoke<TerminalId>('shell_spawn', { opts }),
+	shellSpawn: (opts: ShellSpawnOpts) =>
+		core<{ id: TerminalId }>('shell.spawn', opts).then((s) => s.id),
 	// ── Servers (F45) ──
-	listServers: () => invoke<ServerBook>('list_servers'),
-	saveServer: (input: ServerInput) => invoke<Server>('save_server', { input }),
-	deleteServer: (id: string) => invoke<void>('delete_server', { id }),
+	listServers: () => core<ServerBook>('server.list'),
+	saveServer: (input: ServerInput) => core<Server>('server.save', { input }),
+	deleteServer: (id: string) => core<void>('server.delete', { id }),
 	createServerFolder: (name: string, projectId?: string) =>
 		invoke<ServerFolder>('create_server_folder', { name, projectId }),
 	fixServerFile: (projectId: string, relPath: string) =>
@@ -540,11 +561,11 @@ export const cmd = {
 		invoke<void>('rename_server_folder', { id, name }),
 	deleteServerFolder: (id: string) => invoke<void>('delete_server_folder', { id }),
 	sshConfigHosts: () => invoke<SshConfigHost[]>('ssh_config_hosts'),
-	vaultStatus: () => invoke<VaultStatus>('vault_status'),
-	vaultUnlock: (password: string) => invoke<VaultStatus>('vault_unlock', { password }),
-	vaultLock: () => invoke<VaultStatus>('vault_lock'),
+	vaultStatus: () => core<VaultStatus>('vault.status'),
+	vaultUnlock: (password: string) => core<VaultStatus>('vault.unlock', { password }),
+	vaultLock: () => core<VaultStatus>('vault.lock'),
 	vaultSetMasterPassword: (password: string | null) =>
-		invoke<VaultStatus>('vault_set_master_password', { password }),
+		core<VaultStatus>('vault.setMasterPassword', { password }),
 	/** Open a shell tab on a server. An unknown host key rejects with
 	 *  `{ kind: 'HostKey', message: fingerprint }`; call again with it once the
 	 *  human has confirmed. */
@@ -555,55 +576,58 @@ export const cmd = {
 		rows: number,
 		acceptFingerprint?: string,
 	) =>
-		invoke<TerminalId>('server_open_shell', {
+		core<{ id: TerminalId }>('server.openShell', {
 			serverId,
 			clientKey,
 			cols,
 			rows,
 			acceptFingerprint,
-		}),
-	serverDisconnect: (serverId: string) => invoke<void>('server_disconnect', { serverId }),
+		}).then((s) => s.id),
+	serverDisconnect: (serverId: string) => core<void>('server.disconnect', { serverId }),
 	/** End a persistent tab's tmux session: the human closed the tab (F49). */
 	serverEndTab: (serverId: string, clientKey: string) =>
-		invoke<void>('server_end_tab', { serverId, clientKey }),
+		core<void>('server.endTab', { serverId, clientKey }),
 	/** Lend an SSH terminal to an agent session (F46). */
 	agentLinkTerminal: (terminalId: TerminalId, sessionId: string, mode: LinkMode) =>
-		invoke<void>('agent_link_terminal', { terminalId, sessionId, mode }),
+		core<void>('agentTerminal.link', { terminalId, sessionId, mode }),
 	agentUnlinkTerminal: (terminalId: TerminalId) =>
-		invoke<void>('agent_unlink_terminal', { terminalId }),
+		core<void>('agentTerminal.unlink', { terminalId }),
 	/** Answer an agent command waiting for confirmation (ADR-0110). A `command`
 	 *  runs the edited line instead. */
 	agentTerminalAnswer: (id: string, run: boolean, command?: string) =>
-		invoke<void>('agent_terminal_answer', { id, run, command }),
+		core<void>('agentTerminal.answer', { id, run, command }),
 	// ── Tunnels (F48) ──
-	listTunnels: (serverId: string) => invoke<Tunnel[]>('list_tunnels', { serverId }),
-	saveTunnel: (tunnel: Tunnel) => invoke<Tunnel>('save_tunnel', { tunnel }),
-	deleteTunnel: (id: string) => invoke<void>('delete_tunnel', { id }),
-	tunnelStart: (id: string) => invoke<void>('tunnel_start', { id }),
-	tunnelStop: (id: string) => invoke<void>('tunnel_stop', { id }),
+	listTunnels: (serverId: string) => core<Tunnel[]>('tunnel.list', { serverId }),
+	saveTunnel: (tunnel: Tunnel) => core<Tunnel>('tunnel.save', { tunnel }),
+	deleteTunnel: (id: string) => core<void>('tunnel.delete', { id }),
+	tunnelStart: (id: string) => core<void>('tunnel.start', { id }),
+	tunnelStop: (id: string) => core<void>('tunnel.stop', { id }),
 	// ── SFTP (F47) ──
 	sftpList: (serverId: string, path: string) =>
-		invoke<RemoteListing>('sftp_list', { serverId, path }),
+		core<RemoteListing>('sftp.list', { serverId, path }),
 	sftpDownload: (serverId: string, remote: string, local: string) =>
-		invoke<void>('sftp_download', { serverId, remote, local }),
+		core<void>('sftp.download', { serverId, remote, local }),
 	sftpUpload: (serverId: string, local: string, remoteDir: string) =>
-		invoke<string>('sftp_upload', { serverId, local, remoteDir }),
-	sftpMkdir: (serverId: string, path: string) => invoke<void>('sftp_mkdir', { serverId, path }),
+		core<string>('sftp.upload', { serverId, local, remoteDir }),
+	sftpMkdir: (serverId: string, path: string) => core<void>('sftp.mkdir', { serverId, path }),
 	sftpRename: (serverId: string, from: string, to: string) =>
-		invoke<void>('sftp_rename', { serverId, from, to }),
+		core<void>('sftp.rename', { serverId, from, to }),
 	sftpRemove: (serverId: string, path: string, isDir: boolean) =>
-		invoke<void>('sftp_remove', { serverId, path, isDir }),
+		core<void>('sftp.remove', { serverId, path, isDir }),
 	/** The project a server's agent sessions run in, created on first use (F46). */
 	serverAgentProject: (serverId: string) => invoke<Project>('server_agent_project', { serverId }),
 	/** Kill every shell in one project's footer (ADR-0032). Called by
 	 *  `Remove project` and by nothing about a session — closing one says
 	 *  nothing about the shells under it. The agent is killed by `terminalKill`
 	 *  as it always was. */
-	shellKillForProject: (projectId: string) => invoke<void>('shell_kill_for_project', { projectId }),
+	shellKillForProject: (projectId: string) => core<void>('shell.killForProject', { projectId }),
 	/** The basename of the shell `shellSpawn` runs, which is what labels every
 	 *  chip (F23 as amended by F24). One value per app, asked once at boot. */
 	shellName: () => invoke<string>('shell_name'),
 	appQuitConfirmed: () => invoke<void>('app_quit_confirmed'),
+	/** Stop qursor-core and every terminal in it, for the updater's relaunch,
+	 *  which no quit guard sees. Ask `RestartConfirm`'s question first. */
+	coreShutdown: () => invoke<void>('core_shutdown'),
 	/** One sentence if this renderer is running because the last one crashed and
 	 *  was reloaded under the reader (F7, ADR-0059), and `null` otherwise — which
 	 *  is what almost every boot gets. Asked once on mount; the backend clears it
@@ -903,18 +927,12 @@ export const events = {
 		listen<IndexerProgressEvent>('indexer:progress', cb),
 	onSessionsChanged: (cb: (p: SessionsChangedEvent) => void) =>
 		listen<SessionsChangedEvent>('sessions:changed', cb),
-	onTerminalData: (cb: (p: TerminalDataEvent) => void) =>
-		listen<TerminalDataEvent>('terminal:data', cb),
-	onTerminalStatus: (cb: (p: TerminalStatusEvent) => void) =>
-		listen<TerminalStatusEvent>('terminal:status', cb),
-	onTerminalExit: (cb: (p: TerminalExitEvent) => void) =>
-		listen<TerminalExitEvent>('terminal:exit', cb),
+	onTerminalStatus: (cb: (p: TerminalStatusEvent) => void) => onCore('terminalStatus', cb),
+	onTerminalExit: (cb: (p: TerminalExitEvent) => void) => onCore('terminalExit', cb),
 	/** An agent started or finished a command in a lent SSH terminal (F46). */
-	onAgentTerminalRun: (cb: (p: AgentRunEvent) => void) =>
-		listen<AgentRunEvent>('agent-terminal:run', cb),
+	onAgentTerminalRun: (cb: (p: AgentRunEvent) => void) => onCore('agentTerminalRun', cb),
 	/** An agent command waits for the human's yes or no (ADR-0110). */
-	onAgentTerminalConfirm: (cb: (p: ConfirmEvent) => void) =>
-		listen<ConfirmEvent>('agent-terminal:confirm', cb),
+	onAgentTerminalConfirm: (cb: (p: ConfirmEvent) => void) => onCore('agentTerminalConfirm', cb),
 	onQuitRequested: (cb: (p: QuitRequestedEvent) => void) =>
 		listen<QuitRequestedEvent>('app:quit-requested', cb),
 	/** The window came to the front. Tauri's own event, not ours — it is what
@@ -924,14 +942,12 @@ export const events = {
 	/** The window went behind something. */
 	onWindowBlur: (cb: () => void) => listen<unknown>('tauri://blur', cb),
 	/** The agent asked to show a file, through the IDE bridge (F20). */
-	onIdeOpenFile: (cb: (p: IdeOpenFileEvent) => void) =>
-		listen<IdeOpenFileEvent>('ide:open-file', cb),
+	onIdeOpenFile: (cb: (p: IdeOpenFileEvent) => void) => onCore('ideOpenFile', cb),
 	/** Claude attached to, or let go of, a session's bridge (F20). */
-	onIdeStatus: (cb: (p: IdeStatusEvent) => void) => listen<IdeStatusEvent>('ide:status', cb),
+	onIdeStatus: (cb: (p: IdeStatusEvent) => void) => onCore('ideStatus', cb),
 	/** The agent is working in this checkout (F21) — either it said so through
 	 *  `setWorktree`, or it opened a file in one. */
-	onSessionWorktree: (cb: (p: SessionWorktreeEvent) => void) =>
-		listen<SessionWorktreeEvent>('session:worktree', cb),
+	onSessionWorktree: (cb: (p: SessionWorktreeEvent) => void) => onCore('sessionWorktree', cb),
 	/** A routine came due and the runner wants a session started (F22). Every
 	 *  row is already written when this arrives, so the renderer is rendering a
 	 *  fact rather than racing one. */
@@ -939,12 +955,11 @@ export const events = {
 		listen<RoutineFireEvent>('routine:fire', cb),
 	/** An agent called `startSession` over MCP: open that session in the sidebar,
 	 *  headless. Only emitted from a live session, so there is nothing to drain. */
-	onAgentSessionStart: (cb: (p: AgentSessionStartEvent) => void) =>
-		listen<AgentSessionStartEvent>('agent-session:start', cb),
+	onAgentSessionStart: (cb: (p: AgentSessionStartEvent) => void) => onCore('agentSessionStart', cb),
 	/** A delegation in this project changed state or activity (F50). Project
 	 *  only; re-read the list. */
 	onDelegationsChanged: (cb: (p: { projectId: string }) => void) =>
-		listen<{ projectId: string }>('delegations:changed', cb),
+		onCore('delegationsChanged', cb),
 	/** The file the viewer has open changed on disk (F7). Carries the path; the
 	 *  renderer re-reads it through the same commands a reopen uses. */
 	onFileChanged: (cb: (p: FileChangedEvent) => void) =>
@@ -955,8 +970,18 @@ export const events = {
 	/** A project's routine list changed (F22 slice 3). Emitted by every write,
 	 *  which is what makes a schedule an agent wrote over the IDE bridge appear
 	 *  in a Routines tab that is already open. */
-	onRoutinesChanged: (cb: (p: RoutinesChangedEvent) => void) =>
-		listen<RoutinesChangedEvent>('routines:changed', cb),
+	onRoutinesChanged: async (cb: (p: RoutinesChangedEvent) => void) => {
+		// Two writers: the app from its own commands, the core when an agent
+		// schedules one over the bridge the core hosts. The browser lane has one
+		// emitter, the mock, which both halves would hear.
+		const fromApp = await listen<RoutinesChangedEvent>('routines:changed', cb);
+		if (!isTauri()) return fromApp;
+		const fromCore = await onCore('routinesChanged', cb);
+		return () => {
+			fromApp();
+			fromCore();
+		};
+	},
 	/** The profile list changed (F25). Emitted by every write, and the reason
 	 *  Rust emits at all is its own listener: the indexer re-reads profiles off
 	 *  this. The renderer's own mutations invalidate optimistically already. */
@@ -975,8 +1000,7 @@ export const events = {
 	/** A click on the taskbar widget asked for the usage details. */
 	onUsageOpenDetails: (cb: () => void) => listen<null>('usage:open-details', () => cb()),
 	/** A session took its agent's id (F30, ADR-0062). */
-	onSessionAdopted: (cb: (p: SessionAdoptedEvent) => void) =>
-		listen<SessionAdoptedEvent>('session:adopted', cb),
+	onSessionAdopted: (cb: (p: SessionAdoptedEvent) => void) => onCore('sessionAdopted', cb),
 	/** An analysis moved to its next phase (F33). Arrives before `startAnalysis`
 	 *  resolves can; match on `projectId` as well as `runId`. */
 	onIntelligenceProgress: (cb: (p: IntelligenceProgressEvent) => void) =>
@@ -1456,7 +1480,7 @@ function mockImprovementChange(
 	return candidate;
 }
 
-async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Promise<T> {
+export async function mockInvoke<T>(name: string, args?: Record<string, unknown>): Promise<T> {
 	const fx = testFixture();
 	if (fx) {
 		window.__FACTORAI_TEST_CALLS__ ??= [];
@@ -2638,7 +2662,10 @@ const mockListeners = new Map<string, Set<(payload: unknown) => void>>();
  * nobody. Emitting is a *test* affordance, so the bridge is only published when
  * a fixture is installed; without one this behaves as it did.
  */
-async function mockListen<T>(name: string, handler: (payload: T) => void): Promise<UnlistenFn> {
+export async function mockListen<T>(
+	name: string,
+	handler: (payload: T) => void,
+): Promise<UnlistenFn> {
 	const wrapped = (payload: unknown) => handler(payload as T);
 	const handlers = mockListeners.get(name) ?? new Set();
 	handlers.add(wrapped);

@@ -41,7 +41,15 @@ struct Harness {
 	clients: Arc<parking_lot::Mutex<Vec<bool>>>,
 }
 
+/// The runtime the bridge's accept loop lives on: a test thread has none, and
+/// the loop has to outlive the call that starts it.
+fn runtime() -> &'static tokio::runtime::Runtime {
+	static RT: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+	RT.get_or_init(|| tokio::runtime::Runtime::new().expect("runtime"))
+}
+
 fn harness() -> Harness {
+	let _rt = runtime().enter();
 	let claude = TempDir::new().unwrap();
 	let project = TempDir::new().unwrap();
 	let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
@@ -183,6 +191,7 @@ fn the_lockfile_appears_while_the_bridge_is_up_and_is_gone_when_it_stops() {
 	let claude = TempDir::new().unwrap();
 	let project = TempDir::new().unwrap();
 
+	let _rt = runtime().enter();
 	let port = {
 		let server = IdeServer::start(
 			claude.path(),

@@ -202,6 +202,16 @@ interface TerminalState {
 	requestRestart: (sessionId: string) => void;
 }
 
+let liveAdoptedNow!: () => void;
+/** Settles once the boot's `terminal.list` has been adopted, or has failed. A
+ *  spawn waits for it: the list crosses the core's socket, which may still be
+ *  connecting when a session route mounts, and a spawn sent first starts a
+ *  second process for a session the core already runs. */
+export const liveAdopted = new Promise<void>((resolve) => {
+	liveAdoptedNow = resolve;
+});
+export const markLiveAdopted = () => liveAdoptedNow();
+
 export function findSessionByTerminal(
 	bySession: Record<string, LiveTerminal>,
 	terminalId: TerminalId,

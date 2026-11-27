@@ -509,6 +509,9 @@ pub fn set_session_pinned(
 	Ok(())
 }
 
+/// How long `delete_session` waits for the core to say what is live.
+const LIVE_AT_DELETE: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Delete a session (F2, ADR-0027): its transcript to the OS trash, its rows out
 /// of the index, then `sessions:changed` for the project it belonged to.
 ///
@@ -537,7 +540,16 @@ pub async fn delete_session(
 	state: State<'_, AppState>,
 	session_id: String,
 ) -> AppResult<()> {
-	let is_live = state.terminals.live_session_ids().contains(&session_id);
+	// Asked now: the last counts may predate a session started a moment ago.
+	// A link that dropped is waited for rather than read as "nothing is live".
+	let asked = tokio::time::timeout(LIVE_AT_DELETE, async {
+		let link = state.core.link().await?;
+		link.refresh().await.map_err(|e| AppError::Process(format!("{e:#}")))?;
+		Ok::<_, AppError>(link.live_session_ids().contains(&session_id))
+	})
+	.await;
+	let is_live =
+		asked.map_err(|_| AppError::Process("qursor-core did not answer within 3 s".into()))??;
 	// Off the main thread (PERF-07): moving a transcript to the OS trash is a
 	// filesystem operation on a directory we do not own the speed of.
 	let project_id = {

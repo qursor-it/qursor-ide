@@ -1,0 +1,100 @@
+[package]
+name = "qursor-core"
+version.workspace = true
+description = "Qursor's terminal manager, headless"
+edition = "2021"
+
+[lib]
+name = "qursor_core"
+
+[features]
+# `test_support` (the spawn lock and the shared test runtime) for the app's own
+# tests, which share them with the code that moved here.
+test-support = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tokio = { version = "1", features = ["full"] }
+url = "2"
+anyhow = "1"
+thiserror = "1"
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+parking_lot = "0.12"
+base64 = "0.22"
+portable-pty = "0.8"
+dashmap = "6"
+# One call: `kill(pid, 0)` to tell a live editor lockfile from a crashed one
+# (services/ide/lockfile). Already in the tree via tokio and portable-pty, so
+# this makes an existing transitive dependency explicit rather than adding one.
+libc = "0.2.186"
+# No default features: they pull ssh2 / openssl / http transport in for network
+# operations we never perform — every call reads a local repository (ADR-0009).
+git2 = { version = "0.21", default-features = false }
+# The IDE bridge's transport (F20, ADR-0017 § 4). No default features: those
+# carry `connect` and four TLS backends, and this only ever *accepts* plaintext
+# connections on loopback. `handshake` is the one piece we need — it is where
+# the auth header is inspected before the socket is upgraded.
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+# `StreamExt` / `SinkExt` for the IDE bridge's socket. Already in the tree under
+# tokio-tungstenite; named here because we call its traits directly. No default
+# features — `async-await` and the executor helpers are not used.
+futures-util = { version = "0.3.34", default-features = false, features = ["std", "sink"] }
+# Cron parsing for routines (F22, ADR-0026 § 5). Takes the 5-field expressions
+# people write, answers `find_next_occurrence`, and has *documented* DST rules —
+# a fixed-time job runs at the first valid instant after a spring-forward gap and
+# once only in a fall-back overlap (Q25). The scheduling half is ours: a crate
+# that also owns execution has nowhere to put the cap, the queue, the overlap
+# skip or coalesced catch-up.
+croner = "3"
+# Stable content hashes for Project Intelligence (F33, ADR-0084): a transcript
+# event's fingerprint, an evidence id, and the file hash an instruction change is
+# verified against. They are stored, so `DefaultHasher` (not stable across Rust
+# versions) is not an option. Already in the tree through Tauri; this makes the
+# existing transitive dependency explicit.
+sha2 = "0.10"
+# The atomic half of `write_file` (F26): a named temp file in the target's own
+# directory, `persist`ed over it. Doing this by hand means inventing a unique
+# name, cleaning it up on every early return, and getting the rename right.
+tempfile = "3"
+# The core's secret (design §1): 32 bytes from the OS CSPRNG. Already in the tree
+# through uuid; named here because we call it directly.
+getrandom = "0.4"
+# The OpenCode Go usage read behind the agents' usage tool (design §5b). Same
+# version and features as the app, which already builds it.
+ureq = "2"
+# The core binary's log file, `<data_dir>/core/core.log`, the way the app logs.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Server sessions over SSH (F45, ADR-0105): one connection per server carrying
+# every shell tab, SFTP and tunnels as channels. `ring` instead of the default
+# `aws-lc-rs`, which needs cmake and NASM to build on Windows; `ring` is already
+# in the tree.
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa", "flate2"] }
+# The SFTP client on those connections (F47): the file browser and agent file
+# tools. Speaks over any byte stream, so it rides a russh channel.
+russh-sftp = "3"
+# Decrypted SSH secrets are wiped from memory when dropped. Already in the tree.
+zeroize = "1"
+# The SSH secrets vault (ADR-0106): AES-256-GCM entries, an Argon2id key when a
+# master password is set. Both already in the tree through russh.
+aes-gcm = "0.11"
+argon2 = "0.6"
+# The vault key in the OS keychain: Windows Credential Manager, macOS Keychain,
+# Secret Service over zbus (already in the tree) on Linux.
+keyring = "4"
+# The screen an agent reads from a terminal it was lent (F46): a VT parser fed
+# the same bytes as xterm, so "what is on screen" is answered in Rust.
+vt100 = "0.18"
+
+[target.'cfg(windows)'.dependencies]
+dunce = "1"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Environment", "Win32_System_Console"] }
+
+[dev-dependencies]
+# The integration tests in `tests/` share the spawn lock and runtime.
+qursor-core = { path = ".", features = ["test-support"] }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }

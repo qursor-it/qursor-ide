@@ -10,7 +10,7 @@ import { activateFileLink, fileLinkContext } from '@components/terminal/fileLink
 import { useFileLinks } from '@hooks/useFileLinks';
 import type { AgentSessionStartEvent, RoutineFireEvent } from '@factorai/types';
 import { matchesKeyboardEvent } from '@tanstack/react-hotkeys';
-import { base64ToBytes } from '@lib/base64';
+import { coreClient } from '@lib/core/client';
 import {
 	claudeImagePasteInput,
 	isImageOnlyPaste,
@@ -26,7 +26,7 @@ import { currentTheme, onThemeChange } from '@lib/theme';
 import { terminalOptions } from '@lib/monoFont';
 import { useGitModeStore } from '@store/gitModeStore';
 import { currentPrefs, usePrefsStore } from '@store/prefsStore';
-import { useTerminalStore } from '@store/terminalStore';
+import { liveAdopted, useTerminalStore } from '@store/terminalStore';
 
 /**
  * What a click on a URL in the terminal does (specs/05-features.md F5).
@@ -236,6 +236,9 @@ export interface PooledTerm {
 	 *  `undefined is not an object (evaluating 'this._renderer.value.dimensions')`
 	 *  from xterm's own viewport. Checked after every await in `attachStream`. */
 	disposed: boolean;
+	/** This terminal's byte stream from qursor-core, once `attachStream` has
+	 *  attached it. Keystrokes and resizes go out on its slot. */
+	stream?: { readonly slot: number; detach(): void };
 	/** Which PTY this terminal's keystrokes and resizes go to, read at call time
 	 *  rather than captured.
 	 *
@@ -394,22 +397,36 @@ const spawnInFlight = new Map<string, Promise<string>>();
  *  column on every frame, so the session never paints under the panel being
  *  widened, but each PTY resize makes the agent redraw its whole screen, so
  *  the PTY hears only the last size, once, when the pointer is released. */
-function pushSize(terminalId: string, cols: number, rows: number): void {
+function pushSize(entry: PooledTerm, cols: number, rows: number): void {
+	if (!entry.stream || !entry.terminalId()) return;
 	if (isPanelDragging()) {
-		heldSizes.set(terminalId, { cols, rows });
+		heldSizes.set(entry, { cols, rows });
 		return;
 	}
-	void cmd.terminalResize(terminalId, cols, rows).catch(() => undefined);
+	coreClient().resize(entry.stream.slot, cols, rows);
 }
 
-/** The last size each PTY was given during the current drag, by terminal id. */
-const heldSizes = new Map<string, { cols: number; rows: number }>();
+const encoder = new TextEncoder();
+
+/** The last size each PTY was given during the current drag, by terminal. */
+const heldSizes = new Map<PooledTerm, { cols: number; rows: number }>();
 
 onPanelDragEnd(() => {
 	const held = [...heldSizes];
 	heldSizes.clear();
-	for (const [terminalId, { cols, rows }] of held) pushSize(terminalId, cols, rows);
+	for (const [entry, { cols, rows }] of held) pushSize(entry, cols, rows);
 });
+
+/** Tell the core whether anyone is looking at this terminal: it flushes output
+ *  every 16 ms to one on screen and every 100 ms otherwise (design §4). Read
+ *  off the host, which `showOnly` and every teardown have just set. */
+export function syncVisible(entry: PooledTerm): void {
+	const id = entry.terminalId();
+	if (!id) return;
+	const shown =
+		entry.host.style.visibility !== 'hidden' && entry.host.parentElement !== routinePane;
+	coreClient().setVisible(id, shown);
+}
 
 /** The PTY a session's agent is running in, or `undefined` between a restart's
  *  dispose and the next spawn. */
@@ -623,6 +640,7 @@ export function showOnly(container: HTMLElement, active: PooledTerm): void {
 		entry.host.style.visibility = hidden ? 'hidden' : '';
 		entry.host.style.transform = hidden ? OFFSCREEN : '';
 		setGpuRenderer(entry, !hidden);
+		syncVisible(entry);
 	}
 }
 
@@ -762,11 +780,12 @@ export function getOrCreateTerm(
 	};
 	pool.set(key, entry);
 
-	// Forward keystrokes to the live PTY. Reads the terminal id from the store
-	// at call time so it follows the current PTY even after a restart.
+	// Forward keystrokes to the live PTY, encoded once and sent as an `Input`
+	// frame. Asks the store at call time whether there is still a PTY.
 	const dataSub = term.onData((d) => {
-		const tid = entry.terminalId();
-		if (tid) void cmd.terminalWrite(tid, d);
+		if (entry.stream && entry.terminalId()) {
+			coreClient().write(entry.stream.slot, encoder.encode(d));
+		}
 	});
 	entry.cleanup.push(() => dataSub.dispose());
 
@@ -774,10 +793,7 @@ export function getOrCreateTerm(
 	// dimension change (a `fit()` after reattaching, a window resize) is
 	// forwarded here. Keeping this in ONE place means callers only ever have to
 	// call `fit()` — they never compute cols/rows or talk to the PTY themselves.
-	const resizeSub = term.onResize(({ cols, rows }) => {
-		const tid = entry.terminalId();
-		if (tid) pushSize(tid, cols, rows);
-	});
+	const resizeSub = term.onResize(({ cols, rows }) => pushSize(entry, cols, rows));
 	entry.cleanup.push(() => resizeSub.dispose());
 
 	// **Right-click copies when something is selected** (F5). WebKitGTK's own
@@ -845,8 +861,8 @@ function attachPty(
 }
 
 /**
- * Wire a pooled terminal to a PTY: spawn it, then pipe `terminal:data` in and
- * announce `terminal:exit`.
+ * Wire a pooled terminal to a PTY: spawn it, then attach its byte stream from
+ * qursor-core and announce `terminal:exit`.
  *
  * Shared by the agent above and the footer shell (F23), which differ only in
  * which command mints the id — everything after that is one byte stream and one
@@ -872,14 +888,20 @@ export function attachStream(
 			// into a disposed xterm throws from inside its own viewport, and the
 			// dispose is exactly what a restart or a dead-chip respawn does.
 			if (entry.disposed) return;
-			// Reconcile once the id is known. The PTY can be out of sync already: it
-			// may predate this terminal (reused across a hot reload or a remount), or
-			// a `fit()` may have landed while the spawn was in flight, when the store
-			// had no id yet for `onResize` to push to.
-			pushSize(id, term.cols, term.rows);
-			const unData = await events.onTerminalData((ev) => {
-				if (!entry.disposed && ev.id === id) term.write(base64ToBytes(ev.bytesB64));
+			const stream = await coreClient().attach(id, (bytes) => {
+				if (!entry.disposed) term.write(bytes);
 			});
+			if (entry.disposed) {
+				stream.detach();
+				return;
+			}
+			entry.stream = stream;
+			// Reconcile once the stream is up. The PTY can be out of sync already: it
+			// may predate this terminal (reused across a hot reload or a remount), or
+			// a `fit()` may have landed while the spawn was in flight, before there
+			// was a slot for `onResize` to push to.
+			pushSize(entry, term.cols, term.rows);
+			syncVisible(entry);
 			const unExit = await events.onTerminalExit((ev) => {
 				if (!entry.disposed && ev.id === id) {
 					term.write(
@@ -892,11 +914,14 @@ export function attachStream(
 			// handing it to a cleanup list nothing will run — otherwise a disposed
 			// terminal leaves two live subscriptions behind.
 			if (entry.disposed) {
-				unData();
+				stream.detach();
 				unExit();
 				return;
 			}
-			entry.cleanup.push(unData, unExit);
+			entry.cleanup.push(() => {
+				stream.detach();
+				entry.stream = undefined;
+			}, unExit);
 		})
 		.catch((e) => {
 			if (entry.disposed) return;
@@ -1093,17 +1118,28 @@ function ensureTerminal(
 			initialPrompt === undefined
 				? useTerminalStore.getState().takeLaunch(sessionId)
 				: { prompt: undefined, cwd: undefined };
-		pending = cmd
-			.terminalSpawn({
-				sessionId,
-				projectId,
-				cwd: launch.cwd ?? projectCwd ?? undefined,
-				cols,
-				rows,
-				initialPrompt: initialPrompt ?? launch.prompt,
-				agent,
+		pending = liveAdopted
+			.then(() => {
+				// Adopted from the core after a reload: attach, never spawn twice.
+				const adopted = useTerminalStore.getState().bySession[sessionId];
+				if (adopted) return { id: adopted.terminalId, agent: adopted.agent, adopted: true };
+				return cmd
+					.terminalSpawn({
+						sessionId,
+						projectId,
+						cwd: launch.cwd ?? projectCwd ?? undefined,
+						cols,
+						rows,
+						initialPrompt: initialPrompt ?? launch.prompt,
+						agent,
+					})
+					.then((s) => ({ ...s, adopted: false }));
 			})
-			.then(({ id, agent }) => {
+			.then(({ id, agent, adopted }) => {
+				if (adopted) {
+					spawnInFlight.delete(sessionId);
+					return id;
+				}
 				// A prompt *parameter* means a routine fired this (F22), and a
 				// routine's session gets no tab until a human opens it. A prompt a
 				// human brought (ADR-0078) is not the parameter, so it gets one.
@@ -1253,6 +1289,7 @@ export function Terminal({
 				entry.host.style.visibility = 'hidden';
 				entry.host.style.transform = OFFSCREEN;
 				releaseGpuRenderer(entry);
+				syncVisible(entry);
 			};
 		};
 		if (pool.has(sessionId)) {

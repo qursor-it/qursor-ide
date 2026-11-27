@@ -4,7 +4,7 @@
 	"productName": "qursor-ide",
 	"version": "0.58.0",
 	"build": {
-		"beforeDevCommand": "pnpm vite:dev",
+		"beforeDevCommand": "pnpm core:build && pnpm vite:dev",
 		"devUrl": "http://localhost:1420",
 		"beforeBuildCommand": "pnpm vite:build",
 		"frontendDist": "../dist"

@@ -8,6 +8,10 @@ PTY is alive. Everything else here stands — kill-on-quit is still
 non-optional, still not configurable, and the dialog is still mandatory
 when it fires.
 
+**Narrowed by [ADR-0127](0127-sessions-run-in-a-core-outside-the-app.md).**
+The process doing the killing is now `qursor-core`, not the app; the rule is
+unchanged until a later plan supersedes this ADR.
+
 ## Context
 
 When the factorai window is closed with one or more live `claude` PTYs,

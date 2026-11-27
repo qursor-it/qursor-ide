@@ -1,0 +1,5429 @@
+//! Cross-platform PTY-backed terminal manager.
+//!
+//! One `TerminalHandle` per running process. The handle owns the PTY
+//! master, the child handle, and a writer. A dedicated OS thread reads
+//! bytes from the PTY and fans them out as `terminal:data` events
+//! (base64-encoded — see ADR-0002 + specs/03-backend-rust.md).
+//!
+//! Kill-on-quit (ADR-0005) is wired through `kill_all()`, which is also
+//! invoked from `Drop` as a last-ditch backstop.
+
+use std::collections::HashSet;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use dashmap::DashMap;
+use parking_lot::Mutex;
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, info, warn};
+use uuid::Uuid;
+
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{
+	ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+	CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+	AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+	SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+	JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{
+	OpenProcess, CREATE_NO_WINDOW, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+};
+
+use crate::agents::{self, claude, codex, opencode, AgentDescriptor, IdSource};
+use crate::error::{AppError, AppResult};
+use crate::services::agent_cli::find_agent_binary;
+use crate::services::agent_tools::{
+	self, delegations::Delegations, AgentTools, AgentToolsServer, DelegationTools,
+};
+use crate::services::event_sink::{CoreEvent, EventSink};
+use crate::services::ide::protocol::{self, Mcp, Mention};
+use crate::services::ide::scope;
+use crate::services::ide::server::IdeServer;
+use crate::services::ide::ui_state::UiState;
+use crate::services::osc_title::TitleScanner;
+use crate::services::usage::statusline;
+
+mod agent_use;
+pub use agent_use::{AgentLink, AgentRunEvent, LinkDto, LinkMode, PolicyCb, PolicyRequest};
+
+pub type TerminalId = String;
+
+/// A server's display name, from the address book (F46).
+pub type ServerLabelCb = Arc<dyn Fn(&str) -> String + Send + Sync>;
+
+/// What a PTY *is*, which is not the same question as what it is doing.
+///
+/// Everything in factorai was a Claude session until F23, and several passes over
+/// the handle map still mean "session" when they say "terminal": the new-session
+/// reuse rule, the set of ids the indexer must not reap, the `OSC 0` status
+/// parse, the bridge resync. A shell is none of them.
+///
+/// **The kind is what a PTY is; `session_id` is `None` for a shell**, which is
+/// how those passes skip one by construction rather than by a filter somebody
+/// has to remember (ADR-0032). The kind still exists because two things about a
+/// shell are decided by what it *is* rather than by an absent field: what
+/// `spawn_inner` skips, and which handles a project's kill sweeps up.
+///
+/// See `specs/05-features.md` § F23, ADR-0031 and ADR-0032.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalKind {
+	/// A `claude` process. The session id names a real transcript.
+	Agent,
+	/// The user's own shell, in the project's footer (F23). It has a project id
+	/// and no session id: it outlives every session of that project, and dies
+	/// with the project, the app, its own `exit`, a `×`, or its cwd going
+	/// missing (ADR-0032).
+	Shell,
+	/// A shell on an SSH server (F45): a channel on the server's connection,
+	/// not a local process. Like [`Self::Shell`] it has no session id and sits
+	/// outside the work count; unlike it, it belongs to no project, so neither a
+	/// project's kill sweep nor the missing-cwd reap ever touches it.
+	Ssh,
+}
+
+/// What a session is doing, derived from Claude's own terminal title — see
+/// `services::osc_title`, `specs/05-features.md` § F10 and ADR-0015.
+///
+/// Three variants because three is what the source honestly supports. There is
+/// no `Idle`: nothing distinguishes "alive with nothing pending" from "stopped
+/// and waiting for you". `Running` was renamed `Working` in the same change,
+/// because its meaning narrowed rather than stayed put — a live PTY sitting at
+/// the prompt used to be `Running` and is now `WaitingInput`, and a silent
+/// redefinition would have left every existing reader subtly wrong.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalStatus {
+	/// Claude is doing something.
+	Working,
+	/// Claude has stopped; it is the human's turn.
+	WaitingInput,
+	/// The process is gone.
+	Stopped,
+	/// The PTY is live and its agent has said nothing factorai can read (F30,
+	/// ADR-0060): a Codex session before its first title, or any agent with no
+	/// status source. A fourth status and **not a default** — `Working` stays
+	/// the launch state for Claude because its title answers within 300ms; this
+	/// is the honest answer when nothing will. Drawn hollow (DESIGN.md § Status
+	/// Dot), never counted by `working_count`.
+	Unknown,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnOpts {
+	/// The session this PTY runs. factorai always names the session — for an
+	/// existing one that is Claude's id, for a new one an id we minted (see
+	/// `next_session_id` and ADR-0008). Whether it becomes `--resume` or
+	/// `--session-id` is decided by `session_flag`, not by the caller.
+	pub session_id: String,
+	/// The workspace project this session belongs to. Used for grouping — the
+	/// status dots, `next_session_id`'s reuse rule — and nothing else. It says
+	/// nothing about where the transcript lives; `cwd` does.
+	pub project_id: String,
+	/// Working directory: the project's folder. Defaults to user $HOME when not
+	/// provided. Also what the transcript path is derived from, since that is
+	/// exactly what Claude encodes to name its own directory.
+	pub cwd: Option<String>,
+	pub cols: u16,
+	pub rows: u16,
+	/// A first message for the agent, appended to argv (F22, ADR-0026 § 4).
+	///
+	/// `None` unless a routine fired (ADR-0026) or a human gesture brought a
+	/// first message, such as a pull request review (ADR-0078). It is argv
+	/// rather than a write into the PTY because a write races the CLI's own
+	/// startup and lands in a trust dialog when it loses, and bracketed paste
+	/// makes it a quoting problem as well.
+	#[serde(default)]
+	pub initial_prompt: Option<String>,
+	/// The launch override (F30 § "Which agent a project runs", rule 1): the
+	/// `+` menu picked an agent other than the project's. `None` — every caller
+	/// but that menu — resolves through `agent_of`: the session's own profile,
+	/// then the project's, then `agent.default`, then Claude.
+	#[serde(default)]
+	pub agent: Option<String>,
+}
+
+/// What the footer needs to open a shell (F23).
+///
+/// Deliberately not `SpawnOpts` with a flag on it. Half that struct is about a
+/// Claude session — the transcript probe that chooses `--resume`, the routine's
+/// first prompt — and none of it means anything here; a shared struct would
+/// make every one of those fields a question a shell has to answer.
+///
+/// `cwd` is required rather than optional, unlike an agent's: the caller knows
+/// which checkout the footer is under (F21) and there is no transcript to fall
+/// back to.
+///
+/// **No session id** (ADR-0032). A shell belongs to the project; the footer it
+/// is drawn in is project chrome and the same chip is reachable from every
+/// session of that project.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellSpawnOpts {
+	/// The renderer's own key for the pane this shell fills — a `shell:<uuid>`.
+	/// Round-tripped and never read here: a renderer that reloads has thrown its
+	/// state away while every PTY carried on, and this is what lets it re-find
+	/// the pane a live shell belongs to instead of leaving it orphaned.
+	pub client_key: String,
+	pub project_id: String,
+	pub cwd: String,
+	pub cols: u16,
+	pub rows: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalStatusDto {
+	pub id: TerminalId,
+	/// `None` for a shell, which has no session (ADR-0032). The renderer keys
+	/// its agent map by this, so a null is what keeps a shell out of it.
+	pub session_id: Option<String>,
+	pub project_id: String,
+	pub status: TerminalStatus,
+	pub last_activity: i64,
+	/// Agent or shell (F23).
+	pub kind: TerminalKind,
+	/// The renderer's pane key for a shell, so a reloaded renderer can re-bind
+	/// this PTY to the chip it belongs to (ADR-0032). `None` for an agent, which
+	/// is found by its session id instead.
+	pub client_key: Option<String>,
+	/// Where this terminal is running. A shell chip that outlives its process
+	/// respawns here (F23).
+	pub cwd: String,
+	/// Which agent runs in it — `claude`, `codex` — and `None` for a shell
+	/// (F30). What the session header's agent mark reads after a reload.
+	pub agent: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminalDataEvent {
+	pub id: TerminalId,
+	pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalStatusEvent {
+	pub id: TerminalId,
+	pub status: TerminalStatus,
+	pub last_activity: i64,
+}
+
+/// What a desktop notification needs to know about a terminal (F32).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlertContext {
+	pub project_id: String,
+	/// The session the terminal runs, as it answers now; `None` for a shell.
+	pub session_id: Option<String>,
+	pub topic: Option<String>,
+}
+
+/// The agent asked us to show a file (F20). `frontmost` is already decided
+/// here, from whether this session is the one in front — the renderer obeys
+/// rather than re-deciding, so one rule lives in one place.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdeOpenFileEvent {
+	pub session_id: String,
+	pub path: String,
+	pub line: Option<u32>,
+	/// True: open the viewer. False: mark the tab and leave the human alone.
+	pub frontmost: bool,
+}
+
+/// The checkout a session is working in, after a bridge signal (F21).
+///
+/// Emitted **after** the row is written, never before: the renderer's job is to
+/// render a fact, and an event that arrives ahead of its row is a fact the next
+/// reload disagrees with.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionWorktreeEvent {
+	pub session_id: String,
+	pub path: String,
+	/// The checkout's own branch, for the header badge. `None` on a detached
+	/// HEAD, exactly as `GitStatus::branch` is.
+	pub branch: Option<String>,
+}
+
+/// An agent asking for a new session in its own project (`startSession`).
+/// Project and folder are the caller's own, bound at spawn (F50).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStart {
+	pub delegation_id: Option<String>,
+	/// The session that asked, for a delegation; set by the store.
+	pub parent_session_id: Option<String>,
+	pub auto_approved: bool,
+	pub project_id: String,
+	pub agent: String,
+	pub prompt: String,
+	pub cwd: String,
+}
+
+/// Where this session's bridge stands (F20).
+///
+/// **The header shows nothing while this is healthy.** A badge for a working
+/// bridge is a label that is always on, which is a label you stop reading; the
+/// only thing worth a pixel is the case where the agent *cannot* open a file.
+/// So `error` is what the UI draws and `connected` is for the log.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdeStatusEvent {
+	pub session_id: String,
+	pub connected: bool,
+	/// Why the bridge is unusable for this session, in words a human can act
+	/// on. `None` means there is nothing wrong to report.
+	pub error: Option<String>,
+}
+
+/// A session's bridge, or the reason it hasn't got one.
+///
+/// The failure is kept rather than logged and forgotten: a session whose bridge
+/// never bound is one where every `openFile` will silently do nothing, and the
+/// only honest thing is to say so in the header.
+enum IdeSlot {
+	Running(IdeServer),
+	Failed(String),
+	/// No bridge was ever attempted — a shell terminal (F23).
+	///
+	/// Distinct from `Failed` because the header reports a failure to the user:
+	/// "the agent cannot open files" is news when a bridge did not bind, and a
+	/// lie about a terminal that has no agent in it.
+	None,
+}
+
+impl IdeSlot {
+	fn server(&self) -> Option<&IdeServer> {
+		match self {
+			Self::Running(s) => Some(s),
+			Self::Failed(_) | Self::None => None,
+		}
+	}
+
+	fn error(&self) -> Option<String> {
+		match self {
+			Self::Running(_) | Self::None => None,
+			Self::Failed(reason) => Some(reason.clone()),
+		}
+	}
+}
+
+/// `session:adopted` (F30, ADR-0062): a session that started under an id
+/// factorai minted has been named by its agent. Emitted once per PTY, when
+/// the rollout carrying the title's thread prefix appears on disk; the
+/// renderer re-keys the route, the tab, the pool and the store in one go.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAdoptedEvent {
+	pub id: TerminalId,
+	pub provisional: String,
+	pub adopted: String,
+	pub project_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalExitEvent {
+	pub id: TerminalId,
+	pub code: Option<i32>,
+	/// True when **factorai** killed this process — the quit, a session close,
+	/// a restart — rather than it ending on its own.
+	///
+	/// It exists because F23 answers the two cases differently: a shell you
+	/// typed `exit` in loses its chip, and one the app killed on the way out
+	/// comes back as a dead chip holding its cwd. The exit *code* cannot tell
+	/// them apart (a SIGTERM'd bash and `exit 143` are indistinguishable), and
+	/// the renderer cannot infer it either — on the quit path it may not live
+	/// long enough to see the event at all, which is precisely the race this
+	/// flag removes.
+	pub killed: bool,
+}
+
+type DataCb = Arc<dyn Fn(TerminalDataEvent) + Send + Sync>;
+type StatusCb = Arc<dyn Fn(TerminalStatusEvent) + Send + Sync>;
+type ExitCb = Arc<dyn Fn(TerminalExitEvent) + Send + Sync>;
+type IdeOpenCb = Arc<dyn Fn(IdeOpenFileEvent) + Send + Sync>;
+type AdoptedCb = Arc<dyn Fn(SessionAdoptedEvent) + Send + Sync>;
+type IdeStatusCb = Arc<dyn Fn(IdeStatusEvent) + Send + Sync>;
+/// Asks for the user's configured binary path for one agent, once per spawn
+/// (F11, F30). The argument is the agent id.
+type BinaryOverrideCb = Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>;
+/// Which agent a spawn runs, given its project and — for a resume — its session
+/// (F30 § "Which agent a project runs"). Same shape and reason as
+/// `ProfileDirCb`: a row this module should not hold. `None` means Claude.
+type AgentCb = Arc<dyn Fn(&str, Option<&str>) -> Option<String> + Send + Sync>;
+/// Answers "where does this session's transcript say it was running?" — see
+/// `TerminalManager::session_cwd`.
+/// The directories a session is recorded as having run in, **newest first**.
+/// Usually one; two when the agent moved (F21).
+type SessionCwdCb = Arc<dyn Fn(&str) -> Vec<PathBuf> + Send + Sync>;
+/// Answers "what store **directory name** did the index record this session's
+/// transcript under?" — `discovered_projects.key`, or `None` if the indexer has
+/// not seen it. See `TerminalManager::resume_cwd`.
+///
+/// Same shape and reason as `SessionCwdCb`: a row this module should not hold.
+/// It exists because a recorded cwd cannot be trusted to encode to the store
+/// directory — an agent that `cd`s into a subdirectory of the folder Claude
+/// keyed the store by leaves `last_cwd` pointing below it, so re-encoding misses
+/// the transcript while the key still names it exactly.
+type SessionKeyCb = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+/// Which Claude config directory a spawn runs under, given its project and —
+/// for a resume — its session (F25, ADR-0036).
+///
+/// Same shape and same reason as `BinaryOverrideCb`: the answer is a row in a
+/// database this module should not hold, and reading it per spawn is what makes
+/// "running sessions keep their profile, the next one uses the new one" true
+/// with nothing to invalidate.
+///
+/// **The session id is not optional decoration.** A transcript lives under the
+/// config directory it was written in, so a resume has to run under *that*
+/// profile even when the project has since been reassigned — otherwise
+/// `--resume` finds nothing and silently starts a fresh conversation. The
+/// ordering lives in `services::profiles::for_spawn`.
+type ProfileDirCb = Arc<dyn Fn(&str, &str, Option<&str>) -> Option<PathBuf> + Send + Sync>;
+type WorktreeCb = Arc<dyn Fn(SessionWorktreeEvent) + Send + Sync>;
+
+/// Reading and writing which checkout a session is working in (F21).
+///
+/// A pair of closures for the reason `session_cwd` is one: the manager needs the
+/// `session_worktrees` table and should not hold a database. Absent in
+/// `with_callbacks`, where a signal is still emitted but not remembered — which
+/// is the shape every test runs in.
+pub type WorktreeGet = Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>;
+pub type WorktreeSet = Arc<dyn Fn(&str, &Path) + Send + Sync>;
+
+#[derive(Clone)]
+pub struct WorktreeStore {
+	pub get: WorktreeGet,
+	pub set: WorktreeSet,
+}
+
+/// Owns the Windows process tree for one ConPTY. The kill-on-close limit is a
+/// final backstop if factorai exits before its normal shutdown path can run.
+#[cfg(windows)]
+struct WinProcessJob {
+	handle: OwnedHandle,
+	root_pid: u32,
+}
+
+#[cfg(windows)]
+impl WinProcessJob {
+	fn attach(process: RawHandle, root_pid: u32) -> std::io::Result<Self> {
+		let raw = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+		if raw.is_null() {
+			return Err(std::io::Error::last_os_error());
+		}
+		let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+		let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+		let set = unsafe {
+			SetInformationJobObject(
+				handle.as_raw_handle() as HANDLE,
+				JobObjectExtendedLimitInformation,
+				(&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+				std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+			)
+		};
+		if set == 0 {
+			return Err(std::io::Error::last_os_error());
+		}
+		let assigned = unsafe {
+			AssignProcessToJobObject(handle.as_raw_handle() as HANDLE, process as HANDLE)
+		};
+		if assigned == 0 {
+			return Err(std::io::Error::last_os_error());
+		}
+		let job = Self { handle, root_pid };
+		job.attach_existing_descendants()?;
+		Ok(job)
+	}
+
+	fn attach_existing_descendants(&self) -> std::io::Result<()> {
+		let mut assigned = HashSet::from([self.root_pid]);
+		loop {
+			let descendants = process_descendants(self.root_pid)?;
+			let mut found_new = false;
+			for pid in descendants {
+				if !assigned.insert(pid) {
+					continue;
+				}
+				found_new = true;
+				let process = unsafe { OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid) };
+				if process.is_null() {
+					let error = std::io::Error::last_os_error();
+					// A process which exited between the snapshot and OpenProcess no
+					// longer needs to be owned by this job. Other failures mean we
+					// could leave a live descendant outside the job.
+					if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+						continue;
+					}
+					return Err(error);
+				}
+				let process = unsafe { OwnedHandle::from_raw_handle(process) };
+				let result = unsafe {
+					AssignProcessToJobObject(
+						self.handle.as_raw_handle() as HANDLE,
+						process.as_raw_handle() as HANDLE,
+					)
+				};
+				if result == 0 {
+					let error = std::io::Error::last_os_error();
+					if error.raw_os_error() != Some(ERROR_INVALID_PARAMETER as i32) {
+						return Err(error);
+					}
+				}
+			}
+			if !found_new {
+				break;
+			}
+		}
+		Ok(())
+	}
+
+	fn terminate(&self) -> std::io::Result<()> {
+		let result = unsafe { TerminateJobObject(self.handle.as_raw_handle() as HANDLE, 1) };
+		if result == 0 {
+			Err(std::io::Error::last_os_error())
+		} else {
+			Ok(())
+		}
+	}
+}
+
+#[cfg(windows)]
+fn process_descendants(root_pid: u32) -> std::io::Result<Vec<u32>> {
+	let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+	if snapshot == INVALID_HANDLE_VALUE {
+		return Err(std::io::Error::last_os_error());
+	}
+	let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+	let mut entry = PROCESSENTRY32W {
+		dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+		..Default::default()
+	};
+	let mut parents = Vec::new();
+	if unsafe { Process32FirstW(snapshot.as_raw_handle() as HANDLE, &mut entry) } == 0 {
+		return Err(std::io::Error::last_os_error());
+	}
+	loop {
+		parents.push((entry.th32ProcessID, entry.th32ParentProcessID));
+		if unsafe { Process32NextW(snapshot.as_raw_handle() as HANDLE, &mut entry) } == 0 {
+			let error = std::io::Error::last_os_error();
+			if error.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+				break;
+			}
+			return Err(error);
+		}
+	}
+	let mut descendants = HashSet::from([root_pid]);
+	loop {
+		let old_len = descendants.len();
+		for (pid, parent_pid) in &parents {
+			if descendants.contains(parent_pid) {
+				descendants.insert(*pid);
+			}
+		}
+		if descendants.len() == old_len {
+			break;
+		}
+	}
+	descendants.remove(&root_pid);
+	Ok(descendants.into_iter().collect())
+}
+
+#[cfg(windows)]
+pub fn kill_process_tree(root_pid: u32) -> std::io::Result<()> {
+	let mut process_ids = process_descendants(root_pid).unwrap_or_default();
+	process_ids.push(root_pid);
+	process_ids.reverse();
+	let taskkill = std::env::var_os("SystemRoot")
+		.map(PathBuf::from)
+		.map(|root| root.join("System32/taskkill.exe"))
+		.filter(|path| path.is_file())
+		.unwrap_or_else(|| PathBuf::from("taskkill.exe"));
+	let mut last_error = None;
+	for pid in process_ids {
+		let result = std::process::Command::new(&taskkill)
+			.args(["/PID", &pid.to_string(), "/T", "/F"])
+			.stdin(std::process::Stdio::null())
+			.stdout(std::process::Stdio::null())
+			.stderr(std::process::Stdio::null())
+			.creation_flags(CREATE_NO_WINDOW)
+			.status();
+		match result {
+			Ok(status) if status.success() => {}
+			Ok(status) => {
+				last_error = Some(std::io::Error::other(format!("taskkill exited with {status}")));
+			}
+			Err(error) => last_error = Some(error),
+		}
+	}
+	match last_error {
+		Some(error) => Err(error),
+		None => Ok(()),
+	}
+}
+
+/// Reading and writing a project's routines, for the bridge's tool group
+/// (F22 slice 3, ADR-0028).
+///
+/// The same shape and the same reason as [`WorktreeStore`]: the manager needs
+/// answers from a database it should not hold. Absent in `with_callbacks`,
+/// where the tools are still advertised — they are advertised unconditionally —
+/// and answer that routines are unavailable, which is the state every test runs
+/// in.
+///
+/// **The author is a parameter, not a field.** Each closure takes the session
+/// making the write, because that is what the row records and the one thing the
+/// bridge knows that `lib.rs` does not.
+pub type RoutineList = Arc<dyn Fn(&str) -> AppResult<Vec<crate::models::Routine>> + Send + Sync>;
+pub type RoutineCreate = Arc<
+	dyn Fn(&crate::models::RoutineInput, &str) -> AppResult<crate::models::Routine> + Send + Sync,
+>;
+pub type RoutineUpdate = Arc<
+	dyn Fn(
+			&str,
+			&crate::services::routines::RoutinePatch,
+			&str,
+		) -> AppResult<crate::models::Routine>
+		+ Send
+		+ Sync,
+>;
+
+#[derive(Clone)]
+pub struct RoutineStore {
+	pub list: RoutineList,
+	/// `&str` is the session id to record as the author.
+	pub create: RoutineCreate,
+	/// Routine id, the change, and the session id to record as the last hand.
+	pub update: RoutineUpdate,
+}
+
+/// How the agent's canvas tools reach the app (F44, ADR-0104): a project's
+/// folder, and the canvas a session is linked to. Wired in `lib.rs`.
+pub type CanvasRoot = Arc<dyn Fn(&str) -> AppResult<PathBuf> + Send + Sync>;
+/// Project id, session id: the canvas that session is linked to.
+pub type CanvasLinked = Arc<dyn Fn(&str, &str) -> AppResult<Option<String>> + Send + Sync>;
+
+#[derive(Clone)]
+pub struct CanvasStore {
+	pub root: CanvasRoot,
+	pub linked: CanvasLinked,
+}
+
+/// What `spawn_inner` needs, for either kind of PTY.
+///
+/// **Not `SpawnOpts` with a flag on it, and not `ShellSpawnOpts` either.** Both
+/// of those are IPC types shaped for one caller: an agent's carries a session id
+/// and a routine's first prompt, a shell's carries the renderer's pane key and
+/// no session at all. This is the union the one spawn path actually reads, and
+/// the `Option`s in it are the two questions `spawn_inner` asks — see
+/// [`TerminalKind`] and ADR-0032.
+struct PtyRequest {
+	/// `None` for a shell. Everything an agent gets and a shell does not — the
+	/// transcript probe, the tool server, the IDE bridge, the argv — hangs off
+	/// this being `Some`.
+	session_id: Option<String>,
+	/// The renderer's pane key, for a shell. Round-tripped, never read.
+	client_key: Option<String>,
+	project_id: String,
+	cwd: Option<String>,
+	cols: u16,
+	rows: u16,
+	initial_prompt: Option<String>,
+	kind: TerminalKind,
+	/// Which agent this runs (F30); `None` for a shell, whose argv is `$SHELL`.
+	agent: Option<&'static AgentDescriptor>,
+}
+
+/// What [`TerminalManager::attach`] registers: a live PTY and everything the
+/// handle keeps alongside it.
+struct Attach {
+	opencode_signal: Option<opencode::SessionSignal>,
+	req: PtyRequest,
+	master: Box<dyn MasterPty + Send>,
+	child: Box<dyn Child + Send + Sync>,
+	#[cfg(windows)]
+	process_job: Option<WinProcessJob>,
+	store_dir: PathBuf,
+	cwd: PathBuf,
+	ide: IdeSlot,
+	agent_tools: Option<AgentToolsServer>,
+}
+
+impl TerminalHandle {
+	fn kill_process_tree(&self) {
+		#[cfg(windows)]
+		if let Some(job) = &self.process_job {
+			if let Err(error) = job.terminate() {
+				warn!(pid = job.root_pid, error = %error, "Job Object termination failed; falling back to taskkill");
+				if let Err(kill_error) = kill_process_tree(job.root_pid) {
+					warn!(pid = job.root_pid, error = %kill_error, "taskkill could not terminate the terminal process tree");
+					if let Err(root_error) = self.killer.lock().kill() {
+						warn!(pid = job.root_pid, error = %root_error, "child killer could not terminate the terminal root process");
+					}
+				}
+			}
+			return;
+		}
+		let _ = self.killer.lock().kill();
+	}
+
+	/// The id this session answers to now: the agent's once adopted, else ours.
+	fn effective_id(&self) -> Option<String> {
+		self.adopted.lock().clone().or_else(|| self.session_id.clone())
+	}
+
+	/// Whether `id` names this session, before or after adoption.
+	fn is_session(&self, id: &str) -> bool {
+		self.session_id.as_deref() == Some(id) || self.adopted.lock().as_deref() == Some(id)
+	}
+}
+
+struct TerminalHandle {
+	opencode_signal: Option<opencode::SessionSignal>,
+	/// **`None` for a shell** (ADR-0032). Every pass that means "the session" is
+	/// therefore asked what it means for a shell instead of being trusted to
+	/// filter on [`TerminalKind`] — see that type.
+	session_id: Option<String>,
+	project_id: String,
+	/// Agent or shell (F23) — see [`TerminalKind`] for what it still decides now
+	/// that a shell's missing session id decides the rest.
+	kind: TerminalKind,
+	/// The renderer's key for the pane a shell fills, held so `list` can hand it
+	/// back after a renderer reload. Opaque here: never parsed, never validated,
+	/// `None` for an agent (ADR-0032).
+	client_key: Option<String>,
+	/// Which agent runs here (F30). Decides which title dialect the reader
+	/// parses and what `list` reports; `None` for a shell.
+	agent: Option<&'static AgentDescriptor>,
+	/// The id the agent gave this session, once adopted (ADR-0062). `None` for
+	/// Claude — which runs under the id we minted — and for a Codex session
+	/// before its first turn. Every lookup by session id answers to both.
+	adopted: Mutex<Option<String>>,
+	/// The thread-id prefix the title last carried, for the adoption probe.
+	thread_prefix: Mutex<Option<String>>,
+	/// The agent's store this session writes into: where the probe looks.
+	store_dir: PathBuf,
+	/// When the store was last probed; the spinner rewrites the title ten
+	/// times a second and a directory walk per rewrite would be silly.
+	last_probe: Mutex<Option<Instant>>,
+	master: Mutex<Box<dyn MasterPty + Send>>,
+	/// Input for the PTY, written by the terminal's own `term-writer-*` thread.
+	/// A paste larger than the kernel's PTY buffer blocks until the child reads
+	/// it, and `terminal_write` runs on the main thread: writing there froze the
+	/// window for as long as the child took. One queue per terminal keeps
+	/// keystrokes and pastes in the order they were typed.
+	writer: std::sync::mpsc::Sender<Vec<u8>>,
+	/// A killer cloned from the child at spawn time. We deliberately do NOT
+	/// store the `Child` itself here: the waiter thread owns it and blocks on
+	/// `wait()` for the process's entire lifetime. If we held the `Child`
+	/// behind a `Mutex` (as we once did), every `kill()` would block on that
+	/// lock until the process exited on its own — deadlocking the caller.
+	/// Since `terminal_kill` is a synchronous Tauri command it runs on the
+	/// main thread, so that deadlock froze the whole GUI on terminal open
+	/// (StrictMode's spawn-race kill) and on quit (`kill_all`). A `ChildKiller`
+	/// signals the process without touching the waiter's `Child`.
+	killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+	/// On Windows, a kill-on-close Job Object owns the PTY root and every
+	/// descendant, including processes that were created just before attach.
+	/// `None` for a remote shell (F45): no local process tree exists to own.
+	#[cfg(windows)]
+	process_job: Option<WinProcessJob>,
+	status: Mutex<TerminalStatus>,
+	/// The topic of the agent's last title (F32), for the desktop notification.
+	/// `None` until a Claude title arrives; Codex never sets it.
+	topic: Mutex<Option<String>>,
+	/// Set by [`TerminalManager::kill`] before it signals, and read by the
+	/// waiter when it reports the exit. See `TerminalExitEvent::killed`.
+	killed: AtomicBool,
+	last_activity: AtomicI64,
+	/// The directory this session runs in, and the root every IDE-bridge path is
+	/// checked against. Kept on the handle because the bridge's scope has to
+	/// outlive the spawn call that computed it.
+	cwd: PathBuf,
+	/// This session's IDE bridge (F20), held so its lifetime is the PTY's:
+	/// dropping the handle drops the server, which removes the lockfile and
+	/// stops the listener — so the reaping ADR-0017 promises rides on the
+	/// teardown ADR-0005 already guarantees, rather than on a second one that
+	/// could be forgotten. Carries the reason instead when it failed to start.
+	ide: IdeSlot,
+	/// This session's agent tool server (F22 slice 3, ADR-0029), held for the
+	/// same reason and with the same lifetime: dropping the handle stops the
+	/// listener. `None` when it could not bind — the session then runs without
+	/// factorai's own tools rather than not at all.
+	///
+	/// Never read after the spawn that created it. Its port and token left in
+	/// the child's argv, and its `Drop` is the teardown.
+	#[allow(dead_code)]
+	agent_tools: Option<AgentToolsServer>,
+	/// What an agent reads from an SSH terminal (F46): markers, screen, cwd.
+	/// `None` for every other kind.
+	capture: Option<Arc<agent_use::CaptureCell>>,
+	/// The last keystroke the *human* sent, ms; agent writes do not count.
+	last_human_input: AtomicI64,
+	/// The last Ctrl+C the human sent, ms (F46).
+	last_human_interrupt: AtomicI64,
+	/// The human has typed at the prompt without Enter, Ctrl+C or Ctrl+U since:
+	/// an agent must not append its command to their half-typed line.
+	human_line_dirty: AtomicBool,
+	/// The agent session this terminal is lent to, if any (F46).
+	link: Mutex<Option<AgentLink>>,
+	/// An agent command is in flight here.
+	agent_running: AtomicBool,
+}
+
+#[derive(Clone)]
+pub struct TerminalManager {
+	pub delegations: Arc<Delegations>,
+	confirm_delegations: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+	usage_limits: Option<agent_tools::ReadUsageLimits>,
+	terminals: Arc<DashMap<TerminalId, Arc<TerminalHandle>>>,
+	on_data: DataCb,
+	on_status: StatusCb,
+	on_exit: ExitCb,
+	/// Claude's config dir, for locating session transcripts. Spawn decisions
+	/// read the filesystem rather than the index, so they can't go stale.
+	claude_dir: PathBuf,
+	/// Codex's ambient config directory (F30): `CODEX_HOME` or `~/.codex`. What
+	/// a Codex session runs under until Codex profiles land (roadmap 38 slice
+	/// 4), and what "no variable at all" compares against for that agent.
+	codex_dir: PathBuf,
+	opencode_dir: PathBuf,
+	/// Override for tests. None → resolve the binary at spawn time.
+	///
+	/// A test seam, deliberately *not* overloaded to carry the user's F11
+	/// setting: that one arrives through `user_binary` below, so a test that
+	/// pins a fake `claude` and a user who pinned a real one stay two separate
+	/// facts.
+	binary_override: Option<PathBuf>,
+	/// The user's configured binary path, read at **spawn time** (F11).
+	///
+	/// A callback rather than a value because it is a setting that can change
+	/// while the app runs, and resolving it per spawn is what makes "running
+	/// sessions are unaffected, the next one uses the new path" true without
+	/// anything having to invalidate a cache. Same shape as the indexer's
+	/// `live_ids`, and for the same reason: the manager needs an answer from a
+	/// database it should not hold.
+	user_binary: Option<BinaryOverrideCb>,
+	/// Which agent a project's next session runs, read at **spawn time** (F30).
+	/// `None` — every test that does not wire it — means Claude.
+	agent_of: Option<AgentCb>,
+	/// The cwd the index recorded for a session, read at **spawn time**.
+	///
+	/// Same shape and same reason as `user_binary`: the manager needs an answer
+	/// from a database it should not hold. What it buys is `resume_cwd` below —
+	/// a session whose transcript lives somewhere other than the folder the
+	/// caller named has to be spawned where the transcript is, or `session_flag`
+	/// claims an id Claude already knows and the conversation is lost.
+	session_cwd: Option<SessionCwdCb>,
+	/// The store directory name the index recorded a session's transcript under,
+	/// read at **spawn time** and by `next_session_id`. `None` — every test that
+	/// does not wire it — falls back to the recorded-cwd probe, which is the
+	/// behaviour that predates this.
+	session_key: Option<SessionKeyCb>,
+	/// The profile a spawn runs under (F25), read per spawn. `None` — every test
+	/// — falls back to `claude_dir`, which is what a single-profile install
+	/// resolves to anyway.
+	profile_dir: Option<ProfileDirCb>,
+	/// Which checkout each session is working in (F21). `None` means a signal is
+	/// still emitted but not remembered.
+	worktree_store: Option<WorktreeStore>,
+	/// A project's routines, for the bridge's tool group (F22 slice 3).
+	/// `None` leaves the tools advertised but answering that they are
+	/// unavailable — see [`RoutineStore`].
+	routine_store: Option<RoutineStore>,
+	/// Where the agent's canvas tools read and write; `None` in tests.
+	canvas_store: Option<CanvasStore>,
+	/// Where a Claude session's status-line helper drops its rate limits.
+	/// `None` — every test that does not wire it — adds no `--settings`.
+	usage_sink_dir: Option<PathBuf>,
+	/// Folder holding the OpenCode session-signal plugin and per-terminal files (ADR-0122).
+	opencode_signal_dir: Option<PathBuf>,
+	/// Whether the status-line injection is switched on, read at **spawn time**.
+	/// `None` — every test that does not wire it — means on.
+	usage_statusline_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+	on_worktree: WorktreeCb,
+	/// An agent's `startSession`; the renderer opens the session.
+	on_session_start: Arc<dyn Fn(SessionStart) + Send + Sync>,
+	/// What the renderer has on screen, for the bridge's answers (F20).
+	ui: Arc<UiState>,
+	on_ide_open: IdeOpenCb,
+	on_ide_status: IdeStatusCb,
+	on_adopted: AdoptedCb,
+	/// Asked before an agent command runs on a server (F46, ADR-0110).
+	agent_policy: Option<PolicyCb>,
+	on_agent_run: Arc<dyn Fn(AgentRunEvent) + Send + Sync>,
+	/// A server's display name for `terminals_list`, from the address book.
+	server_label: Option<ServerLabelCb>,
+	/// Files on the servers agents use, over SFTP (F47).
+	remote_files: Option<Arc<crate::services::ssh::sftp::RemoteFiles>>,
+	/// The tmux session of each persistent SSH tab (F49), by terminal id.
+	tmux: Arc<DashMap<TerminalId, String>>,
+	/// What the bridge and tool servers' accept loops run on; the caller of
+	/// `spawn` may be a plain thread with no runtime of its own.
+	runtime: tokio::runtime::Handle,
+}
+
+impl TerminalManager {
+	pub fn new(
+		sink: Arc<dyn EventSink>,
+		claude_dir: PathBuf,
+		ui: Arc<UiState>,
+		runtime: tokio::runtime::Handle,
+	) -> Self {
+		// One store per app; it announces every change for the renderer (F50).
+		let delegations = Arc::new(Delegations::default());
+		let s = sink.clone();
+		delegations.set_on_change(Arc::new(move |project_id| {
+			s.emit(CoreEvent::DelegationsChanged { project_id: project_id.to_string() });
+		}));
+		let adopted_delegations = delegations.clone();
+		let mut mgr = Self::with_callbacks(
+			claude_dir,
+			{
+				let s = sink.clone();
+				Arc::new(move |e| {
+					s.emit(CoreEvent::TerminalData { terminal_id: e.id, bytes: e.bytes })
+				})
+			},
+			{
+				let s = sink.clone();
+				Arc::new(move |e| s.emit(CoreEvent::TerminalStatus(e)))
+			},
+			{
+				let s = sink.clone();
+				Arc::new(move |e| s.emit(CoreEvent::TerminalExit(e)))
+			},
+			runtime,
+		);
+		mgr.ui = ui;
+		mgr.delegations = delegations;
+		mgr.on_ide_open = {
+			let s = sink.clone();
+			Arc::new(move |e| s.emit(CoreEvent::IdeOpenFile(e)))
+		};
+		mgr.on_ide_status = {
+			let s = sink.clone();
+			Arc::new(move |e| s.emit(CoreEvent::IdeStatus(e)))
+		};
+		mgr.on_adopted = {
+			let s = sink.clone();
+			Arc::new(move |e| {
+				adopted_delegations.adopted(&e.provisional, &e.adopted);
+				s.emit(CoreEvent::SessionAdopted(e));
+			})
+		};
+		mgr.on_worktree = {
+			let s = sink.clone();
+			Arc::new(move |e| s.emit(CoreEvent::SessionWorktree(e)))
+		};
+		mgr.on_session_start = Arc::new(move |e| sink.emit(CoreEvent::AgentSessionStart(e)));
+		mgr
+	}
+
+	pub fn with_callbacks(
+		claude_dir: PathBuf,
+		on_data: DataCb,
+		on_status: StatusCb,
+		on_exit: ExitCb,
+		runtime: tokio::runtime::Handle,
+	) -> Self {
+		Self {
+			terminals: Arc::new(DashMap::new()),
+			on_data,
+			on_status,
+			delegations: Arc::default(),
+			confirm_delegations: None,
+			usage_limits: None,
+			on_exit,
+			claude_dir,
+			codex_dir: agents::ambient_dir(codex_desc()),
+			opencode_dir: agents::ambient_dir(opencode_desc()),
+			binary_override: None,
+			user_binary: None,
+			agent_of: None,
+			session_cwd: None,
+			session_key: None,
+			profile_dir: None,
+			worktree_store: None,
+			routine_store: None,
+			canvas_store: None,
+			usage_sink_dir: None,
+			opencode_signal_dir: None,
+			usage_statusline_enabled: None,
+			on_worktree: Arc::new(|_| {}),
+			on_session_start: Arc::new(|_| {}),
+			ui: Arc::new(UiState::default()),
+			on_ide_open: Arc::new(|_| {}),
+			on_ide_status: Arc::new(|_| {}),
+			on_adopted: Arc::new(|_| {}),
+			agent_policy: None,
+			on_agent_run: Arc::new(|_| {}),
+			server_label: None,
+			remote_files: None,
+			tmux: Arc::new(DashMap::new()),
+			runtime,
+		}
+	}
+
+	pub fn set_server_label(&mut self, cb: ServerLabelCb) {
+		self.server_label = Some(cb);
+	}
+
+	fn server_label(&self, server_id: &str) -> String {
+		self.server_label.as_ref().map_or_else(|| server_id.to_string(), |f| f(server_id))
+	}
+
+	/// Watch adoptions. For tests only — production wires this to the sink
+	/// in `new`.
+	#[cfg(test)]
+	pub fn set_adopted_cb(&mut self, cb: AdoptedCb) {
+		self.on_adopted = cb;
+	}
+
+	/// Where to read a session's recorded cwd from, per spawn. Wired to the
+	/// `sessions` table in `lib.rs`; `resume_cwd` is what it is for.
+	pub fn with_session_cwd(mut self, cb: SessionCwdCb) -> Self {
+		self.session_cwd = Some(cb);
+		self
+	}
+
+	/// Where to read a session's recorded store-directory key from. Wired to the
+	/// `sessions`/`discovered_projects` join in `lib.rs`; `resume_cwd` probes it
+	/// before falling back to the recorded cwd.
+	pub fn with_session_key(mut self, cb: SessionKeyCb) -> Self {
+		self.session_key = Some(cb);
+		self
+	}
+
+	/// Where to read the profile a spawn runs under, per spawn (F25). Wired to
+	/// the `profiles` table in `lib.rs`.
+	pub fn with_profile_dir(mut self, cb: ProfileDirCb) -> Self {
+		self.profile_dir = Some(cb);
+		self
+	}
+
+	/// The Claude config directory a spawn works against.
+	///
+	/// **Everything a spawn does with a config directory goes through this**, not
+	/// just the environment variable: the transcript probe that chooses
+	/// `--resume` over `--session-id`, the IDE lockfile we advertise at, and the
+	/// id `next_session_id` hands out. A session spawned under one directory and
+	/// probed under another is the silent version of this feature breaking — the
+	/// probe misses, we claim an id Claude already knows, and the conversation is
+	/// replaced by an empty one.
+	fn config_dir_for(
+		&self,
+		agent: &AgentDescriptor,
+		project_id: &str,
+		session_id: Option<&str>,
+	) -> PathBuf {
+		// Per agent (F30): a Codex profile is a `CODEX_HOME`, and a Codex session
+		// with no profile of its own — an install where no `codex` was found when
+		// the seed ran — falls back to that agent's ambient directory.
+		self.profile_dir
+			.as_ref()
+			.and_then(|cb| cb(agent.id, project_id, session_id))
+			.unwrap_or_else(|| self.ambient_dir_for(agent).to_path_buf())
+	}
+
+	/// Where to read and write a session's checkout (F21). Wired to
+	/// `session_worktrees` in `lib.rs`.
+	pub fn with_worktree_store(mut self, store: WorktreeStore) -> Self {
+		self.worktree_store = Some(store);
+		self
+	}
+
+	/// Where the bridge's routine tools read and write (F22 slice 3, ADR-0028).
+	/// Wired to the `routines` table in `lib.rs`.
+	pub fn with_routine_store(mut self, store: RoutineStore) -> Self {
+		self.routine_store = Some(store);
+		self
+	}
+
+	/// Where the agent's canvas tools read and write (F44, ADR-0104).
+	pub fn with_canvas_store(mut self, store: CanvasStore) -> Self {
+		self.canvas_store = Some(store);
+		self
+	}
+
+	/// Where a Claude session's status line forwards its rate limits
+	/// (`services::usage::statusline`). Wired to `<data_dir>/usage/statusline`
+	/// in `lib.rs`.
+	pub fn with_opencode_signal_dir(mut self, dir: PathBuf) -> Self {
+		self.opencode_signal_dir = Some(dir);
+		self
+	}
+
+	pub fn with_usage_sink_dir(mut self, dir: PathBuf) -> Self {
+		self.usage_sink_dir = Some(dir);
+		self
+	}
+
+	/// Whether a Claude session gets factorai's status line, per spawn
+	/// (`SettingKey::UsageStatusLine`). Wired to the `settings` table in `lib.rs`.
+	pub fn with_usage_statusline_enabled(
+		mut self,
+		cb: Arc<dyn Fn() -> bool + Send + Sync>,
+	) -> Self {
+		self.usage_statusline_enabled = Some(cb);
+		self
+	}
+
+	/// Where to read the user's configured binary path from, per spawn (F11).
+	/// Wired to the `settings` table in `lib.rs`.
+	pub fn with_usage_limits(mut self, limits: agent_tools::ReadUsageLimits) -> Self {
+		self.usage_limits = Some(limits);
+		self
+	}
+
+	pub fn with_delegation_confirmation(
+		mut self,
+		confirm: Arc<dyn Fn() -> bool + Send + Sync>,
+	) -> Self {
+		self.confirm_delegations = Some(confirm);
+		self
+	}
+
+	pub fn with_user_binary(mut self, cb: BinaryOverrideCb) -> Self {
+		self.user_binary = Some(cb);
+		self
+	}
+
+	/// Which agent a project's next session runs (F30). Wired to
+	/// `services::profiles::agent_for_spawn` in `lib.rs`.
+	pub fn with_agent_of(mut self, cb: AgentCb) -> Self {
+		self.agent_of = Some(cb);
+		self
+	}
+
+	/// Also hand every status event to `tap`, before it is emitted (F32). A
+	/// builder like the others: call it before anything spawns.
+	pub fn with_status_tap(
+		mut self,
+		tap: impl Fn(&TerminalStatusEvent) + Send + Sync + 'static,
+	) -> Self {
+		let inner = self.on_status.clone();
+		self.on_status = Arc::new(move |e| {
+			tap(&e);
+			inner(e);
+		});
+		self
+	}
+
+	/// Resolve the descriptor a spawn runs under: the caller's override first,
+	/// then the wired resolver, then Claude. An id no release ever wrote is an
+	/// error rather than Claude — the caller believed something false.
+	fn resolve_agent(
+		&self,
+		requested: Option<&str>,
+		project_id: &str,
+		session_id: Option<&str>,
+	) -> AppResult<&'static AgentDescriptor> {
+		let id = match requested {
+			Some(id) => id.to_string(),
+			None => self
+				.agent_of
+				.as_ref()
+				.and_then(|cb| cb(project_id, session_id))
+				.unwrap_or_else(|| agents::default_id().to_string()),
+		};
+		agents::descriptor(&id).ok_or_else(|| AppError::InvalidInput(format!("unknown agent {id}")))
+	}
+
+	/// The directory an agent reads when no profile names another: what "no
+	/// variable at all" compares against in `spawn_inner` (F25, F30).
+	fn ambient_dir_for(&self, agent: &AgentDescriptor) -> &Path {
+		match agent.id {
+			agents::CODEX => &self.codex_dir,
+			agents::OPENCODE => &self.opencode_dir,
+			_ => &self.claude_dir,
+		}
+	}
+
+	/// Override the binary the manager will spawn. For tests only.
+	#[cfg(test)]
+	pub fn set_binary(&mut self, path: PathBuf) {
+		self.binary_override = Some(path);
+	}
+
+	/// Watch the bridge's attach/detach edges. For tests only — production wires
+	/// this to the sink in `new`.
+	#[cfg(test)]
+	pub fn set_ide_status_cb(&mut self, cb: IdeStatusCb) {
+		self.on_ide_status = cb;
+	}
+
+	pub fn live_count(&self) -> usize {
+		self.terminals.len()
+	}
+
+	/// The project and title topic of a live terminal, for F32's notification.
+	/// `None` once the terminal is gone.
+	pub fn alert_context(&self, id: &TerminalId) -> Option<AlertContext> {
+		self.terminals.get(id).map(|h| AlertContext {
+			project_id: h.project_id.clone(),
+			session_id: h.effective_id(),
+			topic: h.topic.lock().clone(),
+		})
+	}
+
+	/// How many live PTYs have Claude *working* in them right now.
+	///
+	/// This is the count the quit guard asks about, and it is deliberately
+	/// narrower than `live_count` (ADR-0020): a session parked at its prompt has
+	/// nothing in flight to lose, so quitting it is not a question. `live_count`
+	/// stays the count of what quitting *kills*, which is still all of them.
+	pub fn working_count(&self) -> usize {
+		self.terminals
+			.iter()
+			.filter(|e| e.value().kind == TerminalKind::Agent)
+			.filter(|e| *e.value().status.lock() == TerminalStatus::Working)
+			.count()
+	}
+
+	/// Check the PTY that originated this request, including before its exit is emitted.
+	pub fn can_start_delegate(&self, parent: &str) -> bool {
+		self.terminals.iter().any(|entry| {
+			let handle = entry.value();
+			handle.session_id.as_deref() == Some(parent)
+				&& *handle.status.lock() != TerminalStatus::Stopped
+		})
+	}
+
+	/// The session ids with a PTY behind them right now. The indexer's reap
+	/// pass takes this so it never drops the row of a session you are watching,
+	/// whatever happened to its transcript on disk.
+	pub fn live_session_ids(&self) -> HashSet<String> {
+		// `filter_map` rather than a `kind` filter: a shell has no session id to
+		// contribute, so there is nothing to remember to exclude (ADR-0032).
+		// Pinning a phantom row against the reap is what this used to do wrong.
+		//
+		// Both ids of an adopted session (ADR-0062): the row the indexer writes
+		// carries the agent's, the tab may still carry ours.
+		self.terminals
+			.iter()
+			.flat_map(|e| {
+				let h = e.value();
+				[h.session_id.clone(), h.adopted.lock().clone()]
+			})
+			.flatten()
+			.collect()
+	}
+
+	/// Hand files to one session's agent as `at_mentioned` notifications (F20).
+	///
+	/// Scope-checked per path against that session's own project, the same way
+	/// `openFile` is on the way in. The direction of travel does not change the
+	/// boundary — a renderer bug that offered a path outside the project would
+	/// otherwise leak its name to the agent.
+	///
+	/// Loud on failure, unlike the rest of the bridge: this is a gesture the
+	/// human just made and is watching for, so "nothing happened" has to be
+	/// something they can see rather than a line in a log.
+	pub fn mention(&self, session_id: &str, mentions: &[Mention]) -> AppResult<()> {
+		let entry =
+			self.terminals.iter().find(|e| e.value().is_session(session_id)).ok_or_else(|| {
+				AppError::NotFound(format!("session {session_id} is not running"))
+			})?;
+		let handle = entry.value();
+
+		// **Codex has no editor bridge; it has a queue** (F30 § "Add to agent
+		// context"). The mention becomes one user turn, delivered by `codex queue`
+		// into the running thread — which needs the thread's own id, so a session
+		// Codex has not named yet (no first turn, ADR-0062) cannot take one.
+		if handle.agent.map(|a| a.id) == Some(agents::CODEX) {
+			let Some(thread) = handle.adopted.lock().clone() else {
+				return Err(AppError::InvalidInput(
+					"Codex has not named this session yet — send it a first message, then add context".into(),
+				));
+			};
+			let mut roots = vec![handle.cwd.clone()];
+			roots.extend(crate::services::git::worktree_paths(&handle.cwd.to_string_lossy()));
+			let resolved: Vec<(PathBuf, Option<(u32, u32)>)> = mentions
+				.iter()
+				.map(|m| {
+					let path = scope::resolve_within_any(&roots, &m.path)?;
+					let range = match (m.line_start, m.line_end) {
+						(Some(a), Some(b)) => Some((a, b)),
+						_ => None,
+					};
+					Ok((path, range))
+				})
+				.collect::<AppResult<_>>()?;
+			let message = codex::mention_message(&handle.cwd, &resolved);
+			return self.codex_queue(handle, &thread, &message);
+		}
+
+		let Some(server) = handle.ide.server() else {
+			return Err(AppError::InvalidInput(
+				"this session has no editor bridge, so there is nothing to send to".into(),
+			));
+		};
+		if !server.is_attached() {
+			return Err(AppError::InvalidInput(
+				"Claude is not connected to this session yet".into(),
+			));
+		}
+
+		// **The same scope the bridge's own answers use** (F21), not the cwd alone.
+		// The human can browse a worktree in the panel and send a file from it, and
+		// a boundary that refuses the files the tree is showing turns the gesture
+		// into an error in exactly the case the feature exists for.
+		let mut roots = vec![handle.cwd.clone()];
+		roots.extend(crate::services::git::worktree_paths(&handle.cwd.to_string_lossy()));
+		for mention in mentions {
+			let path = scope::resolve_within_any(&roots, &mention.path)?;
+			server.notify(protocol::at_mentioned(&path, mention));
+		}
+		Ok(())
+	}
+
+	/// Run `codex queue` against a live thread, under the session's own store
+	/// (F30 § "Add to agent context"). Synchronous and short: the CLI hands the
+	/// message to the running TUI and exits; a failure is the CLI's own words.
+	fn codex_queue(&self, handle: &TerminalHandle, thread: &str, message: &str) -> AppResult<()> {
+		let codex = codex_desc();
+		let bin = match &self.binary_override {
+			Some(p) => p.clone(),
+			None => {
+				let configured = self.user_binary.as_ref().and_then(|cb| cb(codex.id));
+				find_agent_binary(codex, configured.as_deref())?
+			}
+		};
+		let mut cmd = std::process::Command::new(bin);
+		cmd.args(codex::queue_argv(thread, message))
+			.current_dir(&handle.cwd)
+			.stdin(std::process::Stdio::null());
+		// The same store the session runs under, spelled the same way: the
+		// ambient directory is "no variable", a profile's is the variable.
+		if handle.store_dir == *self.ambient_dir_for(codex) {
+			cmd.env_remove(codex.config_dir_env);
+		} else {
+			cmd.env(codex.config_dir_env, &handle.store_dir);
+		}
+		let out = cmd.output().map_err(|e| AppError::Process(format!("codex queue: {e}")))?;
+		if !out.status.success() {
+			let err = String::from_utf8_lossy(&out.stderr);
+			let line = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+			return Err(AppError::Process(format!("codex queue failed: {line}")));
+		}
+		Ok(())
+	}
+
+	/// Re-announce every bridge's current state (F20).
+	///
+	/// For a renderer that just reloaded: it threw its state away, every bridge
+	/// carried on, and without this the header would say Claude had gone from a
+	/// session it is still driving. The same hole `terminal_list` fills for
+	/// PTYs.
+	///
+	/// **Re-emitted rather than returned**, and that is what makes it correct
+	/// rather than merely convenient. A returned list has to be merged with the
+	/// events that arrive while the call is in flight, and there is no way to
+	/// tell a stale entry from a fresh one — `adoptLive` carries that problem
+	/// deliberately because a PTY really can be born mid-request. Here the state
+	/// only ever changes by an event, so replaying it down the same channel puts
+	/// every update in one ordered queue and there is nothing to reconcile.
+	pub fn resync_ide_status(&self) {
+		for entry in self.terminals.iter() {
+			let handle = entry.value();
+			// **Shells are skipped, and it took `Option` to notice.** This pass
+			// iterates every handle, so a footer shell used to announce
+			// `connected: false` under the session id it had borrowed — clearing
+			// that session's real bridge error, or not, depending on the order
+			// `DashMap` happened to hand the entries over. A shell has no session
+			// and now cannot claim one (ADR-0032).
+			let Some(session_id) = handle.session_id.clone() else { continue };
+			(self.on_ide_status)(IdeStatusEvent {
+				session_id,
+				connected: handle.ide.server().is_some_and(IdeServer::is_attached),
+				error: handle.ide.error(),
+			});
+		}
+	}
+
+	/// Which agent a terminal runs (F30); `None` for a shell or an unknown id.
+	pub fn agent_of_terminal(&self, id: &str) -> Option<String> {
+		self.terminals.get(id).and_then(|h| h.agent.map(|a| a.id.to_string()))
+	}
+
+	pub fn list(&self) -> Vec<TerminalStatusDto> {
+		self.terminals
+			.iter()
+			.map(|entry| {
+				let h = entry.value();
+				TerminalStatusDto {
+					id: entry.key().clone(),
+					session_id: h.effective_id(),
+					project_id: h.project_id.clone(),
+					status: *h.status.lock(),
+					last_activity: h.last_activity.load(Ordering::Relaxed),
+					kind: h.kind,
+					client_key: h.client_key.clone(),
+					cwd: h.cwd.to_string_lossy().into_owned(),
+					agent: h.agent.map(|a| a.id.to_string()),
+				}
+			})
+			.collect()
+	}
+
+	/// The session id a "new session" click in `project_id` should land on.
+	///
+	/// A live session with no transcript on disk has never been messaged, so
+	/// it is indistinguishable from the one the user is asking for — hand it
+	/// back instead of piling a second `claude` onto the same project. Only
+	/// when there is no such session is a fresh id minted.
+	///
+	/// Deciding here rather than in the frontend is what lets both entry
+	/// points behave identically: the sidebar's per-project button fires on
+	/// projects whose session list was never fetched, so TypeScript cannot
+	/// answer "has this been messaged" without a round trip anyway. This also
+	/// can't race the indexer's 1s debounce, because it reads the transcript
+	/// directly rather than the index.
+	///
+	/// **"Messaged" asks the store, not the index.** A session's transcript does
+	/// not stay where it started: one driven in a worktree (F21) keys it by the
+	/// checkout, and Claude Code's own worktrees *move* a live session's file
+	/// there mid-run, after the index recorded the old directory. Each
+	/// recorded location — the cwd, the store key, the project folder — has
+	/// been the stale one in turn, and a miss reads a live messaged session as
+	/// "never messaged" and hands its id back on every "new session" click.
+	///
+	/// **Probed under the handle's own store**, the one it was spawned under,
+	/// not the project's current profile: reassigning the project must not make
+	/// its running sessions look unmessaged (F25).
+	///
+	/// **Per agent** (F30): a live, unmessaged Codex session is not the one a
+	/// "new Claude session" click asks for, so only handles running the same
+	/// agent are candidates. For an agent that names its own sessions
+	/// (ADR-0062) the returned id is *provisional* until adoption; an
+	/// unadopted live session is by definition unmessaged and is reused.
+	///
+	/// **`fresh` skips the reuse** (ADR-0078): a caller that brings a first
+	/// message cannot land it in a PTY that is already running, so it asks for
+	/// a brand-new id. The agent is still resolved, so an unknown one errors.
+	pub fn next_session_id(
+		&self,
+		project_id: &str,
+		folder: &Path,
+		agent: Option<&str>,
+		fresh: bool,
+	) -> AppResult<String> {
+		let agent = self.resolve_agent(agent, project_id, None)?;
+		if fresh || agent.id_source == IdSource::LiveOnly {
+			return Ok(Uuid::new_v4().to_string());
+		}
+		for entry in self.terminals.iter() {
+			let h = entry.value();
+			// A shell contributes no id here because it has none: it would
+			// otherwise be handed to a "new session" click, and `claude --resume`
+			// pointed at an id no transcript will ever exist for (ADR-0031).
+			let Some(session_id) = h.session_id.as_deref() else { continue };
+			if h.project_id != project_id || h.agent.map(|a| a.id) != Some(agent.id) {
+				continue;
+			}
+			// An adopted session has a transcript by definition (ADR-0062).
+			if h.adopted.lock().is_some() {
+				continue;
+			}
+			if !is_messaged(agent, session_id, folder, &h.store_dir) {
+				return Ok(session_id.to_string());
+			}
+		}
+		Ok(Uuid::new_v4().to_string())
+	}
+
+	/// Stand up this session's **agent tool server** (F22 slice 3, ADR-0029).
+	///
+	/// The sibling of `start_bridge`, and separate from it for a reason that is
+	/// not ours: the CLI registers the bridge under the hardcoded key `ide` and
+	/// caps that server's model-visible tools at two names, so a tool we want an
+	/// agent to call cannot live there. This is a plain MCP server under a plain
+	/// name, handed to the session through `--mcp-config` at spawn.
+	///
+	/// **The project and the author are bound here**, because this is the only
+	/// layer that knows which session and which project the server belongs to.
+	/// Binding them in a closure is what makes it impossible for a tool argument
+	/// to name another project or another author; the store itself takes both as
+	/// parameters and has no opinion.
+	fn start_agent_tools(
+		&self,
+		session_id: &str,
+		project_id: &str,
+		agent: &str,
+		cwd: &Path,
+	) -> AppResult<AgentToolsServer> {
+		let store = self.routine_store.clone();
+		let author = session_id.to_string();
+		let unavailable =
+			|| AppError::InvalidInput("routines are not available for this session".to_string());
+		let list_store = store.clone();
+		let create_store = store.clone();
+		let update_author = author.clone();
+		let routines = agent_tools::Routines {
+			project_id: project_id.to_string(),
+			// The folder rather than the project's display name: it is what the
+			// session can check against its own `pwd`, and it cannot go stale
+			// against a name the human renamed in the sidebar.
+			project_path: cwd.to_string_lossy().into_owned(),
+			list: Arc::new(move |project_id| {
+				let s = list_store.as_ref().ok_or_else(unavailable)?;
+				(s.list)(project_id)
+			}),
+			create: Arc::new(move |input| {
+				let s = create_store.as_ref().ok_or_else(unavailable)?;
+				(s.create)(input, &author)
+			}),
+			update: Arc::new(move |id, patch| {
+				let s = store.as_ref().ok_or_else(unavailable)?;
+				(s.update)(id, patch, &update_author)
+			}),
+		};
+		let canvas_unavailable =
+			|| AppError::InvalidInput("canvases are not available for this session".to_string());
+		let (root_store, link_store) = (self.canvas_store.clone(), self.canvas_store.clone());
+		let (root_project, link_project, link_session) =
+			(project_id.to_string(), project_id.to_string(), session_id.to_string());
+		let canvases = agent_tools::Canvases {
+			root: Arc::new(move || {
+				(root_store.as_ref().ok_or_else(canvas_unavailable)?.root)(&root_project)
+			}),
+			linked: Arc::new(move || {
+				(link_store.as_ref().ok_or_else(canvas_unavailable)?.linked)(
+					&link_project,
+					&link_session,
+				)
+			}),
+		};
+
+		let (target_binary, dispatch) = (self.user_binary.clone(), self.on_session_start.clone());
+		let (state, caller) = (self.delegations.clone(), session_id.to_string());
+		let (project, folder) = (project_id.to_string(), cwd.to_string_lossy().into_owned());
+		let confirm_delegations = self.confirm_delegations.clone();
+		// Weak: the closure lives inside a handle this map owns.
+		let live = Arc::downgrade(&self.terminals);
+		let finished = caller.clone();
+		let parent_of = live.clone();
+		let delegation_tools = DelegationTools {
+			caller: caller.clone(),
+			state: state.clone(),
+			// A delegate is disposable once it has reported (ADR-0125). Off this
+			// thread and a moment later, so the tool's reply reaches the agent first.
+			on_complete: Arc::new(move || {
+				let (live, finished) = (live.clone(), finished.clone());
+				std::thread::spawn(move || {
+					std::thread::sleep(Duration::from_secs(2));
+					if let Some(terminals) = live.upgrade() {
+						signal_session(&terminals, &finished);
+					}
+				});
+			}),
+			request: Arc::new(move |target, prompt| {
+				let target = agents::descriptor(target)
+					.ok_or_else(|| AppError::InvalidInput(format!("unknown agent {target}")))?;
+				let binary = target_binary.as_ref().and_then(|resolve| resolve(target.id));
+				find_agent_binary(target, binary.as_deref())?;
+				let auto_approved = confirm_delegations.as_ref().is_some_and(|confirm| !confirm());
+				// The parent as the renderer knows it: its agent's own id once adopted.
+				let parent_view = parent_of.upgrade().and_then(|terminals| {
+					terminals.iter().find_map(|entry| {
+						let handle = entry.value();
+						(handle.session_id.as_deref() == Some(caller.as_str()))
+							.then(|| handle.adopted.lock().clone())
+							.flatten()
+					})
+				});
+				let launch = state.request(
+					&caller,
+					SessionStart {
+						delegation_id: None,
+						parent_session_id: parent_view,
+						auto_approved,
+						project_id: project.clone(),
+						agent: target.id.into(),
+						prompt: prompt.into(),
+						cwd: folder.clone(),
+					},
+				)?;
+				let status = if auto_approved { "starting" } else { "pendingApproval" };
+				let result = serde_json::json!({ "id": launch.delegation_id, "status": status });
+				dispatch(launch);
+				Ok(result)
+			}),
+		};
+		let on_session_start = self.on_session_start.clone();
+		let (start_project, start_agent, start_cwd) =
+			(project_id.to_string(), agent.to_string(), cwd.to_string_lossy().into_owned());
+		let start_session: agent_tools::StartSession = Arc::new(move |prompt| {
+			(on_session_start)(SessionStart {
+				delegation_id: None,
+				parent_session_id: None,
+				auto_approved: false,
+				project_id: start_project.clone(),
+				agent: start_agent.clone(),
+				prompt: prompt.to_string(),
+				cwd: start_cwd.clone(),
+			});
+			Ok(())
+		});
+		let tools = AgentTools::new(routines, canvases, start_session)
+			.with_terminals(Arc::new(self.session_terminals(session_id)))
+			.with_delegations(delegation_tools)
+			.with_usage_limits(self.usage_limits.clone());
+		let _rt = self.runtime.enter();
+		AgentToolsServer::start(Arc::new(move |text| tools.handle(text)))
+	}
+
+	/// Stand up this session's IDE bridge (F20).
+	///
+	/// The two answers that depend on the UI are resolved here rather than in
+	/// the protocol, because this is the only layer that knows which session it
+	/// is: `openFile` on a session that is not in front marks its tab instead of
+	/// taking the window, and `getOpenEditors` reports what the viewer is
+	/// actually showing rather than a stub.
+	fn start_bridge(
+		&self,
+		session_id: &str,
+		cwd: &Path,
+		claude_dir: &Path,
+	) -> AppResult<IdeServer> {
+		let ui_for_open = self.ui.clone();
+		let ui_for_editors = self.ui.clone();
+		let on_open = self.on_ide_open.clone();
+		let session = session_id.to_string();
+
+		// **The path scope, and it is derived from git rather than from anything the
+		// client sends** (ADR-0019 § 2). Recomputed on every resolve, so a worktree
+		// the agent created a second ago is inside it — which a set captured here
+		// at connect time would refuse.
+		let scope_cwd = cwd.to_path_buf();
+		let checkouts: Arc<dyn Fn() -> Vec<PathBuf> + Send + Sync> =
+			Arc::new(move || crate::services::git::worktree_paths(&scope_cwd.to_string_lossy()));
+
+		// The signal path: persist first, then emit. A renderer told about a
+		// checkout that was never written would disagree with itself on reload.
+		let signal_session = session_id.to_string();
+		let signal_store = self.worktree_store.as_ref().map(|s| s.set.clone());
+		let on_worktree = self.on_worktree.clone();
+		let signal: Arc<dyn Fn(&Path) + Send + Sync> = Arc::new(move |checkout: &Path| {
+			if let Some(set) = &signal_store {
+				set(&signal_session, checkout);
+			}
+			(on_worktree)(SessionWorktreeEvent {
+				session_id: signal_session.clone(),
+				path: checkout.to_string_lossy().into_owned(),
+				branch: crate::services::git::worktrees(&checkout.to_string_lossy()).ok().and_then(
+					|wts| {
+						let target = std::fs::canonicalize(checkout)
+							.unwrap_or_else(|_| checkout.to_path_buf());
+						wts.into_iter()
+							.find(|w| Path::new(&w.path) == target)
+							.and_then(|w| w.branch)
+					},
+				),
+			});
+		});
+
+		let current_session = session_id.to_string();
+		let current_store = self.worktree_store.as_ref().map(|s| s.get.clone());
+		let current_cwd = cwd.to_path_buf();
+		// `None` when the panel is simply showing this session's own cwd, so
+		// `getWorkspaceFolders` reports a `viewing` line only when there is
+		// something to report.
+		let current: Arc<dyn Fn() -> Option<PathBuf> + Send + Sync> = Arc::new(move || {
+			let recorded = current_store.as_ref().and_then(|get| get(&current_session))?;
+			(recorded != current_cwd).then_some(recorded)
+		});
+
+		let mcp = Mcp::new(
+			cwd.to_path_buf(),
+			protocol::Worktrees { checkouts, signal, current },
+			Arc::new(move |req| {
+				// The agent may ask not to be intrusive, and the human may be
+				// looking at something else. Either is enough to mark rather than
+				// open, and the renderer is told the outcome rather than asked to
+				// work it out again.
+				let frontmost = req.make_frontmost && ui_for_open.is_active(&session);
+				(on_open)(IdeOpenFileEvent {
+					session_id: session.clone(),
+					path: req.path.to_string_lossy().into_owned(),
+					line: req.line,
+					frontmost,
+				});
+				frontmost
+			}),
+			Arc::new(move || ui_for_editors.open_files()),
+		);
+
+		let on_status = self.on_ide_status.clone();
+		let status_session = session_id.to_string();
+
+		let _rt = self.runtime.enter();
+		IdeServer::start(
+			claude_dir,
+			&cwd.to_string_lossy(),
+			Arc::new(move |text| mcp.handle(text)),
+			Arc::new(move |connected| {
+				(on_status)(IdeStatusEvent {
+					session_id: status_session.clone(),
+					connected,
+					error: None,
+				});
+			}),
+		)
+	}
+
+	/// Where this session has to be spawned for `--resume` to mean anything.
+	///
+	/// **Claude keys its store by cwd**, so a session's transcript lives under
+	/// `encode_path(the folder it ran in)`. `session_flag` probes for it there;
+	/// spawn a session somewhere else and the probe misses, we claim
+	/// `--session-id` for an id Claude already knows, and the conversation is
+	/// either refused or silently replaced by an empty one. The caller cannot
+	/// avoid this on its own: the renderer learns a session's recorded cwd from a
+	/// query that resolves *after* the terminal mounts, so by the time it knows,
+	/// the spawn has happened.
+	///
+	/// `None` unless a candidate directory **actually holds this transcript**,
+	/// which is a deliberately narrower test than "the index knows this session".
+	/// The recorded location is worth preferring over the caller's precisely
+	/// because the transcript is there; if it isn't — the folder moved, the store
+	/// was cleaned, the row is stale — then it buys nothing and would only move the
+	/// session somewhere the caller did not ask for. Falling through to `opts.cwd`
+	/// is the behaviour that predates this method.
+	///
+	/// **Every returned path is a real, recorded directory** — never a key decoded
+	/// back into a path. Decoding is lossy (a literal `-` in the path is
+	/// indistinguishable from the `/` separator it encodes to), and a spawn run in
+	/// a mangled directory fails outright. The store key is used only to *locate*
+	/// the right recorded cwd, not as a path itself.
+	fn resume_cwd(&self, session_id: &str, claude_dir: &Path) -> Option<PathBuf> {
+		let recorded = self.session_cwd.as_ref().map(|cb| cb(session_id)).unwrap_or_default();
+
+		// First: a recorded cwd whose own directory holds the transcript. The
+		// ordinary case, newest first — the agent worked in the folder Claude keyed
+		// the store by.
+		if let Some(dir) =
+			recorded.iter().find(|d| claude::transcript_path(claude_dir, d, session_id).exists())
+		{
+			return Some(dir.clone());
+		}
+
+		// Otherwise the store key: the directory the indexer recorded the transcript
+		// under, verbatim. When it holds the transcript but no recorded cwd encodes
+		// to it, the agent `cd`'d into a *subdirectory* of the folder Claude keyed
+		// the store by (F21) — so the real directory is the ancestor of a recorded
+		// cwd whose `encode_path` is the key. That ancestor is a real path on disk;
+		// the decoded key would not be. Without a recorded cwd to climb, there is no
+		// real path to hand back, so fall through to `opts.cwd`.
+		if let Some(key) = self.session_key.as_ref().and_then(|cb| cb(session_id)) {
+			if claude::transcript_path_by_key(claude_dir, &key, session_id).exists() {
+				for start in &recorded {
+					for ancestor in start.ancestors() {
+						if claude::encode_path(ancestor) == key {
+							return Some(ancestor.to_path_buf());
+						}
+					}
+				}
+			}
+		}
+		None
+	}
+
+	/// Spawn `claude` for a session in a PTY. Returns the new terminal id.
+	pub fn spawn(&self, opts: SpawnOpts) -> AppResult<TerminalId> {
+		self.spawn_with_argv(opts, None)
+	}
+
+	/// Spawn the user's own shell in the footer under a session (F23).
+	///
+	/// **Bare shell on Unix; -NoLogo on Windows.** A PTY with no
+	/// arguments is already an interactive shell, so ~/.zshrc is sourced the
+	/// way it is in any terminal emulator; -l would re-source the profile and
+	/// hand this shell a different environment from the agent above it, which
+	/// the shell sitting beside an agent must not have. Windows suppresses only
+	/// the PowerShell banner and keeps the user's profile. child_env supplies
+	/// the resolved shell PATH for both.
+	///
+	/// The session id is carried for one purpose — which footer this belongs to,
+	/// so closing that session kills its shells — and [`TerminalKind::Shell`]
+	/// keeps it out of every pass that would read it as a session (ADR-0031).
+	pub fn spawn_shell(&self, opts: ShellSpawnOpts) -> AppResult<TerminalId> {
+		let shell = crate::services::shell_path::user_shell();
+		#[cfg(windows)]
+		let argv = vec![shell.to_string_lossy().into_owned(), "-NoLogo".into()];
+		#[cfg(not(windows))]
+		let argv = vec![shell.to_string_lossy().into_owned()];
+		let id = self.spawn_inner(
+			PtyRequest {
+				session_id: None,
+				client_key: Some(opts.client_key),
+				project_id: opts.project_id,
+				cwd: Some(opts.cwd),
+				cols: opts.cols,
+				rows: opts.rows,
+				initial_prompt: None,
+				kind: TerminalKind::Shell,
+				agent: None,
+			},
+			Some(argv),
+		)?;
+		// Nothing names the chip from here. It is labelled with this shell's
+		// basename, which the renderer asked `shell_name` for before it called
+		// (F23 as amended by F24), and the shell's own `OSC 0` titles are read
+		// by nobody.
+		Ok(id)
+	}
+
+	/// The command line for a session: the binary, the flag the transcript probe
+	/// chose, the id, and — for a routine fire — the prompt.
+	///
+	/// Split out from `spawn_with_argv` so the argv is assertable without a PTY,
+	/// which is the only part of a spawn a test can check cheaply and the part
+	/// that decides whether a session resumes or starts over.
+	///
+	/// **Takes the session id rather than the whole `SpawnOpts`**, because since
+	/// ADR-0032 there is a spawn with no `SpawnOpts` behind it: a shell's argv is
+	/// its `$SHELL`, and this function is unreachable for one.
+	fn argv_for(
+		&self,
+		agent: &AgentDescriptor,
+		session_id: &str,
+		initial_prompt: Option<&str>,
+		cwd_path: &Path,
+		claude_dir: &Path,
+		tools: Option<&AgentToolsServer>,
+	) -> AppResult<Vec<String>> {
+		let bin = match &self.binary_override {
+			Some(p) => p.clone(),
+			None => {
+				let configured = self.user_binary.as_ref().and_then(|cb| cb(agent.id));
+				find_agent_binary(agent, configured.as_deref())?
+			}
+		};
+		let mut v = vec![bin.to_string_lossy().to_string()];
+		if agent.id == agents::OPENCODE {
+			if !opencode::supports_version(opencode_version(&bin).as_deref()) {
+				return Err(AppError::InvalidInput("Qursor requires OpenCode 1.x".into()));
+			}
+			let resume = opencode::is_session_id(session_id).then_some(session_id);
+			v.extend(opencode::argv(resume, initial_prompt));
+			return Ok(v);
+		}
+		// **Codex takes no id for a new thread** (ADR-0062): it mints one, and
+		// the id is adopted from the title. An id with a rollout is a resume.
+		// factorai's tools ride in as `-c mcp_servers.factorai.*` (F30 § "Spawn").
+		if agent.id == agents::CODEX {
+			// A rollout under the store means Codex knows this id: resume it.
+			let resume = codex::transcript_path(claude_dir, session_id).map(|_| session_id);
+			let tools = tools.map(|t| codex::ToolsRegistration {
+				url: format!("http://127.0.0.1:{}/mcp", t.port()),
+			});
+			v.extend(codex::argv(resume, tools.as_ref(), initial_prompt));
+			return Ok(v);
+		}
+		// **factorai's own tools, registered by name** (ADR-0029). Inline JSON
+		// rather than a file, because the config dies with the session and a file
+		// would have to survive a `SIGKILL` to be cleaned up.
+		//
+		// **Never `--strict-mcp-config`**: that would make ours the only MCP
+		// servers this session has, silently dropping every one the user
+		// configured. Merging is the entire point.
+		if let Some(tools) = tools {
+			v.push("--mcp-config".into());
+			v.push(tools.mcp_config_arg());
+		}
+		// **Claude's limits ride on the status line** (usage monitor): ours runs
+		// the factorai binary as a helper that forwards `rate_limits` and then
+		// runs the user's own `statusLine`, whose other fields are kept here.
+		let statusline_on = self.usage_statusline_enabled.as_ref().is_none_or(|cb| cb());
+		if let Some(sink) = self.usage_sink_dir.as_ref().filter(|_| statusline_on) {
+			if let Ok(exe) = std::env::current_exe() {
+				let user = statusline::user_statusline(claude_dir, cwd_path);
+				v.push("--settings".into());
+				// Written for the shell Claude Code will run it in: Git Bash, or
+				// PowerShell on a Windows machine without it — judged with the
+				// session's settings and the `PATH` the session is given.
+				let shell = statusline::status_shell_for(
+					claude_dir,
+					cwd_path,
+					cfg!(windows).then(crate::services::shell_path::child_path),
+				);
+				// The profile's directory rides along, so the reading is filed
+				// under this profile even when the session itself was given no
+				// `CLAUDE_CONFIG_DIR` (the default profile) and resolves another.
+				v.push(statusline::settings_arg(
+					&exe,
+					sink,
+					claude_dir,
+					user.as_ref().map(|u| &u.settings),
+					shell,
+				));
+			}
+		}
+		v.push(session_flag(claude_dir, cwd_path, session_id).into());
+		v.push(session_id.to_string());
+		// One positional argument, whichever flag the probe chose: the CLI takes a
+		// prompt the same way in both cases, so a routine firing into a session it
+		// has run before resumes *and* says something.
+		if let Some(prompt) = initial_prompt.filter(|p| !p.is_empty()) {
+			v.push(prompt.to_string());
+		}
+		Ok(v)
+	}
+
+	/// Internal: same as `spawn` but allows overriding argv for tests
+	/// (e.g. invoking `/bin/sh -c "..."` instead of `claude`).
+	fn spawn_with_argv(
+		&self,
+		opts: SpawnOpts,
+		argv_override: Option<Vec<String>>,
+	) -> AppResult<TerminalId> {
+		let requested = opts
+			.agent
+			.as_deref()
+			.or_else(|| opencode::is_session_id(&opts.session_id).then_some(agents::OPENCODE));
+		let agent = self.resolve_agent(requested, &opts.project_id, Some(&opts.session_id))?;
+		self.spawn_inner(
+			PtyRequest {
+				session_id: Some(opts.session_id),
+				client_key: None,
+				project_id: opts.project_id,
+				cwd: opts.cwd,
+				cols: opts.cols,
+				rows: opts.rows,
+				initial_prompt: opts.initial_prompt,
+				kind: TerminalKind::Agent,
+				agent: Some(agent),
+			},
+			argv_override,
+		)
+	}
+
+	/// The one place a PTY comes into existence, for both kinds.
+	///
+	/// A shell takes the same cwd resolution, the same `child_env` diff and the
+	/// same reader/waiter threads as an agent, and differs in three places: no
+	/// transcript probe, no IDE bridge, no agent tool server. Each of those is
+	/// now behind `req.session_id`, which a shell does not have (ADR-0032) —
+	/// so the thing that skips them is the absence of the id they need rather
+	/// than a `kind` check beside the code that would misuse it.
+	fn spawn_inner(
+		&self,
+		req: PtyRequest,
+		argv_override: Option<Vec<String>>,
+	) -> AppResult<TerminalId> {
+		// A shell has no agent of its own; its footer follows the project's
+		// Claude identity (F25), which is what the config directory below is for.
+		let env_agent = req.agent.unwrap_or_else(claude_desc);
+		// **Which identity this runs as** (F25, ADR-0036), resolved once and used
+		// for all four things a config directory decides: the transcript probe
+		// below, the IDE lockfile, the id in argv, and the environment variable
+		// the CLI itself reads. Resolved from the project, so it is the same answer
+		// for the agent and for the shell in its footer.
+		let claude_dir = self.config_dir_for(env_agent, &req.project_id, req.session_id.as_deref());
+		// **Codex refuses to start when `CODEX_HOME` does not exist** (F30 §
+		// "Spawn"), where Claude creates its directory on demand. An empty
+		// directory is what Codex expects on a first run; the login prompt it
+		// then shows is the correct outcome.
+		if env_agent.config_dir_must_exist {
+			std::fs::create_dir_all(&claude_dir).map_err(|e| {
+				AppError::Process(format!("could not create {}: {e}", claude_dir.display()))
+			})?;
+		}
+		// Resolved before argv, because the transcript probe that decides
+		// `--resume` vs `--session-id` is keyed by the folder Claude will run in.
+		//
+		// **A shell never consults the transcript**, and cannot: `resume_cwd`
+		// answers "where did Claude write this session's transcript", and a shell
+		// has no session to ask about (ADR-0032). It takes the directory the
+		// caller named — the route's checkout (F21) — and holds it for life.
+		let cwd_path = req
+			.session_id
+			.as_deref()
+			.and_then(|sid| match env_agent.id {
+				// A Codex rollout records where it ran in its first line; the
+				// Claude probe below would look for a directory Codex never writes.
+				agents::CODEX => codex::transcript_path(&claude_dir, sid)
+					.and_then(|p| codex::read_meta(&p))
+					.map(|m| PathBuf::from(m.cwd)),
+				agents::CLAUDE => self.resume_cwd(sid, &claude_dir),
+				agents::OPENCODE => {
+					opencode::session_directory(&claude_dir, sid).map(PathBuf::from)
+				}
+				_ => None,
+			})
+			.or_else(|| req.cwd.as_deref().map(PathBuf::from))
+			.or_else(dirs::home_dir)
+			.unwrap_or_else(|| PathBuf::from("/"));
+
+		// **Started before argv, because its port goes into argv.** A failure is
+		// logged and dropped, the same rule the bridge follows: a session without
+		// factorai's own tools is every session before this landed, whereas
+		// refusing to spawn `claude` because a socket would not bind trades the
+		// whole feature for one of its conveniences.
+		// Shells get neither this nor the IDE bridge below: both exist to let an
+		// *agent* reach back into factorai, and a shell has no model in it to
+		// hand a tool to. Standing them up anyway would put two more listeners
+		// and two more lockfiles behind every `ls`.
+		let agent_tools = match req.session_id.as_deref() {
+			None => None,
+			Some(session_id) => {
+				match self.start_agent_tools(session_id, &req.project_id, env_agent.id, &cwd_path) {
+					Ok(server) => Some(server),
+					Err(e) => {
+						warn!(error = %e, "agent tool server did not start; the session runs without it");
+						None
+					}
+				}
+			}
+		};
+
+		let uses_agent_binary = argv_override.is_none();
+		let argv = match (argv_override, req.session_id.as_deref()) {
+			(Some(v), _) => v,
+			(None, Some(session_id)) => self.argv_for(
+				env_agent,
+				session_id,
+				req.initial_prompt.as_deref(),
+				&cwd_path,
+				&claude_dir,
+				agent_tools.as_ref(),
+			)?,
+			// A shell's argv is its `$SHELL` and is always passed in; an agent
+			// without a session id cannot exist, since factorai mints one before
+			// any process (ADR-0008).
+			(None, None) => {
+				return Err(AppError::InvalidInput(
+					"a PTY needs either a session to run or an argv to run".into(),
+				));
+			}
+		};
+
+		let process_args: Vec<std::ffi::OsString> =
+			argv.iter().skip(1).map(std::ffi::OsString::from).collect();
+		let (program, process_args) =
+			crate::services::agent_cli::launch_command(Path::new(&argv[0]), &process_args)?;
+		let mut cmd = CommandBuilder::new(program);
+		for arg in process_args {
+			cmd.arg(arg);
+		}
+		// `CommandBuilder::cwd` does NOT fail on a directory that isn't there —
+		// the child simply starts somewhere else, which for us was $HOME. That is
+		// silent misfiling: "new session" on a project whose folder has since been
+		// deleted would create the session under the $HOME project instead, and
+		// the click and the result would disagree. Refuse instead; the renderer
+		// prints the error in the terminal pane.
+		if !cwd_path.is_dir() {
+			return Err(AppError::NotFound(format!(
+				"working directory {} does not exist",
+				cwd_path.display()
+			)));
+		}
+		cmd.cwd(&cwd_path);
+		// `CommandBuilder::new` already seeded the child with our environment, so
+		// HOME / SSH_AUTH_SOCK / LANG and the rest are present, and this is a
+		// diff over that rather than a hand-built environment. Two things about
+		// ours are wrong for a session: `PATH` is a GUI process's, with no
+		// Homebrew and no version-manager shims in it, and under an AppImage the
+		// runtime's private directories are in front of everything. Both are
+		// fixed here, in the one place a child is spawned — see
+		// `services::child_env`.
+		crate::services::child_env::changes_for_current_env().apply_to(&mut cmd);
+		// xterm.js renders best as xterm-256color.
+		cmd.env("TERM", "xterm-256color");
+
+		// **Which Claude identity this session is** (F25, ADR-0036).
+		// `CLAUDE_CONFIG_DIR` is the CLI's own isolation boundary: credentials,
+		// `settings.json`, `projects/`, `ide/`, hooks and MCP config all come from
+		// under it. So switching profile is this one variable on one child, and no
+		// token ever passes through factorai.
+		//
+		// **Setting it to the ambient directory is not the same as leaving it
+		// unset**, which is why this is a branch and not one line. With the
+		// variable absent the CLI reads its config from `$HOME/.claude.json` — a
+		// file *beside* `~/.claude`, not inside it. Set the variable, even to
+		// `~/.claude` itself, and the CLI reads `<dir>/.claude.json` instead,
+		// finds nothing, and asks the user to log in again. Found on a real
+		// machine: every session under the default profile demanded a fresh login
+		// while the account was sitting in `$HOME/.claude.json` untouched.
+		//
+		// So the default profile is spelled **no variable at all**, and
+		// `env_remove` rather than "don't call `env`": what we inherited is not
+		// necessarily empty, and a `CLAUDE_CONFIG_DIR` leaking in from whatever
+		// launched factorai would silently hand this session a foreign identity.
+		//
+		// **The shell in the footer follows the same rule**, which is a deliberate
+		// departure from the `CLAUDE_CODE_SSE_PORT` treatment directly below. That
+		// one is withheld so a `claude` started by hand is not silently bound to a
+		// bridge; this one is given so a `claude` started by hand in a project's
+		// own shell is the same account as the project's sessions.
+		//
+		// **The variable is the agent's** (F30): `CLAUDE_CONFIG_DIR` for Claude
+		// and the shell, `CODEX_HOME` for Codex, compared against that agent's
+		// own ambient directory.
+		if env_agent.id == agents::OPENCODE {
+			if claude_dir != self.opencode_dir {
+				cmd.env(env_agent.config_dir_env, &claude_dir);
+				cmd.env("OPENCODE_CONFIG_DIR", &claude_dir);
+			}
+		} else if claude_dir == self.ambient_dir_for(env_agent) {
+			cmd.env_remove(env_agent.config_dir_env);
+		} else {
+			cmd.env(env_agent.config_dir_env, &claude_dir);
+		}
+
+		// **The IDE bridge (F20), and it must never be able to break a session.**
+		// A failure here is logged and dropped: a session with no editor attached
+		// is exactly what every session was until this landed, whereas refusing to
+		// spawn `claude` because a socket would not bind would trade the whole
+		// feature for one of its conveniences.
+		//
+		// The port goes into the child's environment, which is also what makes the
+		// CLI *look*: `CLAUDE_CODE_SSE_PORT` being set is by itself enough to turn
+		// its auto-connect on, and it pins which lockfile is chosen when a VS Code
+		// is open on the same machine — the CLI otherwise connects only when
+		// exactly one candidate matches.
+		let ide = match req.session_id.as_deref() {
+			// See the note on `agent_tools` above: no model, no bridge — and a
+			// bridge is a *session's*, so there is not even an id to advertise one
+			// under. It also keeps `CLAUDE_CODE_SSE_PORT` out of the shell's
+			// environment, so a `claude` the user starts *by hand* in that shell
+			// is not silently bound to the project it was typed in.
+			None => IdeSlot::None,
+			// Claude's protocol, not an industry one (ADR-0017, ADR-0060): a Codex
+			// session gets no lockfile and no `CLAUDE_CODE_SSE_PORT`.
+			Some(_) if req.agent.map(|a| a.id) != Some(agents::CLAUDE) => IdeSlot::None,
+			Some(session_id) => match self.start_bridge(session_id, &cwd_path, &claude_dir) {
+				Ok(server) => {
+					cmd.env("CLAUDE_CODE_SSE_PORT", server.port().to_string());
+					IdeSlot::Running(server)
+				}
+				Err(e) => {
+					warn!(error = %e, "ide bridge did not start; the session runs without one");
+					IdeSlot::Failed(e.to_string())
+				}
+			},
+		};
+		// **The tool server's token, by environment for Codex** (F30 § "Spawn"):
+		// Codex reads `bearer_token_env_var` by name, so the token never sits in
+		// argv where `ps` would show it. Claude takes it inside `--mcp-config`.
+		match (&agent_tools, env_agent.id) {
+			(Some(tools), agents::CODEX) => {
+				cmd.env(codex::TOOLS_TOKEN_ENV, tools.token());
+			}
+			_ => {
+				cmd.env_remove(codex::TOOLS_TOKEN_ENV);
+			}
+		}
+
+		let mut opencode_signal = None;
+		cmd.env_remove(opencode::TOOLS_TOKEN_ENV);
+		cmd.env_remove(opencode::SESSION_SIGNAL_ENV);
+		if env_agent.id == agents::OPENCODE {
+			if let Some(dir) = self.opencode_signal_dir.as_deref().filter(|_| {
+				uses_agent_binary
+					&& req.session_id.as_deref().is_some_and(|id| !opencode::is_session_id(id))
+			}) {
+				match opencode::SessionSignal::create(dir) {
+					Ok(signal) => {
+						cmd.env(opencode::SESSION_SIGNAL_ENV, signal.path());
+						opencode_signal = Some(signal);
+					}
+					Err(e) => warn!(error = %e, "could not track this OpenCode session"),
+				}
+			}
+			let inherited = std::env::var(opencode::CONFIG_CONTENT_ENV).ok();
+			let config = opencode::launch_config(
+				inherited.as_deref(),
+				agent_tools.as_ref().map(AgentToolsServer::port),
+				opencode_signal.as_ref().map(|signal| signal.plugin.as_str()),
+			)?;
+			cmd.env(opencode::CONFIG_CONTENT_ENV, config);
+			if let Some(tools) = &agent_tools {
+				cmd.env(opencode::TOOLS_TOKEN_ENV, tools.token());
+			}
+		}
+
+		// **Withheld means absent, not inherited.** factorai itself may be
+		// running inside a Claude session — a developer's, a routine's — whose
+		// `CLAUDE_CODE_SSE_PORT` is in our environment; a shell or a Codex
+		// child must not pick that bridge up by accident any more than by design.
+		if !matches!(ide, IdeSlot::Running(_)) {
+			cmd.env_remove("CLAUDE_CODE_SSE_PORT");
+		}
+
+		let pty_system = native_pty_system();
+		let pair = pty_system
+			.openpty(PtySize {
+				cols: req.cols.max(20),
+				rows: req.rows.max(5),
+				pixel_width: 0,
+				pixel_height: 0,
+			})
+			.map_err(|e| AppError::Process(format!("openpty: {e}")))?;
+		let spawned =
+			pair.slave.spawn_command(cmd).map_err(|e| AppError::Process(format!("spawn: {e}")))?;
+		// Only the Windows job-object path below waits on the child here.
+		#[cfg(windows)]
+		let mut child = spawned;
+		#[cfg(not(windows))]
+		let child = spawned;
+		// The cleanup below needs a killer before `attach` clones the one it keeps.
+		#[cfg(windows)]
+		let killer = child.clone_killer();
+		#[cfg(windows)]
+		let process_job = {
+			let Some(root_pid) = child.process_id() else {
+				let mut killer = killer;
+				let _ = killer.kill();
+				let _ = child.wait();
+				return Err(AppError::Process("ConPTY did not report its process id".into()));
+			};
+			let Some(process_handle) = child.as_raw_handle() else {
+				let mut killer = killer;
+				let _ = killer.kill();
+				let _ = child.wait();
+				return Err(AppError::Process("ConPTY did not expose its process handle".into()));
+			};
+			match WinProcessJob::attach(process_handle, root_pid) {
+				Ok(job) => job,
+				Err(error) => {
+					if let Err(kill_error) = kill_process_tree(root_pid) {
+						warn!(pid = root_pid, error = %kill_error, "taskkill could not clean up a process tree after Job Object attach failed");
+					}
+					let mut killer = killer;
+					let _ = killer.kill();
+					let _ = child.wait();
+					return Err(AppError::Process(format!(
+						"could not secure ConPTY process tree: {error}"
+					)));
+				}
+			}
+		};
+		drop(pair.slave); // close slave end in the parent so EOF works
+		info!(binary = %argv[0], cwd = ?cwd_path, "spawning terminal");
+		self.attach(Attach {
+			opencode_signal,
+			req,
+			master: pair.master,
+			child,
+			#[cfg(windows)]
+			process_job: Some(process_job),
+			store_dir: claude_dir,
+			cwd: cwd_path,
+			ide,
+			agent_tools,
+		})
+	}
+
+	/// Register a live PTY and start its writer, reader and waiter threads.
+	///
+	/// The half of a spawn that does not care where the PTY came from: a local
+	/// process from [`Self::spawn_inner`], or a remote shell on an SSH channel
+	/// (F45), which arrives as the same `MasterPty` / `Child` pair.
+	fn attach(&self, a: Attach) -> AppResult<TerminalId> {
+		let Attach {
+			opencode_signal,
+			req,
+			master,
+			child,
+			#[cfg(windows)]
+			process_job,
+			store_dir,
+			cwd: cwd_path,
+			ide,
+			agent_tools,
+		} = a;
+		let kind = req.kind;
+		let killer = child.clone_killer();
+		let mut pty_writer =
+			master.take_writer().map_err(|e| AppError::Process(format!("take_writer: {e}")))?;
+		let reader = master
+			.try_clone_reader()
+			.map_err(|e| AppError::Process(format!("clone_reader: {e}")))?;
+
+		let id = Uuid::new_v4().to_string();
+		info!(%id, cwd = ?cwd_path, "spawned terminal");
+
+		// Ends when the handle (the only sender) is dropped, or when a write
+		// fails because the child is gone and the PTY closed.
+		let (writer, input) = std::sync::mpsc::channel::<Vec<u8>>();
+		std::thread::Builder::new()
+			.name(format!("term-writer-{id}"))
+			.spawn(move || {
+				for data in input {
+					if let Err(e) = pty_writer.write_all(&data).and_then(|()| pty_writer.flush()) {
+						debug!(error = %e, "terminal writer stopped");
+						break;
+					}
+				}
+			})
+			.map_err(|e| AppError::Process(format!("spawn writer thread: {e}")))?;
+
+		let handle = Arc::new(TerminalHandle {
+			session_id: req.session_id.clone(),
+			project_id: req.project_id.clone(),
+			kind,
+			client_key: req.client_key.clone(),
+			agent: req.agent,
+			opencode_signal,
+			adopted: Mutex::new(None),
+			thread_prefix: Mutex::new(None),
+			store_dir,
+			last_probe: Mutex::new(None),
+			master: Mutex::new(master),
+			writer,
+			killer: Mutex::new(killer),
+			#[cfg(windows)]
+			process_job,
+			// `Working` until the first title says otherwise, which takes about
+			// 300ms. A spawning session genuinely is doing something — resolving
+			// MCP servers, replaying a transcript — and this is also what the
+			// dot did before F10, so a launch looks no different than it used to.
+			//
+			// A shell is never anything else: it has no status, and
+			// `working_count` skips it by kind rather than by value, so this
+			// records only that the process exists.
+			//
+			// **An agent with no status source starts `Unknown`** (F30,
+			// ADR-0060): until roadmap 38 slice 3 reads Codex's title, nothing
+			// will ever say otherwise, and a dot that says working because it
+			// defaulted there is worse than no dot.
+			status: Mutex::new(match req.agent {
+				Some(a) if a.id != agents::CLAUDE => TerminalStatus::Unknown,
+				_ => TerminalStatus::Working,
+			}),
+			topic: Mutex::new(None),
+			killed: AtomicBool::new(false),
+			last_activity: AtomicI64::new(now_ms()),
+			cwd: cwd_path.clone(),
+			ide,
+			agent_tools,
+			capture: (kind == TerminalKind::Ssh)
+				.then(|| Arc::new(agent_use::CaptureCell::new(req.cols, req.rows))),
+			last_human_input: AtomicI64::new(0),
+			last_human_interrupt: AtomicI64::new(0),
+			human_line_dirty: AtomicBool::new(false),
+			link: Mutex::new(None),
+			agent_running: AtomicBool::new(false),
+		});
+
+		self.terminals.insert(id.clone(), handle.clone());
+
+		// **A prompted Claude session announces `Working` at spawn** (F32). The
+		// handle is seeded `Working` silently, and `set_status` only emits on
+		// change, so a session that never prints the idle `✳` at boot would make
+		// the turn's end its first event — which the notifier, by rule, never
+		// alerts on. Emitted before the reader starts, so nothing can precede it.
+		if seeds_working(kind, req.agent, req.initial_prompt.as_deref()) {
+			(self.on_status)(TerminalStatusEvent {
+				id: id.clone(),
+				status: TerminalStatus::Working,
+				last_activity: handle.last_activity.load(Ordering::Relaxed),
+			});
+		}
+
+		// A bridge that never bound is announced immediately: every `openFile`
+		// for this session will silently do nothing, and the header is the only
+		// place that can say so. A healthy one announces nothing — there is no
+		// news in "it worked".
+		//
+		// A shell has no bridge and no session to report one for, so there is
+		// nothing here to announce — `handle.ide.error()` is `None` for one
+		// (ADR-0032).
+		if let (Some(session_id), Some(reason)) = (req.session_id.clone(), handle.ide.error()) {
+			(self.on_ide_status)(IdeStatusEvent {
+				session_id,
+				connected: false,
+				error: Some(reason),
+			});
+		}
+
+		// Reader thread: pump PTY bytes → on_data event, and derive status from
+		// the OSC 0 titles in that same stream (F10).
+		spawn_reader(
+			id.clone(),
+			reader,
+			handle.clone(),
+			self.on_data.clone(),
+			self.on_status.clone(),
+			self.on_adopted.clone(),
+			self.ui.clone(),
+		);
+		// Wait thread: owns the child and blocks on `wait()`; emits on_exit
+		// when it terminates. Owning (not sharing) the child is what keeps
+		// `kill()` from blocking — see `TerminalHandle::killer`.
+		spawn_waiter(
+			id.clone(),
+			child,
+			handle.clone(),
+			self.on_status.clone(),
+			self.on_exit.clone(),
+			(self.terminals.clone(), self.delegations.clone()),
+		);
+
+		Ok(id)
+	}
+
+	/// Register a remote shell (F45) as a terminal.
+	///
+	/// `server_id` stands where a project id would, so `list` can hand a pane
+	/// back to its server after a renderer reload. `label` is what `list`
+	/// reports as the cwd: the remote folder, which is not a local path.
+	pub fn attach_ssh(
+		&self,
+		server_id: &str,
+		client_key: String,
+		label: &str,
+		master: Box<dyn MasterPty + Send>,
+		child: Box<dyn Child + Send + Sync>,
+	) -> AppResult<TerminalId> {
+		let size = master.get_size().map_err(|e| AppError::Process(e.to_string()))?;
+		self.attach(Attach {
+			opencode_signal: None,
+			req: PtyRequest {
+				session_id: None,
+				client_key: Some(client_key),
+				project_id: server_id.to_string(),
+				cwd: None,
+				cols: size.cols,
+				rows: size.rows,
+				initial_prompt: None,
+				kind: TerminalKind::Ssh,
+				agent: None,
+			},
+			master,
+			child,
+			#[cfg(windows)]
+			process_job: None,
+			store_dir: self.claude_dir.clone(),
+			cwd: PathBuf::from(label),
+			ide: IdeSlot::None,
+			agent_tools: None,
+		})
+	}
+
+	/// Record that an SSH tab lives in a tmux session (F49), so an agent asks
+	/// tmux whether its pane is at rest instead of reading tmux's own screen.
+	pub fn set_tmux(&self, terminal_id: &str, session: String) {
+		self.tmux.insert(terminal_id.to_string(), session);
+	}
+
+	/// Whether any SSH tab of `server_id` is still open.
+	pub fn has_ssh_for(&self, server_id: &str) -> bool {
+		self.terminals
+			.iter()
+			.any(|e| e.value().kind == TerminalKind::Ssh && e.value().project_id == server_id)
+	}
+
+	/// Kill every SSH tab of one server: it was deleted or disconnected.
+	pub fn kill_ssh_for(&self, server_id: &str) {
+		let ids: Vec<TerminalId> = self
+			.terminals
+			.iter()
+			.filter(|e| e.value().kind == TerminalKind::Ssh && e.value().project_id == server_id)
+			.map(|e| e.key().clone())
+			.collect();
+		for id in &ids {
+			let _ = self.kill(id);
+		}
+	}
+
+	/// A server tab on the system `ssh` client (F45, ADR-0105): a local process
+	/// in a PTY, for the servers whose config only OpenSSH understands.
+	pub fn spawn_ssh_command(
+		&self,
+		server_id: &str,
+		client_key: String,
+		argv: Vec<String>,
+		cols: u16,
+		rows: u16,
+	) -> AppResult<TerminalId> {
+		self.spawn_inner(
+			PtyRequest {
+				session_id: None,
+				client_key: Some(client_key),
+				project_id: server_id.to_string(),
+				cwd: None,
+				cols,
+				rows,
+				initial_prompt: None,
+				kind: TerminalKind::Ssh,
+				agent: None,
+			},
+			Some(argv),
+		)
+	}
+
+	pub fn write(&self, id: &str, data: &[u8]) -> AppResult<()> {
+		let handle =
+			self.terminals.get(id).ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+		handle
+			.writer
+			.send(data.to_vec())
+			.map_err(|_| AppError::Io(format!("terminal {id} no longer accepts input")))?;
+		handle.last_activity.store(now_ms(), Ordering::Relaxed);
+		// `write` is the human's path; an agent writes through its own (F46).
+		handle.last_human_input.store(now_ms(), Ordering::Relaxed);
+		if data.contains(&0x03) {
+			handle.last_human_interrupt.store(now_ms(), Ordering::Relaxed);
+		}
+		// Enter, Ctrl+C or Ctrl+U leaves the prompt clean; anything printable
+		// after them leaves a half-typed line an agent must not extend.
+		let last_clear = data.iter().rposition(|b| matches!(b, b'\r' | b'\n' | 0x03 | 0x15));
+		let typed_after =
+			data[last_clear.map_or(0, |i| i + 1)..].iter().any(|b| *b >= 0x20 && *b != 0x7f);
+		if last_clear.is_some() || typed_after {
+			handle.human_line_dirty.store(typed_after, Ordering::Relaxed);
+		}
+		Ok(())
+	}
+
+	pub fn resize(&self, id: &str, cols: u16, rows: u16) -> AppResult<()> {
+		let handle =
+			self.terminals.get(id).ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+		handle
+			.master
+			.lock()
+			.resize(PtySize {
+				cols: cols.max(20),
+				rows: rows.max(5),
+				pixel_width: 0,
+				pixel_height: 0,
+			})
+			.map_err(|e| AppError::Process(format!("resize: {e}")))?;
+		if let Some(cap) = &handle.capture {
+			cap.resize(cols.max(20), rows.max(5));
+		}
+		Ok(())
+	}
+
+	pub fn kill(&self, id: &str) -> AppResult<()> {
+		let handle = self
+			.terminals
+			.get(id)
+			.map(|entry| entry.value().clone())
+			.ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
+		let children = handle
+			.session_id
+			.as_deref()
+			.map(|s| self.delegations.children_of(s))
+			.unwrap_or_default();
+		if children.is_empty() {
+			signal(&handle);
+			return Ok(());
+		}
+		// **Children first, then the parent** (ADR-0126): no delegate outlives the
+		// session it reports to. Off the caller's thread, which may be the main one,
+		// because the parent waits for its children to be gone.
+		let terminals = self.terminals.clone();
+		std::thread::spawn(move || {
+			for child in &children {
+				signal_session(&terminals, child);
+			}
+			let deadline = Instant::now() + Duration::from_secs(3);
+			while Instant::now() < deadline
+				&& terminals.iter().any(|entry| {
+					let h = entry.value();
+					h.session_id.as_ref().is_some_and(|s| children.contains(s))
+						&& *h.status.lock() != TerminalStatus::Stopped
+				}) {
+				std::thread::sleep(Duration::from_millis(50));
+			}
+			signal(&handle);
+		});
+		Ok(())
+	}
+
+	/// Kill every shell in one project's footer (F23, ADR-0032).
+	///
+	/// **Called by `Remove project` and by nothing about a session.** A shell's
+	/// lifetime is the project's: it survives closing, deleting and switching
+	/// away from every session of that project, because none of those is a
+	/// statement about the `cargo test` running underneath them.
+	///
+	/// Agents are left alone. Closing a session kills its agent through
+	/// `terminal_kill` on the id the renderer already holds, and doing it twice
+	/// from here would race that path for no gain — which is why this filters on
+	/// `kind` and not on the project id alone.
+	pub fn kill_shells_for_project(&self, project_id: &str) {
+		let ids: Vec<TerminalId> = self
+			.terminals
+			.iter()
+			.filter(|e| {
+				let h = e.value();
+				h.kind == TerminalKind::Shell && h.project_id == project_id
+			})
+			.map(|e| e.key().clone())
+			.collect();
+		debug!(count = ids.len(), project_id, "kill shells for project");
+		for id in &ids {
+			let _ = self.kill(id);
+		}
+	}
+
+	/// Kill every shell whose own working directory has gone (F23, ADR-0032).
+	///
+	/// **The question is asked of the pane's cwd, never of the project's
+	/// `missing` flag.** That flag is one `is_dir()` per indexer scan and it
+	/// flips back when the folder returns — far too cheap a signal to hang an
+	/// irreversible kill on, since an unmounted volume or a sleeping external
+	/// drive would take a running build with it. A pane whose *own* directory is
+	/// gone has nowhere left to work, and a pane in a linked checkout that is
+	/// still on disk keeps running even when the project root beside it vanished.
+	///
+	/// Agents are not reaped here. A session's PTY dying takes its transcript's
+	/// row with it, which is the indexer's business and not this pass's.
+	pub fn reap_shells_with_missing_cwd(&self) {
+		let ids: Vec<TerminalId> = self
+			.terminals
+			.iter()
+			.filter(|e| {
+				let h = e.value();
+				h.kind == TerminalKind::Shell && !h.cwd.is_dir()
+			})
+			.map(|e| e.key().clone())
+			.collect();
+		if !ids.is_empty() {
+			debug!(count = ids.len(), "reap shells whose cwd is gone");
+		}
+		for id in &ids {
+			let _ = self.kill(id);
+		}
+	}
+
+	/// Kill every live terminal. Unix uses the child killer and a 500ms grace
+	/// period; Windows terminates each ConPTY's Job Object, which covers its
+	/// descendants. Dropping a Windows job is also a kill-on-close backstop.
+	pub fn kill_all(&self) {
+		let ids: Vec<TerminalId> = self.terminals.iter().map(|e| e.key().clone()).collect();
+		debug!(count = ids.len(), "kill_all");
+		// Nothing to wait the grace out for: every quit comes through here.
+		if ids.is_empty() {
+			return;
+		}
+		// Delegates before everything else, so none is left without its parent
+		// even for the half-second below (ADR-0126).
+		// Collected before asking the store: never hold the map while taking its lock.
+		let handles: Vec<_> = self.terminals.iter().map(|e| e.value().clone()).collect();
+		let (delegates, others): (Vec<_>, Vec<_>) = handles
+			.into_iter()
+			.partition(|h| h.session_id.as_deref().is_some_and(|s| self.delegations.is_child(s)));
+		for handle in delegates.iter().chain(&others) {
+			signal(handle);
+		}
+		std::thread::sleep(Duration::from_millis(500));
+		for id in &ids {
+			if let Some(entry) = self.terminals.remove(id) {
+				let (_, handle) = entry;
+				handle.kill_process_tree();
+			}
+		}
+	}
+}
+
+impl Drop for TerminalManager {
+	fn drop(&mut self) {
+		// Final backstop — only fires if this is the last Arc reference to
+		// the inner DashMap. In production the manager lives in tauri::State
+		// for the app lifetime, so this only meaningfully runs at process
+		// teardown.
+		if Arc::strong_count(&self.terminals) == 1 && !self.terminals.is_empty() {
+			warn!("TerminalManager dropped with live PTYs — force-killing");
+			let ids: Vec<TerminalId> = self.terminals.iter().map(|e| e.key().clone()).collect();
+			for id in &ids {
+				if let Some((_, handle)) = self.terminals.remove(id) {
+					handle.kill_process_tree();
+				}
+			}
+		}
+	}
+}
+
+/// Flush window for batched PTY output. 16ms ≈ one display frame; the
+/// renderer can't usefully consume bytes faster than that anyway, and
+/// coalescing 100s of small reads into one event has a major effect on
+/// IPC overhead when `claude --resume` is replaying a long history.
+const FLUSH_WINDOW: Duration = Duration::from_millis(16);
+/// Force-flush threshold — if the buffer crosses this size before the
+/// window fires, emit immediately so the renderer doesn't fall behind.
+const FLUSH_BYTES: usize = 32 * 1024;
+
+/// Flush window for a session the human is **not** looking at (PERF-14,
+/// `specs/10-performance.md`).
+///
+/// Ten events a second instead of sixty. The bytes are the same bytes and they
+/// arrive just as soon; what changes is how many pieces they cross the bridge
+/// in, and each piece costs a JSON payload, a script evaluation on the main
+/// thread and a listener call per pooled terminal. With ten sessions streaming
+/// at once that was six hundred wake-ups a second for nine terminals nobody
+/// could see.
+///
+/// **Status is unaffected**, which is the property that makes this safe: the
+/// title scanner runs in the reader thread, so a background session's dot still
+/// changes the moment its title does.
+const BACKGROUND_FLUSH_WINDOW: Duration = Duration::from_millis(100);
+
+/// How long this PTY's flusher should wait before its next drain: the short
+/// window while at least one client has it on screen, the long one otherwise
+/// (docs/superpowers/specs/2026-11-26-local-core-design.md §4).
+fn flush_window(ui: &UiState, terminal_id: &str) -> Duration {
+	if ui.is_visible(terminal_id) {
+		FLUSH_WINDOW
+	} else {
+		BACKGROUND_FLUSH_WINDOW
+	}
+}
+
+fn spawn_reader(
+	id: TerminalId,
+	mut reader: Box<dyn Read + Send>,
+	handle: Arc<TerminalHandle>,
+	on_data: DataCb,
+	on_status: StatusCb,
+	on_adopted: AdoptedCb,
+	ui: Arc<UiState>,
+) {
+	let buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::with_capacity(FLUSH_BYTES)));
+	let eof = Arc::new(AtomicBool::new(false));
+
+	// Reader thread: blocking PTY reads → push into shared buffer.
+	let buf_r = buffer.clone();
+	let eof_r = eof.clone();
+	let handle_r = handle.clone();
+	// The flusher asks this which session it is serving, per tick.
+	let handle_f = handle.clone();
+	let id_r = id.clone();
+	let on_reader_adopted = on_adopted.clone();
+	std::thread::Builder::new()
+		.name(format!("term-reader-{id}"))
+		.spawn(move || {
+			let mut tmp = [0u8; 8192];
+			// Scanning here rather than in the flusher because this is where
+			// bytes first exist, and because the scanner has to be stateful
+			// anyway: a read boundary can fall inside an escape sequence.
+			let mut titles = TitleScanner::default();
+			loop {
+				match reader.read(&mut tmp) {
+					Ok(0) => break,
+					Ok(n) => {
+						handle_r.last_activity.store(now_ms(), Ordering::Relaxed);
+						// One stream, one reading. For an agent the `OSC 0` title
+						// is Claude's state (F10, ADR-0015). A shell's is read by
+						// nobody: its chip is labelled with the shell's name (F23
+						// as amended by F24), and classifying its titles would
+						// report the user's prompt as Claude working.
+						//
+						// Two dialects (F30): Claude's glyph, and Codex's words —
+						// which also carry the thread id the session is adopted
+						// from (ADR-0062).
+						match handle_r.agent.map(|a| a.id) {
+							Some(agents::CODEX) => {
+								if let Some(payload) = titles.push_payload(&tmp[..n]) {
+									if let Some(next) = codex::classify_title(&payload) {
+										set_status(&id_r, &handle_r, next, &on_status);
+									}
+									try_adopt(&id_r, &handle_r, &payload, &on_reader_adopted);
+								}
+							}
+							Some(agents::CLAUDE) if handle_r.kind == TerminalKind::Agent => {
+								if let Some((next, topic)) = titles.push_title(&tmp[..n]) {
+									// Before the status, so a notifier woken by this status reads
+									// this title's topic, not the previous one (F32).
+									*handle_r.topic.lock() = topic;
+									set_status(&id_r, &handle_r, next, &on_status);
+								}
+							}
+							_ => {}
+						}
+						if let Some(cap) = &handle_r.capture {
+							cap.feed(&tmp[..n]);
+						}
+						buf_r.lock().extend_from_slice(&tmp[..n]);
+					}
+					Err(e) => {
+						warn!(id = %id_r, error = %e, "terminal read error");
+						break;
+					}
+				}
+			}
+			eof_r.store(true, Ordering::Release);
+		})
+		.expect("spawn term-reader thread");
+
+	// Flusher thread: ticks every FLUSH_WINDOW, emits coalesced chunks.
+	std::thread::Builder::new()
+		.name(format!("term-flush-{id}"))
+		.spawn(move || {
+			let mut adoption_checked = false;
+			loop {
+				// Re-read per tick rather than per spawn: which terminals are on
+				// screen changes while the PTY runs, and a terminal that was in the
+				// background when it started is the common case for the one you
+				// switch to (PERF-14).
+				std::thread::sleep(flush_window(&ui, &id));
+				if let Some(signal) =
+					handle_f.opencode_signal.as_ref().filter(|_| !adoption_checked)
+				{
+					let mut last = handle_f.last_probe.lock();
+					if handle_f.adopted.lock().is_none()
+						&& (eof.load(Ordering::Acquire)
+							|| last.is_none_or(|t| t.elapsed() >= ADOPT_PROBE_EVERY))
+					{
+						*last = Some(Instant::now());
+						drop(last);
+						// The store is opened once, for the first id the plugin reports: a
+						// folder that never matches (symlink, drive-letter case) must not
+						// cost a SQLite open every tick for the whole session.
+						if let Some(session) = signal.read() {
+							adoption_checked = true;
+							if opencode::session_directory(&handle_f.store_dir, &session)
+								.is_some_and(|path| {
+									agents::path_identity::same(
+										&path,
+										&handle_f.cwd.to_string_lossy(),
+									)
+								}) {
+								adopt_session(&id, &handle_f, session, &on_adopted);
+							}
+						}
+					}
+				}
+				let chunk = {
+					let mut buf = buffer.lock();
+					if buf.is_empty() {
+						if eof.load(Ordering::Acquire) {
+							break;
+						}
+						continue;
+					}
+					std::mem::take(&mut *buf)
+				};
+				emit_data(&id, &chunk, &on_data);
+			}
+			// One last drain after the reader signaled EOF.
+			let chunk = std::mem::take(&mut *buffer.lock());
+			if !chunk.is_empty() {
+				emit_data(&id, &chunk, &on_data);
+			}
+		})
+		.expect("spawn term-flush thread");
+}
+
+/// Record a status the title implied, and emit only on a real change.
+///
+/// Only on a change because the title reasserts itself constantly — the spinner
+/// alone is a frame every 960ms — and an event per frame would be a stream of
+/// IPC saying nothing, plus a React render each time.
+///
+/// **`Stopped` is terminal.** The waiter sets it when the process exits, and a
+/// final chunk of buffered output can still be read after that; without this
+/// guard a trailing title would resurrect a dead session to `WaitingInput` and
+/// leave a dot on a terminal that no longer exists.
+/// How often the store is walked for a Codex session that has a thread prefix
+/// but no rollout yet: the file appears at the first turn, and the spinner
+/// rewrites the title ten times a second meanwhile.
+const ADOPT_PROBE_EVERY: Duration = Duration::from_millis(500);
+
+/// Whether a session has a transcript on disk — i.e. has been messaged.
+///
+/// The folder the click came from first, because it is one `stat` and it is
+/// where an ordinary session's transcript is; then every directory of the
+/// store, which is what finds a transcript that moved. No recorded
+/// location in between: each is a guess at where the file is, and the store
+/// answers the question itself.
+fn is_messaged(agent: &AgentDescriptor, session_id: &str, folder: &Path, store_dir: &Path) -> bool {
+	// A session Codex named has a rollout under its store (ADR-0062); one it
+	// has not named yet has nothing on disk and is by definition unmessaged.
+	if agent.id_source == IdSource::Agent {
+		return codex::transcript_path(store_dir, session_id).is_some();
+	}
+	claude::transcript_path(store_dir, folder, session_id).exists()
+		|| claude::transcript_exists_anywhere(store_dir, session_id)
+}
+
+/// Adopt the agent's id for a session that started under ours (ADR-0062).
+///
+/// The Codex title carries a **prefix** of the thread id (the TUI truncates the
+/// item); the rollout named by that prefix, in this session's folder, holds the
+/// whole id in its filename. Until the first turn there is no file, so this is
+/// a probe on every title change, throttled, and a no-op once it has hit.
+fn try_adopt(id: &TerminalId, handle: &Arc<TerminalHandle>, payload: &str, on_adopted: &AdoptedCb) {
+	if handle.adopted.lock().is_some() {
+		return;
+	}
+	let Some(provisional) = handle.session_id.as_deref() else { return };
+	if let Some(prefix) = codex::thread_prefix_from_title(payload) {
+		*handle.thread_prefix.lock() = Some(prefix);
+	}
+	let Some(prefix) = handle.thread_prefix.lock().clone() else { return };
+	// A resume already runs under the agent's id: the title's prefix is a
+	// check, not an adoption.
+	if provisional.to_ascii_lowercase().starts_with(&prefix) {
+		return;
+	}
+	{
+		let mut last = handle.last_probe.lock();
+		if last.is_some_and(|t| t.elapsed() < ADOPT_PROBE_EVERY) {
+			return;
+		}
+		*last = Some(Instant::now());
+	}
+	let Some((adopted, _)) = codex::find_by_prefix(&handle.store_dir, &prefix, &handle.cwd) else {
+		return;
+	};
+	adopt_session(id, handle, adopted, on_adopted);
+}
+
+fn adopt_session(
+	id: &TerminalId,
+	handle: &TerminalHandle,
+	adopted: String,
+	on_adopted: &AdoptedCb,
+) {
+	let Some(provisional) = handle.session_id.as_deref() else { return };
+
+	*handle.adopted.lock() = Some(adopted.clone());
+	info!(%id, %provisional, %adopted, "session adopted its agent's id");
+	on_adopted(SessionAdoptedEvent {
+		id: id.clone(),
+		provisional: provisional.to_string(),
+		adopted,
+		project_id: handle.project_id.clone(),
+	});
+}
+
+/// Whether a spawn emits an initial `Working` event (F32): a Claude agent that
+/// starts with a prompt. A plain interactive spawn emits nothing, so its boot
+/// `✳` stays the notifier's silent first event.
+fn seeds_working(
+	kind: TerminalKind,
+	agent: Option<&'static AgentDescriptor>,
+	initial_prompt: Option<&str>,
+) -> bool {
+	kind == TerminalKind::Agent
+		&& agent.is_some_and(|a| a.id == agents::CLAUDE)
+		&& initial_prompt.is_some_and(|p| !p.is_empty())
+}
+
+fn set_status(
+	id: &TerminalId,
+	handle: &Arc<TerminalHandle>,
+	next: TerminalStatus,
+	on_status: &StatusCb,
+) {
+	{
+		let mut st = handle.status.lock();
+		if *st == next || *st == TerminalStatus::Stopped {
+			return;
+		}
+		*st = next;
+	}
+	let last_activity = handle.last_activity.load(Ordering::Relaxed);
+	(on_status)(TerminalStatusEvent { id: id.clone(), status: next, last_activity });
+}
+
+fn emit_data(id: &TerminalId, bytes: &[u8], on_data: &DataCb) {
+	// Split very large chunks into FLUSH_BYTES-sized pieces so a single
+	// emit doesn't pin the renderer with a multi-MB payload.
+	for piece in bytes.chunks(FLUSH_BYTES) {
+		let payload = TerminalDataEvent { id: id.clone(), bytes: piece.to_vec() };
+		(on_data)(payload);
+	}
+}
+
+fn spawn_waiter(
+	id: TerminalId,
+	mut child: Box<dyn Child + Send + Sync>,
+	handle: Arc<TerminalHandle>,
+	on_status: StatusCb,
+	on_exit: ExitCb,
+	(terminals, delegations): (Arc<DashMap<TerminalId, Arc<TerminalHandle>>>, Arc<Delegations>),
+) {
+	std::thread::Builder::new()
+		.name(format!("term-wait-{id}"))
+		.spawn(move || {
+			// This thread exclusively owns `child`; nothing else can touch it,
+			// so blocking here for the process's whole life holds no shared lock.
+			let exit_code = child.wait().ok().and_then(|s| s.exit_code().try_into().ok());
+			{
+				let mut st = handle.status.lock();
+				*st = TerminalStatus::Stopped;
+			}
+			let last_activity = handle.last_activity.load(Ordering::Relaxed);
+			(on_status)(TerminalStatusEvent {
+				id: id.clone(),
+				status: TerminalStatus::Stopped,
+				last_activity,
+			});
+			if let Some(session_id) = handle.session_id.as_deref() {
+				// No orphans (ADR-0126): a delegate cannot report to a parent that is gone.
+				for child in delegations.children_of(session_id) {
+					signal_session(&terminals, &child);
+				}
+				delegations.exited(session_id);
+			}
+			(on_exit)(TerminalExitEvent {
+				id: id.clone(),
+				code: exit_code,
+				killed: handle.killed.load(Ordering::Relaxed),
+			});
+			terminals.remove(&id);
+		})
+		.expect("spawn term-wait thread");
+}
+
+/// The flag that carries a session id into `claude`.
+///
+/// The two are mutually exclusive and both fail loudly when given the wrong
+/// kind of id: `--resume` on an unknown id finds no conversation, and
+/// `--session-id` on a known one exits with "Session ID … is already in use"
+/// (both verified against the installed CLI). The transcript on disk is the
+/// only authority on which kind an id is.
+///
+/// Probing per spawn — rather than remembering how a session started — is
+/// what makes restart correct in every case. A session created new and then
+/// messaged has a transcript, so it resumes; one abandoned before its first
+/// message has none, so it claims its id again.
+///
+/// Addressed by the **folder**, not by a project id. A project id is a uuid now
+/// and says nothing about where Claude writes; the folder is exactly what
+/// Claude encodes to name its directory, and it is the one thing we have for a
+/// project Claude has never run in — which is precisely the case that needs
+/// `--session-id`.
+///
+/// Then the whole store, as [`is_messaged`] does: ids are uuids, so the file
+/// anywhere is this session's, and a key our encoding misses (or a transcript
+/// Claude moved) must not turn a resume into "already in use".
+fn session_flag(claude_dir: &Path, folder: &Path, session_id: &str) -> &'static str {
+	if claude::transcript_path(claude_dir, folder, session_id).exists()
+		|| claude::transcript_exists_anywhere(claude_dir, session_id)
+	{
+		"--resume"
+	} else {
+		"--session-id"
+	}
+}
+
+/// The registry's Claude entry. Infallible: the registry is a constant.
+fn claude_desc() -> &'static AgentDescriptor {
+	agents::descriptor(agents::CLAUDE).expect("claude is in the registry")
+}
+
+/// The registry's Codex entry.
+fn codex_desc() -> &'static AgentDescriptor {
+	agents::descriptor(agents::CODEX).expect("codex is in the registry")
+}
+
+/// `opencode --version` once per binary: it is a process spawn on every launch otherwise.
+fn opencode_version(bin: &Path) -> Option<String> {
+	static VERSIONS: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, String>>> =
+		std::sync::LazyLock::new(Mutex::default);
+	if let Some(version) = VERSIONS.lock().get(bin) {
+		return Some(version.clone());
+	}
+	// A failed probe is not cached, so the next launch asks again.
+	let version = crate::services::agent_cli::version_for(bin)?;
+	VERSIONS.lock().insert(bin.to_path_buf(), version.clone());
+	Some(version)
+}
+
+/// Signal via the killer, not the child: the waiter thread owns the child and is
+/// parked in `wait()`. Best effort, it may already be gone. `killed` is recorded
+/// first, so the waiter cannot report the exit before it is true; the other order
+/// is a race with a fast-dying child.
+fn signal(handle: &TerminalHandle) {
+	handle.killed.store(true, Ordering::Relaxed);
+	handle.kill_process_tree();
+}
+
+/// Signal every PTY spawned under this session id.
+fn signal_session(terminals: &DashMap<TerminalId, Arc<TerminalHandle>>, session_id: &str) {
+	for entry in terminals.iter() {
+		if entry.value().session_id.as_deref() == Some(session_id) {
+			signal(entry.value());
+		}
+	}
+}
+
+fn opencode_desc() -> &'static AgentDescriptor {
+	agents::descriptor(agents::OPENCODE).expect("OpenCode is in the registry")
+}
+
+fn now_ms() -> i64 {
+	std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.map(|d| d.as_millis() as i64)
+		.unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use std::sync::{Arc, Mutex as StdMutex};
+
+	#[test]
+	fn a_terminal_no_client_shows_is_flushed_less_often() {
+		let ui = UiState::default();
+		ui.show("front");
+
+		assert_eq!(flush_window(&ui, "front"), FLUSH_WINDOW);
+		assert_eq!(flush_window(&ui, "behind"), BACKGROUND_FLUSH_WINDOW);
+		ui.hide("front");
+		assert_eq!(flush_window(&ui, "front"), BACKGROUND_FLUSH_WINDOW);
+	}
+
+	type DataLog = Arc<StdMutex<Vec<TerminalDataEvent>>>;
+	type ExitLog = Arc<StdMutex<Vec<TerminalExitEvent>>>;
+
+	/// The config directory a manager with no store has. Named because the argv
+	/// tests now have to hand `argv_for` the same directory the manager holds —
+	/// a probe against a *different* directory would answer `--session-id` for
+	/// the wrong reason and the assertion would still pass (F25).
+	const NO_STORE: &str = "/nonexistent-claude-dir";
+
+	#[test]
+	fn a_status_tap_sees_every_status_event_and_the_emit_still_happens() {
+		let emitted = Arc::new(StdMutex::new(Vec::new()));
+		let tapped = Arc::new(StdMutex::new(Vec::new()));
+		let (e2, t2) = (emitted.clone(), tapped.clone());
+		let mgr = TerminalManager::with_callbacks(
+			PathBuf::from(NO_STORE),
+			Arc::new(|_| {}),
+			Arc::new(move |e: TerminalStatusEvent| e2.lock().unwrap().push(e.status)),
+			Arc::new(|_| {}),
+			crate::test_support::handle(),
+		)
+		.with_status_tap(move |e| t2.lock().unwrap().push(e.status));
+		(mgr.on_status)(TerminalStatusEvent {
+			id: "x".into(),
+			status: TerminalStatus::WaitingInput,
+			last_activity: 0,
+		});
+		assert_eq!(*emitted.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
+		assert_eq!(*tapped.lock().unwrap(), vec![TerminalStatus::WaitingInput]);
+	}
+
+	#[test]
+	fn only_a_prompted_claude_agent_seeds_working_at_spawn() {
+		let claude = Some(claude_desc());
+		assert!(seeds_working(TerminalKind::Agent, claude, Some("Review this PR")));
+		// Plain interactive spawn: the boot title must stay the silent first event.
+		assert!(!seeds_working(TerminalKind::Agent, claude, None));
+		assert!(!seeds_working(TerminalKind::Agent, claude, Some("")));
+		assert!(!seeds_working(TerminalKind::Shell, None, Some("ls")));
+		let codex = agents::descriptor(agents::CODEX);
+		assert!(!seeds_working(TerminalKind::Agent, codex, Some("hi")));
+	}
+
+	#[derive(Default)]
+	struct RecordingSink(StdMutex<Vec<CoreEvent>>);
+
+	impl EventSink for RecordingSink {
+		fn emit(&self, event: CoreEvent) {
+			self.0.lock().unwrap().push(event);
+		}
+	}
+
+	#[test]
+	fn recording_sink_receives_terminal_data() {
+		let _spawn = crate::test_support::spawn_lock();
+		let sink = Arc::new(RecordingSink::default());
+		let mgr = TerminalManager::new(
+			sink.clone(),
+			PathBuf::from(NO_STORE),
+			Arc::new(UiState::default()),
+			crate::test_support::handle(),
+		);
+		let argv: Vec<String> = if cfg!(windows) {
+			["cmd", "/c", "echo hi"].map(String::from).to_vec()
+		} else {
+			["printf", "hi"].map(String::from).to_vec()
+		};
+		mgr.spawn_inner(
+			PtyRequest {
+				session_id: None,
+				client_key: Some("sink".into()),
+				project_id: "sink".into(),
+				cwd: None,
+				cols: 80,
+				rows: 24,
+				initial_prompt: None,
+				kind: TerminalKind::Shell,
+				agent: None,
+			},
+			Some(argv),
+		)
+		.unwrap();
+
+		let exits = |events: &[CoreEvent]| {
+			events.iter().filter(|e| matches!(e, CoreEvent::TerminalExit(_))).count()
+		};
+		let data = |events: &[CoreEvent]| -> Vec<u8> {
+			events
+				.iter()
+				.filter_map(|e| match e {
+					CoreEvent::TerminalData { bytes, .. } => Some(bytes.clone()),
+					_ => None,
+				})
+				.flatten()
+				.collect()
+		};
+		// Both, not just the exit: on ConPTY the exit can be reported before the
+		// reader has drained the last bytes.
+		let deadline = Instant::now() + Duration::from_secs(10);
+		loop {
+			let events = sink.0.lock().unwrap();
+			if exits(&events) > 0 && data(&events).windows(2).any(|w| w == b"hi") {
+				break;
+			}
+			drop(events);
+			assert!(Instant::now() < deadline, "no output and exit from the child");
+			std::thread::sleep(Duration::from_millis(20));
+		}
+		assert_eq!(exits(&sink.0.lock().unwrap()), 1);
+	}
+
+	fn make_manager() -> (TerminalManager, DataLog, ExitLog) {
+		make_manager_in(PathBuf::from(NO_STORE))
+	}
+
+	fn make_manager_in(claude_dir: PathBuf) -> (TerminalManager, DataLog, ExitLog) {
+		let data: DataLog = Arc::new(StdMutex::new(Vec::new()));
+		let exit: ExitLog = Arc::new(StdMutex::new(Vec::new()));
+		let dc = data.clone();
+		let ec = exit.clone();
+		let mgr = TerminalManager::with_callbacks(
+			claude_dir,
+			Arc::new(move |e| dc.lock().unwrap().push(e)),
+			Arc::new(|_| {}),
+			Arc::new(move |e| ec.lock().unwrap().push(e)),
+			crate::test_support::handle(),
+		);
+		(mgr, data, exit)
+	}
+
+	/// SpawnOpts for a test that overrides argv — the ids are carried into the
+	/// handle but never reach a command line.
+	fn opts(cols: u16, rows: u16) -> SpawnOpts {
+		SpawnOpts {
+			session_id: "11111111-2222-3333-4444-555555555555".into(),
+			project_id: "11111111-aaaa-4bbb-8ccc-dddddddddddd".into(),
+			cwd: None,
+			cols,
+			rows,
+			initial_prompt: None,
+			agent: None,
+		}
+	}
+
+	/// Create the transcript `session_flag` probes for, in the store directory
+	/// Claude would use for `folder`.
+	fn write_transcript(claude_dir: &Path, folder: &str, session_id: &str) {
+		let path = claude::transcript_path(claude_dir, Path::new(folder), session_id);
+		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+		std::fs::write(&path, "{}\n").unwrap();
+	}
+
+	#[cfg(unix)]
+	/// An SSH tab is a terminal like any other (F45): its bytes reach the same
+	/// data events, it sits outside the work count, and killing it hangs the
+	/// remote shell up and reports the exit.
+	#[cfg(unix)]
+	#[test]
+	fn an_ssh_tab_streams_through_the_manager_and_kill_hangs_it_up() {
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = crate::test_support::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 80, 24, None, None).await.expect("shell");
+			// The connection must outlive this block: the channel rides on it.
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 80, 24)
+		});
+		let (mgr, data, exit) = make_manager();
+		let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "~", master, child).expect("attach");
+		assert!(mgr.has_ssh_for("server-1"));
+		assert_eq!(mgr.working_count(), 0, "an SSH tab is not work in progress");
+		mgr.write(&id, b"echo SSH_$((40+2))\n").expect("write");
+		let seen = (0..100).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			let out: String = data
+				.lock()
+				.unwrap()
+				.iter()
+				.filter(|e| e.id == id)
+				.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
+				.collect();
+			out.contains("SSH_42")
+		});
+		assert!(seen, "the remote shell's output reached the data events");
+		// A foreground command running on the server when the tab is killed.
+		mgr.write(&id, b"sleep 4242\n").expect("write");
+		std::thread::sleep(Duration::from_millis(400));
+		let running = || {
+			std::process::Command::new("pgrep")
+				.args(["-f", "sleep 4242"])
+				.output()
+				.is_ok_and(|o| o.status.success())
+		};
+		assert!(running(), "the remote command started");
+		mgr.kill(&id).expect("kill");
+		let exited = (0..100).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			exit.lock().unwrap().iter().any(|e| e.id == id && e.killed)
+		});
+		assert!(exited, "killing the tab closed the channel and reported the exit");
+		assert!(!mgr.has_ssh_for("server-1"));
+		let gone = (0..60).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			!running()
+		});
+		assert!(gone, "kill-on-quit reaches the server: no orphan left behind (ADR-0005)");
+	}
+
+	/// The F46 path against a real sshd: an agent session runs commands in a
+	/// lent SSH terminal and gets real output, exit codes and the shell's
+	/// directory; the human's own `cd` is visible to it; a human keystroke holds
+	/// it back; a password prompt stops it.
+	#[cfg(unix)]
+	#[test]
+	fn an_agent_runs_commands_in_a_lent_ssh_terminal() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = crate::test_support::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			// `sh`, not the user's login shell, so the test does not depend on rc files.
+			let ch = conn.channel_open_session().await.expect("channel");
+			ch.request_pty(true, "xterm-256color", 100, 30, 0, 0, &[]).await.expect("pty");
+			ch.exec(true, "exec env PS1='$ ' sh -i").await.expect("exec");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "~", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(500));
+		let agent = mgr.session_terminals("session-A");
+		assert!(agent.run(&id, "echo hi", 10).is_err(), "not lent yet");
+
+		mgr.link_agent(&id, "session-A", LinkMode::Shared).expect("link");
+		assert!(
+			mgr.link_agent(&id, "session-B", LinkMode::Shared).is_err(),
+			"one agent per terminal"
+		);
+		let r = agent.run(&id, "cd /tmp && echo \"hello $((6*7))\"", 15).expect("run");
+		assert_eq!(r["exit_code"], 0, "{r}");
+		assert_eq!(r["output"], "hello 42", "{r}");
+		assert_eq!(r["cwd"], "/tmp", "{r}");
+		let r = agent.run(&id, "false", 15).expect("run");
+		assert_eq!(r["exit_code"], 1, "{r}");
+
+		// The human moves the shared shell; the agent sees where it is now.
+		mgr.write(&id, b"cd /\n").expect("human types");
+		assert!(agent.run(&id, "pwd", 5).is_err(), "the human just typed: the agent waits");
+		std::thread::sleep(Duration::from_millis(1700));
+		let r = agent.run(&id, "pwd", 15).expect("run");
+		assert_eq!(r["output"], "/", "{r}");
+
+		// A password prompt stops the agent, and its keys are refused there.
+		let r = agent.run(&id, "printf 'Password: '; read secret", 15).expect("run");
+		assert_eq!(r["status"], "waiting for a password", "{r}");
+		assert!(agent.send_keys(&id, &["hunter2".into()]).is_err());
+		let listed = agent.list();
+		assert!(
+			listed["terminals"][0]["state"].as_str().unwrap_or_default().contains("password"),
+			"{listed}"
+		);
+		assert!(
+			mgr.session_terminals("session-B").read(&id).is_err(),
+			"another session cannot read it"
+		);
+	}
+
+	/// The same markers through the user's real login shell (bash with
+	/// readline and its rc files), the way an SSH tab opens it.
+	#[cfg(unix)]
+	#[test]
+	fn agent_markers_work_in_a_login_shell() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = crate::test_support::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "s", LinkMode::Own).expect("link");
+		let agent = mgr.session_terminals("s");
+		let r =
+			agent.run(&id, "for i in 1 2 3; do echo line$i; done # a comment", 15).expect("run");
+		assert_eq!(r["output"], "line1\nline2\nline3", "{r}");
+		assert_eq!(r["cwd"], "/tmp", "{r}");
+		let r = agent.run(&id, "cat <<EOF\nheredoc ok\nEOF", 15).expect("run");
+		assert_eq!(r["output"], "heredoc ok", "{r}");
+	}
+
+	/// The MCP frames a session's agent sends, answered by the same tool server
+	/// it is given at spawn: `tools/list` offers the terminal tools, and a
+	/// `tools/call` of `terminal_run` reaches the real remote shell.
+	#[cfg(unix)]
+	#[test]
+	fn the_terminal_tools_answer_over_mcp() {
+		use crate::services::agent_tools::{AgentTools, Routines};
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = crate::test_support::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mgr, _data, _exit) = make_manager();
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+		let none = Arc::new(|_: &str| Ok(Vec::new()));
+		let tools = AgentTools::new(
+			Routines {
+				project_id: "p".into(),
+				project_path: "/local/p".into(),
+				list: none,
+				create: Arc::new(|_| Err(AppError::InvalidInput("no".into()))),
+				update: Arc::new(|_, _| Err(AppError::InvalidInput("no".into()))),
+			},
+			crate::services::agent_tools::Canvases {
+				root: Arc::new(|| Err(AppError::InvalidInput("no canvases".into()))),
+				linked: Arc::new(|| Ok(None)),
+			},
+			Arc::new(|_: &str| Ok(())),
+		)
+		.with_terminals(Arc::new(mgr.session_terminals("sess")));
+
+		let listed =
+			tools.handle(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).expect("reply");
+		assert!(listed.contains("\"terminal_run\""), "{listed}");
+		let call = serde_json::json!({
+			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": { "name": "terminal_run", "arguments": { "terminal": id, "command": "echo mcp-$((1+1))" } },
+		});
+		let reply = tools.handle(&call.to_string()).expect("reply");
+		let v: serde_json::Value = serde_json::from_str(&reply).expect("json");
+		let text = v["result"]["content"][0]["text"].as_str().unwrap_or_default();
+		let out: serde_json::Value = serde_json::from_str(text).expect("tool json");
+		assert_eq!(out["output"], "mcp-2", "{reply}");
+		assert_eq!(out["exit_code"], 0, "{reply}");
+		assert_ne!(v["result"]["isError"], true, "{reply}");
+	}
+
+	/// A manager with one SSH terminal on a loopback sshd, in a login shell at
+	/// `/tmp`, lent to session `sess`. The sshd guard must outlive the test.
+	#[cfg(unix)]
+	fn lent_terminal(
+		configure: impl FnOnce(&mut TerminalManager),
+	) -> (crate::services::ssh::test_sshd::Sshd, TerminalManager, TerminalId) {
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (master, child) = crate::test_support::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			let conn = ssh::connect(&t, &known, Some(fp)).await.expect("connect");
+			let ch = ssh::open_shell(&conn, 100, 30, Some("/tmp"), None).await.expect("shell");
+			std::mem::forget(conn);
+			ssh::pty::bridge(ch, 100, 30)
+		});
+		let (mut mgr, _data, _exit) = make_manager();
+		configure(&mut mgr);
+		let id =
+			mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", master, child).expect("attach");
+		std::thread::sleep(Duration::from_millis(800));
+		mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+		(d, mgr, id)
+	}
+
+	/// The server policy sits between the agent and the terminal (ADR-0110): a
+	/// refusal types nothing, and an edit by the human is what runs.
+	#[cfg(unix)]
+	#[test]
+	fn the_policy_refuses_or_edits_before_anything_is_typed() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		let (_d, mgr, id) = lent_terminal(|m| {
+			m.set_agent_policy(Arc::new(|req| {
+				if req.command.starts_with("rm") {
+					Err("refused by the human".into())
+				} else if req.command == "echo original" {
+					Ok(Some("echo edited".into()))
+				} else {
+					Ok(None)
+				}
+			}))
+		});
+		let agent = mgr.session_terminals("sess");
+		let err = agent.run(&id, "rm -rf /tmp/qursor-nothing", 10).expect_err("refused");
+		assert!(err.contains("refused"), "{err}");
+		let screen =
+			agent.read(&id).expect("read")["screen"].as_str().unwrap_or_default().to_string();
+		assert!(!screen.contains("rm -rf"), "a refused command is never typed: {screen}");
+		let r = agent.run(&id, "echo original", 15).expect("run");
+		assert_eq!(r["output"], "edited", "{r}");
+		assert_eq!(r["edited_by_human"], "echo edited", "{r}");
+	}
+
+	/// File tools on a lent terminal's server (F47): a relative path resolves
+	/// against the terminal's directory, an edit replaces exactly what it names,
+	/// and the policy sees each read and write.
+	#[cfg(unix)]
+	#[test]
+	fn an_agent_reads_and_edits_files_on_the_terminals_server() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{pool::Pool, sftp::RemoteFiles, Auth, KnownHosts, Target};
+		let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+		let log = seen.clone();
+		let (d, mut mgr, id) = lent_terminal(move |m| {
+			m.set_agent_policy(Arc::new(move |req| {
+				log.lock().push(req.command.clone());
+				Ok(None)
+			}))
+		});
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
+		mgr.set_remote_files(Arc::new(RemoteFiles::new(
+			Arc::new(Pool::new(known, crate::test_support::handle())),
+			Arc::new(move |_| {
+				Ok(Target {
+					host: "127.0.0.1".into(),
+					port,
+					user: user.clone(),
+					auth: Auth::KeyFile { path: key.clone(), passphrase: None },
+				})
+			}),
+		)));
+		let work = d.dir.path().join("site");
+		std::fs::create_dir_all(&work).expect("dir");
+		std::fs::write(work.join("index.html"), "<h1>old</h1>\n").expect("seed");
+		let agent = mgr.session_terminals("sess");
+		agent.run(&id, &format!("cd {}", work.display()), 15).expect("cd");
+
+		let r = agent.file_read(&id, "index.html").expect("read");
+		assert_eq!(r["content"], "<h1>old</h1>\n", "{r}");
+		agent.file_edit(&id, "index.html", "old", "new", false).expect("edit");
+		assert_eq!(
+			std::fs::read_to_string(work.join("index.html")).expect("disk"),
+			"<h1>new</h1>\n"
+		);
+		agent.file_write(&id, "robots.txt", "User-agent: *\n").expect("write");
+		assert_eq!(
+			std::fs::read_to_string(work.join("robots.txt")).expect("disk"),
+			"User-agent: *\n"
+		);
+		let asked = seen.lock().clone();
+		assert!(
+			asked.iter().any(|c| c.starts_with("cat ") && c.ends_with("/site/index.html")),
+			"{asked:?}"
+		);
+		assert!(asked.iter().any(|c| c.starts_with("edit ")), "{asked:?}");
+		assert!(asked.iter().any(|c| c.starts_with("write ")), "{asked:?}");
+	}
+
+	/// A persistent tab (F49): the shell lives in tmux, survives its channel
+	/// closing, and the agent's markers still reach it through tmux.
+	#[cfg(unix)]
+	#[test]
+	fn a_persistent_tab_survives_its_channel_and_keeps_agent_markers() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		use crate::services::ssh::{self, test_sshd, Auth, KnownHosts, Target};
+		let d = test_sshd::start();
+		let t = Target {
+			host: "127.0.0.1".into(),
+			port: d.port,
+			user: d.user.clone(),
+			auth: Auth::KeyFile { path: d.key.clone(), passphrase: None },
+		};
+		let known = KnownHosts { read: vec![], ours: d.dir.path().join("known_hosts") };
+		let name = format!("qursor-test{}", std::process::id());
+		let conn = crate::test_support::block_on(async {
+			let fp = match ssh::connect(&t, &known, None).await {
+				Err(ssh::SshError::UnknownHost { fingerprint }) => fingerprint,
+				_ => panic!("expected an unknown host first"),
+			};
+			Arc::new(ssh::connect(&t, &known, Some(fp)).await.expect("connect"))
+		});
+		let open = |mgr: &TerminalManager| {
+			let ch = crate::test_support::block_on(ssh::open_shell(
+				&conn,
+				100,
+				30,
+				Some("/tmp"),
+				Some(&name),
+			))
+			.expect("shell");
+			let (m, c) = ssh::pty::bridge(ch, 100, 30);
+			let id = mgr.attach_ssh("server-1", "ssh:tab".into(), "/tmp", m, c).expect("attach");
+			mgr.set_tmux(&id, name.clone());
+			std::thread::sleep(Duration::from_millis(1200));
+			mgr.link_agent(&id, "sess", LinkMode::Shared).expect("link");
+			id
+		};
+		let (mut mgr, _data, exit) = make_manager();
+		let (port, user, key) = (d.port, d.user.clone(), d.key.clone());
+		mgr.set_remote_files(Arc::new(crate::services::ssh::sftp::RemoteFiles::new(
+			Arc::new(crate::services::ssh::pool::Pool::new(
+				known.clone(),
+				crate::test_support::handle(),
+			)),
+			Arc::new(move |_| {
+				Ok(Target {
+					host: "127.0.0.1".into(),
+					port,
+					user: user.clone(),
+					auth: Auth::KeyFile { path: key.clone(), passphrase: None },
+				})
+			}),
+		)));
+		let id = open(&mgr);
+		let agent = mgr.session_terminals("sess");
+		let r = agent.run(&id, "export QURSOR_KEPT=42; echo set", 20).expect("run in tmux");
+		assert_eq!(r["output"], "set", "{r}");
+		// tmux knows a program is running in the pane; the agent waits.
+		mgr.write(&id, b"sleep 30\n").expect("human starts something");
+		std::thread::sleep(Duration::from_millis(1700));
+		let busy = agent.run(&id, "echo no", 5).expect_err("busy");
+		assert!(busy.contains("sleep"), "{busy}");
+		mgr.write(&id, b"\x03").expect("human interrupts");
+		std::thread::sleep(Duration::from_millis(1700));
+		mgr.kill(&id).expect("close the channel");
+		let gone = (0..60).any(|_| {
+			std::thread::sleep(Duration::from_millis(50));
+			exit.lock().unwrap().iter().any(|e| e.id == id)
+		});
+		assert!(gone);
+
+		let id2 = open(&mgr);
+		let r = agent.run(&id2, "echo kept=$QURSOR_KEPT", 20).expect("run after reattach");
+		assert_eq!(r["output"], "kept=42", "the shell's state outlived its channel: {r}");
+		mgr.kill(&id2).expect("close");
+		let _ = std::process::Command::new("tmux").args(["kill-session", "-t", &name]).status();
+	}
+
+	/// The turn rules from the review of F46: no hidden second line, no
+	/// appending to the human's half-typed line, and the human's Ctrl+C ends
+	/// the agent's wait at once.
+	#[cfg(unix)]
+	#[test]
+	fn the_agent_never_types_over_the_human() {
+		use crate::services::agent_tools::terminals::TerminalUse;
+		let (_d, mgr, id) = lent_terminal(|_| {});
+		let agent = mgr.session_terminals("sess");
+		let e = agent.run(&id, "ls\rrm -rf /tmp/qursor-never", 5).expect_err("refused");
+		assert!(e.contains("control character"), "{e}");
+
+		mgr.write(&id, b"echo half-typ").expect("human types");
+		std::thread::sleep(Duration::from_millis(1700));
+		let e = agent.run(&id, "echo agent", 5).expect_err("half-typed line");
+		assert!(e.contains("half-typed"), "{e}");
+		mgr.write(&id, b"\x15").expect("human clears the line");
+		std::thread::sleep(Duration::from_millis(1700));
+		let r = agent.run(&id, "echo agent", 10).expect("run");
+		assert_eq!(r["output"], "agent", "{r}");
+
+		let mgr2 = mgr.clone();
+		let id2 = id.clone();
+		let interrupter = std::thread::spawn(move || {
+			std::thread::sleep(Duration::from_millis(1500));
+			mgr2.write(&id2, b"\x03").expect("human interrupts");
+		});
+		let t0 = std::time::Instant::now();
+		let r = agent.run(&id, "sleep 30", 60).expect("run");
+		interrupter.join().expect("join");
+		assert!(t0.elapsed() < Duration::from_secs(10), "the wait ended with the human's Ctrl+C");
+		assert!(r["status"].as_str().unwrap_or_default().contains("interrupted"), "{r}");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn spawn_runs_and_streams_output() {
+		let (mgr, data, exit) = make_manager();
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec!["/bin/sh".into(), "-c".into(), "echo HELLO_PTY".into()]),
+			)
+			.expect("spawn");
+		// Wait for the child to exit.
+		for _ in 0..50 {
+			std::thread::sleep(Duration::from_millis(50));
+			if exit.lock().unwrap().iter().any(|e| e.id == id) {
+				break;
+			}
+		}
+		let chunks: Vec<String> = data
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|e| e.id == id)
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
+			.collect();
+		let merged = chunks.join("");
+		assert!(merged.contains("HELLO_PTY"), "expected HELLO_PTY in stream, got: {merged}");
+		assert!(exit.lock().unwrap().iter().any(|e| e.id == id), "expected exit event");
+	}
+
+	/// The end of the chain `services::shell_path` starts: a session's `PATH` is
+	/// the login shell's, and it survives all the way into a real PTY child.
+	///
+	/// Asserting on the child rather than on `EnvChanges` is the point, for the
+	/// same reason `child_env`'s own regression test drives a `CommandBuilder`:
+	/// the bug being guarded against is not a wrong rule, it is a right rule
+	/// that never reaches the process. Drop the `changes_for_current_env` call
+	/// above and this is the test that notices — a hook's bare `bash` and an MCP
+	/// server's `npx` become unresolvable, and nothing else here fails.
+	///
+	/// **The expectation is the login shell's `PATH` with AppImage entries
+	/// filtered out**, and the filter is written here rather than borrowed from
+	/// `child_env` so this stays a check and not a tautology. It is not
+	/// hypothetical on the machine this is developed on: the login shell is
+	/// started from inside the release app, so its answer arrives carrying ten
+	/// `.mount_*` entries from two different mounts, and this test failed on
+	/// exactly those when the strip was widened to catch them.
+	#[cfg(unix)]
+	#[test]
+	fn a_child_runs_with_the_login_shell_path() {
+		let (mgr, data, exit) = make_manager();
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				// A marker, because the PTY stream also carries whatever the
+				// shell itself decides to say.
+				Some(vec!["/bin/sh".into(), "-c".into(), "printf 'PATH_IS[%s]' \"$PATH\"".into()]),
+			)
+			.expect("spawn");
+		for _ in 0..50 {
+			std::thread::sleep(Duration::from_millis(50));
+			if exit.lock().unwrap().iter().any(|e| e.id == id) {
+				break;
+			}
+		}
+		let merged: String = data
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|e| e.id == id)
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
+			.collect();
+
+		let login = crate::services::shell_path::child_path();
+		let login = login.to_string_lossy();
+		let is_appimage = |e: &&str| e.contains("/.mount_");
+		// Mirrors `child_env`: a value with nothing to strip is passed through
+		// byte for byte, and only a rebuilt one also loses its empty entries.
+		let wanted = if login.split(':').any(|e| is_appimage(&e)) {
+			login
+				.split(':')
+				.filter(|e| !e.is_empty() && !is_appimage(e))
+				.collect::<Vec<_>>()
+				.join(":")
+		} else {
+			login.to_string()
+		};
+		let expected = format!("PATH_IS[{wanted}]");
+		assert!(merged.contains(&expected), "expected {expected} in stream, got: {merged}");
+		// The half the exact match cannot state on a machine that has no mounts
+		// to strip: whatever arrives, none of it points into a squashfs.
+		assert!(!merged.contains("/.mount_"), "an AppImage mount reached the child: {merged}");
+	}
+
+	/// **The profile has to reach the child, and both kinds of child** (F25,
+	/// ADR-0036). Asserting on the process rather than on `config_dir_for` for
+	/// the same reason the `PATH` test above does: the failure being guarded
+	/// against is not a wrong rule, it is a right rule that never arrives — and a
+	/// session spawned without `CLAUDE_CONFIG_DIR` silently runs as the wrong
+	/// account, which nothing on screen would contradict.
+	///
+	/// The shell is in here deliberately. It is the one place this variable is
+	/// handled differently from `CLAUDE_CODE_SSE_PORT`, which a shell must *not*
+	/// get, so the two rules sit one line apart and a copy-paste that unifies
+	/// them fails here.
+	#[cfg(unix)]
+	#[test]
+	fn a_child_runs_under_its_projects_profile_directory() {
+		let profile = tempfile::TempDir::new().unwrap();
+		let cfg = profile.path().to_path_buf();
+		// The exit log is unused: this test polls for the marker rather than for
+		// the child's exit — see `read_back`.
+		let (mgr, data, _exit) = make_manager();
+		let mgr =
+			mgr.with_profile_dir(Arc::new(move |_agent, _project, _session| Some(cfg.clone())));
+		let expected = format!("CFG[{}]", profile.path().to_string_lossy());
+
+		// Polls for the marker rather than for the exit event: a shell echoes the
+		// line it was given before it runs it, so "the child has exited" and "its
+		// output has arrived" are not the same moment — waiting on the wrong one
+		// makes this pass or fail on timing.
+		let read_back = |id: &str| -> String {
+			let mut seen = String::new();
+			for _ in 0..100 {
+				seen = data
+					.lock()
+					.unwrap()
+					.iter()
+					.filter(|e| e.id == id)
+					.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
+					.collect();
+				if seen.contains(&expected) {
+					break;
+				}
+				std::thread::sleep(Duration::from_millis(50));
+			}
+			seen
+		};
+
+		let agent = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec![
+					"/bin/sh".into(),
+					"-c".into(),
+					"printf 'CFG[%s]' \"$CLAUDE_CONFIG_DIR\"".into(),
+				]),
+			)
+			.expect("spawn the agent");
+		let seen = read_back(&agent);
+		assert!(seen.contains(&expected), "expected {expected} in stream, got: {seen}");
+
+		let cwd = tempfile::TempDir::new().unwrap();
+		let shell = mgr
+			.spawn_shell(ShellSpawnOpts {
+				client_key: "shell:1".into(),
+				project_id: "11111111-aaaa-4bbb-8ccc-dddddddddddd".into(),
+				cwd: cwd.path().to_string_lossy().into_owned(),
+				cols: 80,
+				rows: 24,
+			})
+			.expect("spawn the shell");
+		// The shell has to reach its prompt before it can be typed at — the same
+		// wait `write_input_reaches_child_process` takes.
+		std::thread::sleep(Duration::from_millis(200));
+		mgr.write(&shell, b"printf 'CFG[%s]' \"$CLAUDE_CONFIG_DIR\"; exit\n").expect("write");
+		let seen = read_back(&shell);
+		assert!(seen.contains(&expected), "expected {expected} in the shell, got: {seen}");
+	}
+
+	/// **The default profile means no variable at all** (F25, ADR-0036), and
+	/// this is the test that would have caught the bug it was written for: with
+	/// `CLAUDE_CONFIG_DIR` set — even to the very directory the CLI would have
+	/// used on its own — the CLI reads `<dir>/.claude.json` instead of
+	/// `$HOME/.claude.json` and asks the user to log in again.
+	///
+	/// A leaked value is removed rather than left, so the answer does not depend
+	/// on what launched factorai. That is asserted by seeding the parent's own
+	/// environment with a value the child must not see.
+	#[cfg(unix)]
+	#[test]
+	fn the_ambient_profile_leaves_the_config_variable_unset() {
+		// SAFETY: single-threaded section of this test, and the value is removed
+		// before anything else can read it. `set_var` is unsafe from Rust 2024
+		// because another thread reading the environment concurrently is UB;
+		// nothing else here touches it.
+		unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", "/leaked-from-our-parent") };
+
+		let ambient = tempfile::TempDir::new().unwrap();
+		let (mgr, data, exit) = make_manager_in(ambient.path().to_path_buf());
+		let cfg = ambient.path().to_path_buf();
+		// The resolver answers with the ambient directory, which is what the
+		// default profile resolves to on every machine that has not been
+		// configured otherwise.
+		let mgr =
+			mgr.with_profile_dir(Arc::new(move |_agent, _project, _session| Some(cfg.clone())));
+
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec![
+					"/bin/sh".into(),
+					"-c".into(),
+					"printf 'CFG[%s]' \"$CLAUDE_CONFIG_DIR\"".into(),
+				]),
+			)
+			.expect("spawn");
+		// Removed the moment the child has been forked, which is the whole window
+		// the value needs to exist for. The other tests in this file run in
+		// sibling threads, so a variable left set for the length of a poll loop is
+		// a variable they could inherit.
+		unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") };
+
+		for _ in 0..100 {
+			std::thread::sleep(Duration::from_millis(50));
+			if exit.lock().unwrap().iter().any(|e| e.id == id) {
+				break;
+			}
+		}
+		let seen: String = data
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|e| e.id == id)
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
+			.collect();
+
+		assert!(seen.contains("CFG[]"), "expected an empty CLAUDE_CONFIG_DIR, got: {seen}");
+		assert!(
+			!seen.contains("/leaked-from-our-parent"),
+			"a leaked value reached the child: {seen}"
+		);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn write_input_reaches_child_process() {
+		// Spawn a tiny shell script that reads one line and echoes it with a
+		// recognisable prefix. Avoids `cat`'s line-buffer quirks.
+		let (mgr, data, exit) = make_manager();
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec!["/bin/sh".into(), "-c".into(), "read line; echo \"GOT:$line\"".into()]),
+			)
+			.expect("spawn");
+		// Give the shell a moment to start its `read` loop.
+		std::thread::sleep(Duration::from_millis(200));
+		mgr.write(&id, b"hello\n").expect("write");
+
+		for _ in 0..80 {
+			std::thread::sleep(Duration::from_millis(50));
+			if exit.lock().unwrap().iter().any(|e| e.id == id) {
+				break;
+			}
+		}
+		let merged = data
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|e| e.id == id)
+			.map(|e| String::from_utf8_lossy(&e.bytes).into_owned())
+			.collect::<Vec<_>>()
+			.join("");
+		assert!(merged.contains("GOT:hello"), "expected GOT:hello in stream, got: {merged:?}");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn a_large_write_returns_while_the_child_is_not_reading() {
+		let (mgr, _data, _exit) = make_manager();
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec!["/bin/sh".into(), "-c".into(), "sleep 60".into()]),
+			)
+			.expect("spawn sleep");
+		// Far past any PTY buffer: a blocking write would wait out the sleep.
+		let started = Instant::now();
+		mgr.write(&id, &vec![b'x'; 1024 * 1024]).expect("write");
+		mgr.write(&id, b"y").expect("write after a queued paste");
+		assert!(
+			started.elapsed() < Duration::from_secs(2),
+			"write blocked: {:?}",
+			started.elapsed()
+		);
+		mgr.kill(&id).expect("kill");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn kill_terminates_long_running_process() {
+		let (mgr, _data, exit) = make_manager();
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec!["/bin/sh".into(), "-c".into(), "sleep 60".into()]),
+			)
+			.expect("spawn sleep");
+		assert_eq!(mgr.live_count(), 1);
+		mgr.kill(&id).expect("kill");
+		// Waiter thread should emit the exit event within a couple of seconds.
+		for _ in 0..40 {
+			std::thread::sleep(Duration::from_millis(100));
+			if exit.lock().unwrap().iter().any(|e| e.id == id) {
+				return;
+			}
+		}
+		panic!("kill did not produce an exit event in time");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn list_reflects_live_terminals() {
+		let (mgr, _data, _exit) = make_manager();
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]),
+			)
+			.unwrap();
+		let listing = mgr.list();
+		assert_eq!(listing.len(), 1);
+		assert_eq!(listing[0].id, id);
+		// `Working` from spawn until a title says otherwise — and `/bin/sh` never
+		// writes one, so it stays there. See `TerminalHandle`'s initial status.
+		assert_eq!(listing[0].status, TerminalStatus::Working);
+		// A freshly spawned session counts as working, so quitting on top of one
+		// still asks.
+		assert_eq!(mgr.working_count(), 1);
+		let _ = mgr.kill(&id);
+	}
+
+	/// The status a title implies has to reach the event, through a real PTY.
+	///
+	/// `osc_title`'s own tests cover the parse exhaustively over fixtures. This
+	/// one covers the wiring — reader thread → scanner → `set_status` → callback
+	/// — because every one of those fixture tests still passes with the scanner
+	/// never called from the reader at all. That is the same failure this module
+	/// has shipped once already: a right rule that never reaches the process
+	/// (see `a_child_runs_with_the_login_shell_path`).
+	#[cfg(unix)]
+	#[test]
+	fn a_title_written_by_a_real_child_moves_the_status() {
+		let statuses: Arc<StdMutex<Vec<TerminalStatusEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+		let sc = statuses.clone();
+		let mgr = TerminalManager::with_callbacks(
+			PathBuf::from("/nonexistent-claude-dir"),
+			Arc::new(|_| {}),
+			Arc::new(move |e| sc.lock().unwrap().push(e)),
+			Arc::new(|_| {}),
+			crate::test_support::handle(),
+		);
+
+		// The idle title, exactly as the CLI writes it: OSC 0, U+2733, BEL.
+		let id = mgr
+			.spawn_with_argv(
+				opts(80, 24),
+				Some(vec![
+					"/bin/sh".into(),
+					"-c".into(),
+					"printf '\\033]0;\\342\\234\\263 Claude Code\\007'; sleep 30".into(),
+				]),
+			)
+			.unwrap();
+
+		// Poll rather than sleep a fixed time: the read is fast but scheduling
+		// is not, and a fixed sleep is how this becomes the flaky test.
+		let deadline = std::time::Instant::now() + Duration::from_secs(5);
+		let got = loop {
+			if let Some(e) =
+				statuses.lock().unwrap().iter().find(|e| e.status == TerminalStatus::WaitingInput)
+			{
+				break Some(e.id.clone());
+			}
+			if std::time::Instant::now() > deadline {
+				break None;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		};
+
+		// The quit guard's whole question, asked here because this is the only
+		// test with a real title moving a real handle's status (ADR-0020): the PTY
+		// is still live, and nothing is working in it.
+		assert_eq!(mgr.live_count(), 1, "the PTY is still there");
+		assert_eq!(mgr.working_count(), 0, "a session at its prompt is not working");
+
+		let _ = mgr.kill(&id);
+		assert_eq!(got.as_deref(), Some(id.as_str()), "no waiting_input event for the title");
+	}
+
+	/// A shell's spawn request: a project, a pane key, and **no session id at
+	/// all** (ADR-0032).
+	#[cfg(unix)]
+	fn shell_req(project_id: &str) -> PtyRequest {
+		PtyRequest {
+			session_id: None,
+			client_key: Some("shell:2f0d3c1e-0000-4000-8000-000000000001".into()),
+			project_id: project_id.into(),
+			cwd: None,
+			cols: 80,
+			rows: 24,
+			initial_prompt: None,
+			kind: TerminalKind::Shell,
+			agent: None,
+		}
+	}
+
+	/// An agent's, for the tests that need one beside a shell.
+	#[cfg(unix)]
+	fn agent_req(session_id: &str, project_id: &str) -> PtyRequest {
+		PtyRequest {
+			session_id: Some(session_id.into()),
+			client_key: None,
+			project_id: project_id.into(),
+			cwd: None,
+			cols: 80,
+			rows: 24,
+			initial_prompt: None,
+			kind: TerminalKind::Agent,
+			agent: Some(claude_desc()),
+		}
+	}
+
+	/// The four passes that mean "session" when they say "terminal" (F23,
+	/// ADR-0031, ADR-0032). Every one of them would read a shell as a session:
+	/// the sidebar would show a live row for one, the indexer would refuse to
+	/// reap a transcript that no longer exists, "new session" would hand the
+	/// user a shell's id to run `claude --resume` against, and the bridge resync
+	/// would announce a disconnected editor for a session that has one.
+	///
+	/// **Since ADR-0032 a shell has no session id to be mistaken for**, and this
+	/// test is what says the `Option` is doing that work rather than a filter
+	/// somebody may forget on the fifth pass.
+	#[cfg(unix)]
+	#[test]
+	fn a_shell_is_never_mistaken_for_a_session() {
+		let (mut mgr, _d, _e) = make_manager();
+		let ide: Arc<StdMutex<Vec<IdeStatusEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+		let ic = ide.clone();
+		mgr.set_ide_status_cb(Arc::new(move |e| ic.lock().unwrap().push(e)));
+		let project = "11111111-aaaa-4bbb-8ccc-dddddddddddd";
+		let id = mgr
+			.spawn_inner(
+				shell_req(project),
+				Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]),
+			)
+			.expect("spawn");
+
+		assert_eq!(mgr.live_count(), 1, "the PTY exists and quitting will kill it");
+		assert_eq!(mgr.working_count(), 0, "a shell is never work in progress (ADR-0020)");
+		assert!(mgr.live_session_ids().is_empty(), "a shell pins no session against the reaper");
+		assert_eq!(
+			mgr.list().first().and_then(|t| t.session_id.clone()),
+			None,
+			"a shell reports no session to the renderer's agent map"
+		);
+
+		// `next_session_id` mints a fresh uuid when it finds nothing to reuse, so
+		// what is asserted is that the shell is not what it reused — and a shell
+		// has no id it *could* hand back.
+		let offered = mgr.next_session_id(project, Path::new("/tmp"), None, false).unwrap();
+		assert!(
+			mgr.list().iter().all(|t| t.session_id.as_deref() != Some(offered.as_str())),
+			"new session must never be handed a live terminal that is not an agent"
+		);
+
+		// The pass that `Option` caught. It iterates every handle, so a shell
+		// used to emit `connected: false` under the session id it had borrowed —
+		// clearing that session's real bridge error depending on iteration order.
+		mgr.resync_ide_status();
+		assert!(
+			ide.lock().unwrap().is_empty(),
+			"a shell has no bridge and no session to report one for"
+		);
+
+		let _ = mgr.kill(&id);
+	}
+
+	/// The same bytes, and only one reading (F10; F23 as amended by F24). A
+	/// shell writes `OSC 0` titles too — most prompts do, on every command —
+	/// and one that titles itself with Claude's own idle marker — the worst
+	/// case, and one `starship` or a stray `printf` can produce — must leave
+	/// the session's status alone. Nothing reads a shell's title any more, so
+	/// the test waits for the title's bytes on the data stream instead: the
+	/// assertion means nothing until the reader has seen them.
+	#[cfg(unix)]
+	#[test]
+	fn a_shells_title_never_moves_a_status() {
+		let statuses: Arc<StdMutex<Vec<TerminalStatusEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+		let seen: Arc<StdMutex<Vec<u8>>> = Arc::new(StdMutex::new(Vec::new()));
+		let sc = statuses.clone();
+		let dc = seen.clone();
+		let mgr = TerminalManager::with_callbacks(
+			PathBuf::from("/nonexistent-claude-dir"),
+			Arc::new(move |e: TerminalDataEvent| {
+				dc.lock().unwrap().extend_from_slice(&e.bytes);
+			}),
+			Arc::new(move |e| sc.lock().unwrap().push(e)),
+			Arc::new(|_| {}),
+			crate::test_support::handle(),
+		);
+
+		let id = mgr
+			.spawn_inner(
+				shell_req("11111111-aaaa-4bbb-8ccc-dddddddddddd"),
+				Some(vec![
+					"/bin/sh".into(),
+					"-c".into(),
+					"printf '\\033]0;\\342\\234\\263 ~/dev/factorai\\007'; sleep 30".into(),
+				]),
+			)
+			.unwrap();
+
+		// Poll, for the reason `a_title_written_by_a_real_child_moves_the_status`
+		// polls: the read is fast, the scheduler is not.
+		let marker = b"~/dev/factorai";
+		let deadline = std::time::Instant::now() + Duration::from_secs(5);
+		let arrived = loop {
+			if seen.lock().unwrap().windows(marker.len()).any(|w| w == marker) {
+				break true;
+			}
+			if std::time::Instant::now() > deadline {
+				break false;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		};
+
+		let status_events = statuses.lock().unwrap().len();
+		let _ = mgr.kill(&id);
+
+		assert!(arrived, "the shell's title never reached the reader");
+		assert_eq!(status_events, 0, "a shell's title must not be classified as Claude's state");
+	}
+
+	/// The two ways a shell can die, which F23 answers differently: a chip whose
+	/// shell you ended yourself goes away, and one the app killed comes back
+	/// dead. The exit code cannot tell them apart — a SIGTERM'd bash and
+	/// `exit 143` look the same — so the flag has to come from the side that
+	/// knows.
+	#[cfg(unix)]
+	#[test]
+	fn an_exit_says_whether_we_killed_it() {
+		let (mgr, _d, exit) = make_manager();
+		let project = "11111111-aaaa-4bbb-8ccc-dddddddddddd";
+		let ended = mgr
+			.spawn_inner(
+				shell_req(project),
+				Some(vec!["/bin/sh".into(), "-c".into(), "exit 0".into()]),
+			)
+			.unwrap();
+		let killed = mgr
+			.spawn_inner(
+				shell_req(project),
+				Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]),
+			)
+			.unwrap();
+		let _ = mgr.kill(&killed);
+
+		let deadline = std::time::Instant::now() + Duration::from_secs(5);
+		let events = loop {
+			let events = exit.lock().unwrap().clone();
+			if events.len() >= 2 || std::time::Instant::now() > deadline {
+				break events;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		};
+
+		let flag = |id: &str| events.iter().find(|e| e.id == id).map(|e| e.killed);
+		assert_eq!(flag(&ended), Some(false), "a shell that ended on its own");
+		assert_eq!(flag(&killed), Some(true), "a shell we killed");
+	}
+
+	/// A shell's whole lifetime is the **project** it was opened in (F23,
+	/// ADR-0032). `Remove project` sweeps its shells up; the agent in the same
+	/// project is killed by its own `terminal_kill` and must not be killed twice
+	/// from here; another project's shells are not this project's business.
+	#[cfg(unix)]
+	#[test]
+	fn removing_a_project_kills_its_shells_and_nothing_else() {
+		let (mgr, _d, _e) = make_manager();
+		let mine = "11111111-aaaa-4bbb-8ccc-dddddddddddd";
+		let other = "22222222-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+		let sleep = || Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]);
+
+		let agent = mgr
+			.spawn_inner(agent_req("99999999-8888-7777-6666-555555555555", mine), sleep())
+			.unwrap();
+		let ours = mgr.spawn_inner(shell_req(mine), sleep()).unwrap();
+		let theirs = mgr.spawn_inner(shell_req(other), sleep()).unwrap();
+		assert_eq!(mgr.live_count(), 3);
+
+		mgr.kill_shells_for_project(mine);
+
+		// `kill` signals; the waiter thread removes the entry when the process
+		// actually goes. Poll for that rather than assuming it has happened —
+		// the same reason the title tests poll.
+		let deadline = std::time::Instant::now() + Duration::from_secs(5);
+		let live: HashSet<TerminalId> = loop {
+			let live: HashSet<TerminalId> = mgr.list().into_iter().map(|t| t.id).collect();
+			if !live.contains(&ours) || std::time::Instant::now() > deadline {
+				break live;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		};
+		assert!(!live.contains(&ours), "the project's own shells die with it");
+		assert!(live.contains(&agent), "the agent is killed by its own path, not this one");
+		assert!(live.contains(&theirs), "another project's shells are untouched");
+
+		mgr.kill_all();
+	}
+
+	/// A shell whose own directory has gone is reaped; one whose project root
+	/// went is not (F23, ADR-0032).
+	///
+	/// **The distinction is the whole rule.** `missing` on a project is one
+	/// `is_dir()` per indexer scan and it flips back when a folder returns, so
+	/// an unmounted volume would kill a build running fine in a linked checkout
+	/// somewhere else. The question is asked of the pane's own cwd instead.
+	#[cfg(unix)]
+	#[test]
+	fn a_shell_is_reaped_when_its_own_cwd_goes_and_not_before() {
+		let (mgr, _d, _e) = make_manager();
+		let project = "11111111-aaaa-4bbb-8ccc-dddddddddddd";
+		let doomed = tempfile::TempDir::new().unwrap();
+		let kept = tempfile::TempDir::new().unwrap();
+		let sleep = || Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]);
+
+		let mut in_doomed = shell_req(project);
+		in_doomed.cwd = Some(doomed.path().to_string_lossy().into_owned());
+		let mut in_kept = shell_req(project);
+		in_kept.cwd = Some(kept.path().to_string_lossy().into_owned());
+		let gone = mgr.spawn_inner(in_doomed, sleep()).unwrap();
+		let stays = mgr.spawn_inner(in_kept, sleep()).unwrap();
+
+		mgr.reap_shells_with_missing_cwd();
+		assert_eq!(mgr.live_count(), 2, "nothing is reaped while both directories are there");
+
+		drop(doomed);
+		mgr.reap_shells_with_missing_cwd();
+
+		let deadline = std::time::Instant::now() + Duration::from_secs(5);
+		let live: HashSet<TerminalId> = loop {
+			let live: HashSet<TerminalId> = mgr.list().into_iter().map(|t| t.id).collect();
+			if !live.contains(&gone) || std::time::Instant::now() > deadline {
+				break live;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		};
+		assert!(!live.contains(&gone), "a shell with nowhere left to work is killed");
+		assert!(live.contains(&stays), "a shell whose own directory is still there keeps running");
+
+		mgr.kill_all();
+	}
+
+	#[test]
+	fn spawn_refuses_a_cwd_that_does_not_exist() {
+		let (mgr, _d, _e) = make_manager();
+		let parent = tempfile::TempDir::new().unwrap();
+		let missing = parent.path().join("not-created");
+		let mut o = opts(80, 24);
+		o.cwd = Some(missing.to_string_lossy().into_owned());
+		let err = mgr
+			.spawn_with_argv(o, Some(vec!["missing-agent-binary".into()]))
+			.expect_err("a missing cwd must not spawn");
+		// portable-pty starts the child elsewhere rather than failing, so without
+		// this guard a new session in a deleted project folder would be filed
+		// under $HOME's project instead of the one that was clicked.
+		assert!(matches!(err, AppError::NotFound(_)), "expected NotFound, got {err:?}");
+		assert_eq!(mgr.live_count(), 0, "nothing should have been spawned");
+	}
+
+	/// A manager whose index says this session ran in `recorded`.
+	fn make_manager_recording(claude_dir: PathBuf, recorded: PathBuf) -> TerminalManager {
+		let (mgr, _d, _e) = make_manager_in(claude_dir);
+		mgr.with_session_cwd(Arc::new(move |_| vec![recorded.clone()]))
+	}
+
+	#[test]
+	fn resume_cwd_prefers_the_folder_the_transcript_is_actually_in() {
+		let store = tempfile::TempDir::new().unwrap();
+		let work = tempfile::TempDir::new().unwrap();
+		let sid = "11111111-2222-3333-4444-555555555555";
+		write_transcript(store.path(), &work.path().to_string_lossy(), sid);
+
+		let mgr = make_manager_recording(store.path().to_path_buf(), work.path().to_path_buf());
+		// The whole point: the caller would have said "the project root", and the
+		// transcript is somewhere else. Spawning where the caller said turns
+		// `--resume` into `--session-id` on an id Claude already knows.
+		assert_eq!(mgr.resume_cwd(sid, store.path()), Some(work.path().to_path_buf()));
+	}
+
+	#[test]
+	fn resume_cwd_ignores_a_recorded_folder_with_no_transcript_in_it() {
+		let store = tempfile::TempDir::new().unwrap();
+		let work = tempfile::TempDir::new().unwrap();
+		// Row exists, transcript does not — the folder moved, or the store was
+		// cleaned. Preferring it would move the session somewhere the caller did
+		// not ask for and buy nothing, so the caller's cwd has to win.
+		let mgr = make_manager_recording(store.path().to_path_buf(), work.path().to_path_buf());
+		assert_eq!(mgr.resume_cwd("11111111-2222-3333-4444-555555555555", store.path()), None);
+	}
+
+	#[test]
+	fn resume_cwd_takes_the_folder_the_transcript_is_in_when_the_session_moved() {
+		let store = tempfile::TempDir::new().unwrap();
+		let started = tempfile::TempDir::new().unwrap();
+		let moved_to = tempfile::TempDir::new().unwrap();
+		let sid = "11111111-2222-3333-4444-555555555555";
+		// Claude took its store directory along, so the transcript exists only
+		// under where the session ended up (F21).
+		write_transcript(store.path(), &moved_to.path().to_string_lossy(), sid);
+
+		let (mgr, _d, _e) = make_manager_in(store.path().to_path_buf());
+		let ended = moved_to.path().to_path_buf();
+		let began = started.path().to_path_buf();
+		let mgr = mgr.with_session_cwd(Arc::new(move |_| vec![ended.clone(), began.clone()]));
+
+		assert_eq!(mgr.resume_cwd(sid, store.path()), Some(moved_to.path().to_path_buf()));
+	}
+
+	#[test]
+	fn resume_cwd_falls_back_to_where_the_session_started() {
+		let store = tempfile::TempDir::new().unwrap();
+		let started = tempfile::TempDir::new().unwrap();
+		let moved_to = tempfile::TempDir::new().unwrap();
+		let sid = "11111111-2222-3333-4444-555555555555";
+		// The ordinary shape: the agent `cd`'d somewhere transient, and the store
+		// directory never moved. Newest-first must not become newest-only.
+		write_transcript(store.path(), &started.path().to_string_lossy(), sid);
+
+		let (mgr, _d, _e) = make_manager_in(store.path().to_path_buf());
+		let ended = moved_to.path().to_path_buf();
+		let began = started.path().to_path_buf();
+		let mgr = mgr.with_session_cwd(Arc::new(move |_| vec![ended.clone(), began.clone()]));
+
+		assert_eq!(mgr.resume_cwd(sid, store.path()), Some(started.path().to_path_buf()));
+	}
+
+	#[test]
+	fn resume_cwd_is_none_with_no_index_to_ask() {
+		let store = tempfile::TempDir::new().unwrap();
+		let (mgr, _d, _e) = make_manager_in(store.path().to_path_buf());
+		// No callback wired at all — every test manager above this point, and the
+		// behaviour that predates `session_cwd`. `resume_cwd` returns `None`, so
+		// `opts.cwd` is used.
+		assert_eq!(mgr.resume_cwd("11111111-2222-3333-4444-555555555555", store.path()), None);
+	}
+
+	/// The store key finds the transcript when the recorded cwd cannot. This is
+	/// the real-world worktree shape: the agent `cd`'d into a subdirectory of the
+	/// folder Claude keyed the store by, so the recorded `last_cwd` encodes to a
+	/// sibling directory holding no transcript — the key still names it exactly.
+	#[test]
+	fn resume_cwd_uses_the_store_key_when_the_recorded_cwd_drifted_into_a_subdir() {
+		let store = tempfile::TempDir::new().unwrap();
+		let sid = "11111111-2222-3333-4444-555555555555";
+		// Claude keyed the store by "/work"; the transcript lives under its key.
+		let key = claude::encode_path(Path::new("/work"));
+		let path = claude::transcript_path_by_key(store.path(), &key, sid);
+		std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+		std::fs::write(&path, "{}\n").unwrap();
+
+		let (mgr, _d, _e) = make_manager_in(store.path().to_path_buf());
+		// The recorded cwd is a subdirectory — it encodes to "-work-sub", where no
+		// transcript exists, so the cwd probe alone would return None.
+		let mgr = mgr
+			.with_session_cwd(Arc::new(|_| vec![PathBuf::from("/work/sub")]))
+			.with_session_key(Arc::new(move |_| Some(key.clone())));
+
+		assert_eq!(mgr.resume_cwd(sid, store.path()), Some(PathBuf::from("/work")));
+	}
+
+	/// A live session driven in a worktree is *messaged*, so "new session" mints
+	/// a fresh id rather than handing that session's back (F21).
+	///
+	/// The regression, in the shape it actually took: a session run in a linked
+	/// checkout keeps its transcript under the worktree Claude keyed the store by,
+	/// and the agent had `cd`'d into a subdirectory of it — so the recorded cwd
+	/// encoded to a sibling directory holding no transcript. `next_session_id`
+	/// then read a busy session as "never messaged" and handed its id back, so
+	/// every "new session" click reopened that worktree session instead of
+	/// minting a fresh one. Only the store-key probe finds the transcript here.
+	#[test]
+	#[cfg(unix)]
+	fn next_session_id_does_not_reuse_a_messaged_worktree_session() {
+		let store = tempfile::TempDir::new().unwrap();
+		let worktree = tempfile::TempDir::new().unwrap();
+		let subdir = worktree.path().join("frontend");
+		std::fs::create_dir_all(&subdir).unwrap();
+		let project = "11111111-aaaa-4bbb-8ccc-dddddddddddd";
+		let sid = "11111111-2222-3333-4444-555555555555";
+		// Claude keyed the store by the worktree root; the transcript lives under
+		// its key. The agent then worked in the `frontend` subdirectory, which is
+		// what the index recorded as the cwd — and it encodes to a sibling
+		// directory that holds no transcript.
+		let key = claude::encode_path(worktree.path());
+		let tpath = claude::transcript_path_by_key(store.path(), &key, sid);
+		std::fs::create_dir_all(tpath.parent().unwrap()).unwrap();
+		std::fs::write(&tpath, "{}\n").unwrap();
+
+		let (mgr, _d, _e) = make_manager_in(store.path().to_path_buf());
+		let recorded = subdir.clone();
+		let mgr = mgr
+			.with_session_cwd(Arc::new(move |_| vec![recorded.clone()]))
+			.with_session_key(Arc::new(move |_| Some(key.clone())));
+
+		let mut req = agent_req(sid, project);
+		req.cwd = Some(subdir.to_string_lossy().into_owned());
+		let _live = mgr
+			.spawn_inner(req, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		// The project root — where a "new session" click probes — holds no
+		// transcript for this session; only the worktree key does.
+		let offered =
+			mgr.next_session_id(project, worktree.path().parent().unwrap(), None, false).unwrap();
+		assert_ne!(
+			offered, sid,
+			"a messaged worktree session must not be reused for a new session"
+		);
+
+		mgr.kill_all();
+	}
+
+	/// The same click, one step further: Claude Code's own worktree
+	/// (`EnterWorktree`) *moves* a live session's transcript from the project's
+	/// store directory to the worktree's, and the index — which still names the
+	/// old key and the old folder — is the last to hear. Every probe that goes
+	/// through a recorded location misses, so only a probe that asks the store
+	/// itself "is there a transcript with this id anywhere" can answer.
+	#[test]
+	#[cfg(unix)]
+	fn next_session_id_does_not_reuse_a_session_whose_transcript_moved() {
+		let store = tempfile::TempDir::new().unwrap();
+		let project_dir = tempfile::TempDir::new().unwrap();
+		let worktree = project_dir.path().join(".claude/worktrees/wt");
+		let subdir = worktree.join("backend");
+		let project = "11111111-aaaa-4bbb-8ccc-dddddddddddd";
+		let sid = "22222222-2222-3333-4444-555555555555";
+		// The transcript is under the worktree's key now; nothing is left under
+		// the project's.
+		let tpath = claude::transcript_path(store.path(), &worktree, sid);
+		std::fs::create_dir_all(tpath.parent().unwrap()).unwrap();
+		std::fs::write(&tpath, "{}\n").unwrap();
+
+		// What the index still says: the project's key, the project folder as the
+		// first cwd, and a subdirectory of the worktree as the last one.
+		let old_key = claude::encode_path(project_dir.path());
+		let cwds = vec![subdir.clone(), project_dir.path().to_path_buf()];
+		let (mgr, _d, _e) = make_manager_in(store.path().to_path_buf());
+		let mgr = mgr
+			.with_session_cwd(Arc::new(move |_| cwds.clone()))
+			.with_session_key(Arc::new(move |_| Some(old_key.clone())));
+
+		let mut req = agent_req(sid, project);
+		req.cwd = Some(project_dir.path().to_string_lossy().into_owned());
+		let _live = mgr
+			.spawn_inner(req, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		let offered = mgr.next_session_id(project, project_dir.path(), None, false).unwrap();
+		assert_ne!(offered, sid, "a session whose transcript moved is still a messaged one");
+
+		mgr.kill_all();
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn spawn_runs_in_the_recorded_folder_not_the_one_it_was_given() {
+		let store = tempfile::TempDir::new().unwrap();
+		let work = tempfile::TempDir::new().unwrap();
+		let given = tempfile::TempDir::new().unwrap();
+		let sid = "11111111-2222-3333-4444-555555555555";
+		write_transcript(store.path(), &work.path().to_string_lossy(), sid);
+
+		let mgr = make_manager_recording(store.path().to_path_buf(), work.path().to_path_buf());
+		let mut o = opts(80, 24);
+		o.cwd = Some(given.path().to_string_lossy().into());
+		let id = mgr
+			.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		// Copied out, and the guard dropped, *before* `kill_all` — a DashMap read
+		// guard held across it deadlocks on the same shard.
+		let spawned_in = mgr.terminals.get(&id).map(|h| h.cwd.clone()).unwrap();
+		mgr.kill_all();
+		assert_eq!(spawned_in, work.path().to_path_buf());
+	}
+
+	/// A routine's prompt is one positional argument after the id, on whichever
+	/// branch the transcript probe chose (F22, ADR-0026 § 4).
+	#[test]
+	fn an_initial_prompt_becomes_one_positional_argument() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mut mgr, _data, _exit) = make_manager();
+		mgr.set_binary(PathBuf::from("/bin/echo"));
+		let mut o = opts(80, 24);
+		o.cwd = Some(tmp.path().to_string_lossy().to_string());
+		o.initial_prompt = Some("Triage the inbox".into());
+		let argv = mgr
+			.argv_for(
+				claude_desc(),
+				&o.session_id,
+				o.initial_prompt.as_deref(),
+				tmp.path(),
+				Path::new(NO_STORE),
+				None,
+			)
+			.expect("argv");
+		assert_eq!(argv[0], "/bin/echo");
+		assert_eq!(argv[1], "--session-id");
+		assert_eq!(argv[2], o.session_id);
+		assert_eq!(argv[3], "Triage the inbox");
+
+		// An empty prompt is not an argument: it would be an empty first message.
+		assert_eq!(
+			mgr.argv_for(
+				claude_desc(),
+				&o.session_id,
+				Some(""),
+				tmp.path(),
+				Path::new(NO_STORE),
+				None
+			)
+			.unwrap()
+			.len(),
+			3
+		);
+		assert_eq!(
+			mgr.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+				.unwrap()
+				.len(),
+			3
+		);
+	}
+
+	#[test]
+	fn a_codex_session_takes_no_id_and_forces_the_title_items() {
+		// ADR-0062: Codex mints its own id, so nothing in argv names one; F30 §
+		// "Spawn": the title is how status and adoption read the session.
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mut mgr, _data, _exit) = make_manager();
+		mgr.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+		let argv = mgr
+			.argv_for(
+				codex_desc(),
+				&o.session_id,
+				Some("Triage the inbox"),
+				tmp.path(),
+				Path::new(NO_STORE),
+				None,
+			)
+			.expect("argv");
+		assert_eq!(argv[0], "/bin/echo");
+		assert!(!argv.iter().any(|a| a == "--session-id" || a == "--resume"), "{argv:?}");
+		assert!(!argv.iter().any(|a| a == &o.session_id), "{argv:?}");
+		let c = argv.iter().position(|a| a == "-c").expect("-c");
+		assert_eq!(argv[c + 1], codex::TITLE_ITEMS);
+		assert_eq!(argv.last().unwrap(), "Triage the inbox");
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn a_codex_session_starts_unknown_and_is_listed_under_its_agent() {
+		// F30 § "Status": nothing reads Codex's title yet, so the honest launch
+		// state is `Unknown`, not the `Working` Claude's first title corrects.
+		let (mgr, _data, _exit) = make_manager();
+		let mut o = opts(80, 24);
+		o.agent = Some("codex".into());
+		let id = mgr
+			.spawn_with_argv(o.clone(), Some(vec!["/bin/sh".into(), "-c".into(), "sleep 5".into()]))
+			.expect("spawn");
+		let listed = mgr.list().into_iter().find(|t| t.id == id).expect("listed");
+		assert_eq!(listed.agent.as_deref(), Some("codex"));
+		assert_eq!(listed.status, TerminalStatus::Unknown);
+		assert_eq!(mgr.working_count(), 0, "unknown is not working");
+
+		// And a "new Claude session" click is not handed the Codex session's
+		// provisional id: `next_session_id` is per agent.
+		let folder = Path::new("/tmp");
+		let claude = mgr.next_session_id(&o.project_id, folder, Some("claude"), false).unwrap();
+		assert_ne!(claude, o.session_id);
+		let codex = mgr.next_session_id(&o.project_id, folder, Some("codex"), false).unwrap();
+		assert_eq!(codex, o.session_id, "an unadopted Codex session is reused");
+		mgr.kill(&id).unwrap();
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn a_mention_into_an_unnamed_codex_session_is_refused_with_the_reason() {
+		// F30 § "Add to agent context": `codex queue` needs the thread's own id,
+		// which a session has only after its first turn (ADR-0062).
+		let (mgr, _data, _exit) = make_manager();
+		let mut o = opts(80, 24);
+		o.agent = Some("codex".into());
+		let id = mgr
+			.spawn_with_argv(o.clone(), Some(vec!["/bin/sh".into(), "-c".into(), "sleep 5".into()]))
+			.expect("spawn");
+		let err = mgr
+			.mention(
+				&o.session_id,
+				&[Mention { path: "README.md".into(), line_start: None, line_end: None }],
+			)
+			.expect_err("refused");
+		assert!(err.to_string().contains("not named this session yet"), "{err}");
+		mgr.kill(&id).unwrap();
+	}
+
+	#[test]
+	fn an_unknown_agent_is_refused_not_defaulted() {
+		let (mgr, _data, _exit) = make_manager();
+		let mut o = opts(80, 24);
+		o.agent = Some("gemini".into());
+		let err = mgr.spawn_with_argv(o, Some(vec!["/bin/true".into()])).expect_err("refused");
+		assert!(err.to_string().contains("unknown agent"), "{err}");
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn a_codex_child_gets_no_claude_variables_and_an_ambient_codex_home_is_unset() {
+		// F30 § "Spawn": the variable is the agent's. Under the ambient
+		// directory it is removed, exactly as `CLAUDE_CONFIG_DIR` is for Claude;
+		// and Codex gets neither the IDE bridge port nor Claude's directory.
+		let tmp = tempfile::TempDir::new().unwrap();
+		let out = tmp.path().join("env.txt");
+		let (mgr, _data, exit) = make_manager();
+		let mut o = opts(80, 24);
+		o.agent = Some("codex".into());
+		o.cwd = Some(tmp.path().to_string_lossy().to_string());
+		let script = format!(
+		"printf 'CODEX[%s] CLAUDE[%s] SSE[%s]' \"${{CODEX_HOME:-}}\" \"${{CLAUDE_CONFIG_DIR:-}}\" \"${{CLAUDE_CODE_SSE_PORT:-}}\" > {}",
+		out.display()
+	);
+		std::env::set_var("CODEX_HOME", mgr.codex_dir.to_string_lossy().to_string());
+		let _id = mgr
+			.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), script]))
+			.expect("spawn");
+		let started = std::time::Instant::now();
+		while exit.lock().unwrap().is_empty() && started.elapsed() < Duration::from_secs(5) {
+			std::thread::sleep(Duration::from_millis(20));
+		}
+		std::env::remove_var("CODEX_HOME");
+		let seen = std::fs::read_to_string(&out).expect("the child wrote its environment");
+		assert_eq!(seen, "CODEX[] CLAUDE[] SSE[]");
+	}
+
+	#[test]
+	fn the_agent_tool_server_is_registered_by_name_in_argv() {
+		// **The whole point of the flag** (ADR-0029): the CLI hardcodes the IDE
+		// bridge's server key to `ide` and shows the model two of its tools, so
+		// factorai's own tools have to arrive under a name of their own. If this
+		// argument stops being passed, every tool in `agent_tools` becomes
+		// invisible to the agent while every unit test in it still passes.
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mut mgr, _data, _exit) = make_manager();
+		mgr.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+		let _rt = crate::test_support::runtime().enter();
+		let tools = AgentToolsServer::start(Arc::new(|_| None)).expect("bind");
+
+		let argv = mgr
+			.argv_for(
+				claude_desc(),
+				&o.session_id,
+				o.initial_prompt.as_deref(),
+				tmp.path(),
+				Path::new(NO_STORE),
+				Some(&tools),
+			)
+			.expect("argv");
+		let at = argv.iter().position(|a| a == "--mcp-config").expect("--mcp-config is passed");
+		let config: serde_json::Value = serde_json::from_str(&argv[at + 1]).expect("valid json");
+		let server = &config["mcpServers"][crate::services::agent_tools::SERVER_NAME];
+
+		assert_ne!(
+			crate::services::agent_tools::SERVER_NAME,
+			"ide",
+			"a server named `ide` is the one the CLI caps at two tools"
+		);
+		assert_eq!(server["type"], "http", "ws-ide is refused from --mcp-config");
+		assert!(
+			server["url"].as_str().unwrap().starts_with("http://127.0.0.1:"),
+			"loopback only: {server}"
+		);
+		assert_eq!(
+			server["headers"]["Authorization"],
+			format!("Bearer {}", tools.token()),
+			"the session's own token, not a shared one"
+		);
+		// **Merging, never replacing.** `--strict-mcp-config` would drop every
+		// MCP server the user configured for themselves.
+		assert!(!argv.iter().any(|a| a == "--strict-mcp-config"), "{argv:?}");
+	}
+
+	#[test]
+	fn claude_argv_carries_the_usage_statusline_when_a_sink_is_set() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _data, _exit) = make_manager();
+		let mut mgr = mgr.with_usage_sink_dir(tmp.path().join("sink"));
+		mgr.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+
+		let argv = mgr
+			.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		let at = argv.iter().position(|a| a == "--settings").expect("--settings is passed");
+		let session_at = argv.iter().position(|a| a == &o.session_id).expect("session id");
+		assert!(at < session_at, "{argv:?}");
+		let settings: serde_json::Value = serde_json::from_str(&argv[at + 1]).expect("valid json");
+		let command = settings["statusLine"]["command"].as_str().expect("a command");
+		assert!(command.contains("--usage-statusline"), "{command}");
+		// The profile's config directory is the helper's last argument.
+		assert!(command.ends_with(&format!("{NO_STORE}'")), "{command}");
+		assert_eq!(settings["statusLine"]["type"], "command");
+	}
+
+	#[test]
+	fn usage_statusline_switch_is_read_per_spawn() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let o = opts(80, 24);
+		for on in [false, true] {
+			let (mgr, _data, _exit) = make_manager();
+			let mut mgr = mgr
+				.with_usage_sink_dir(tmp.path().join("sink"))
+				.with_usage_statusline_enabled(Arc::new(move || on));
+			mgr.set_binary(PathBuf::from("/bin/echo"));
+			let argv = mgr
+				.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+				.expect("argv");
+			assert_eq!(argv.iter().any(|a| a == "--settings"), on, "{argv:?}");
+		}
+	}
+
+	#[test]
+	fn no_settings_flag_without_a_sink_or_for_codex() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mut plain, _data, _exit) = make_manager();
+		plain.set_binary(PathBuf::from("/bin/echo"));
+		let o = opts(80, 24);
+		let argv = plain
+			.argv_for(claude_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		assert!(!argv.iter().any(|a| a == "--settings"), "{argv:?}");
+
+		let (mgr, _data, _exit) = make_manager();
+		let mut sunk = mgr.with_usage_sink_dir(tmp.path().join("sink"));
+		sunk.set_binary(PathBuf::from("/bin/echo"));
+		let argv = sunk
+			.argv_for(codex_desc(), &o.session_id, None, tmp.path(), Path::new(NO_STORE), None)
+			.expect("argv");
+		assert!(!argv.iter().any(|a| a == "--settings"), "{argv:?}");
+	}
+
+	#[test]
+	fn session_flag_claims_an_id_with_no_transcript() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		// Nothing on disk: this session does not exist yet, so the id is ours to
+		// claim. `--resume` here would fail with "no conversation found". This is
+		// also the shape of a folder Claude has never run in — no store directory
+		// exists for it at all, and the probe still answers correctly.
+		assert_eq!(
+			session_flag(
+				tmp.path(),
+				Path::new("/tmp/proj"),
+				"11111111-2222-3333-4444-555555555555"
+			),
+			"--session-id"
+		);
+	}
+
+	#[test]
+	fn session_flag_resumes_an_id_with_a_transcript() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let sid = "11111111-2222-3333-4444-555555555555";
+		write_transcript(tmp.path(), "/tmp/proj", sid);
+		// Claude rejects `--session-id` on an id it already knows ("already in
+		// use"), so an existing transcript must flip us to `--resume`. This is
+		// the case that makes Restart correct after the first message.
+		assert_eq!(session_flag(tmp.path(), Path::new("/tmp/proj"), sid), "--resume");
+	}
+
+	#[test]
+	fn session_flag_resumes_a_transcript_under_any_store_key() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let sid = "11111111-2222-3333-4444-555555555555";
+		write_transcript(tmp.path(), "/tmp/other", sid);
+		// Ids are uuids: under another key it is still this session — one Claude
+		// moved, or a key our encoding spelled differently. `--session-id` here is
+		// "already in use" on every restore.
+		assert_eq!(session_flag(tmp.path(), Path::new("/tmp/proj"), sid), "--resume");
+	}
+
+	#[test]
+	fn next_session_id_mints_a_fresh_uuid_when_nothing_is_live() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
+		let a = mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap();
+		let b = mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap();
+		assert_ne!(a, b, "each call with nothing to reuse is a new session");
+		assert_eq!(a.len(), 36, "expected a uuid, got {a}");
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn next_session_id_fresh_does_not_reuse_a_live_session() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
+		let mut o = opts(80, 24);
+		o.project_id = "proj".into();
+		let session = o.session_id.clone();
+		mgr.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		let fresh = mgr.next_session_id("proj", Path::new("/tmp/proj"), None, true).unwrap();
+		assert_ne!(fresh, session, "a first message needs its own PTY");
+		assert!(mgr.next_session_id("proj", Path::new("/tmp/proj"), Some("nope"), true).is_err());
+		mgr.kill_all();
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn next_session_id_reuses_a_live_session_with_no_transcript() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
+		let mut o = opts(80, 24);
+		o.project_id = "proj".into();
+		let session = o.session_id.clone();
+		mgr.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		// Live, never messaged → the click lands on it rather than a second claude.
+		assert_eq!(
+			mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap(),
+			session
+		);
+		// A different project must not borrow it.
+		assert_ne!(
+			mgr.next_session_id("elsewhere", Path::new("/tmp/elsewhere"), None, false).unwrap(),
+			session
+		);
+		mgr.kill_all();
+	}
+
+	/// A running session keeps the profile it started under (F25), so it is
+	/// probed there: the project's current assignment names a store this
+	/// session's transcript was never written to.
+	#[test]
+	#[cfg(unix)]
+	fn next_session_id_probes_a_session_under_the_store_it_was_spawned_in() {
+		let spawned_in = tempfile::TempDir::new().unwrap();
+		let reassigned = tempfile::TempDir::new().unwrap();
+		let assignment: Arc<StdMutex<Option<PathBuf>>> = Arc::new(StdMutex::new(None));
+		let (mgr, _d, _e) = make_manager_in(spawned_in.path().to_path_buf());
+		let mgr = mgr.with_profile_dir({
+			let assignment = assignment.clone();
+			Arc::new(move |_, _, _| assignment.lock().unwrap().clone())
+		});
+		let mut o = opts(80, 24);
+		o.project_id = "proj".into();
+		let session = o.session_id.clone();
+		write_transcript(spawned_in.path(), "/tmp/proj", &session);
+		mgr.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		*assignment.lock().unwrap() = Some(reassigned.path().to_path_buf());
+		assert_ne!(
+			mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap(),
+			session
+		);
+		mgr.kill_all();
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn next_session_id_skips_a_live_session_that_has_been_messaged() {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let (mgr, _d, _e) = make_manager_in(tmp.path().to_path_buf());
+		let mut o = opts(80, 24);
+		o.project_id = "proj".into();
+		let session = o.session_id.clone();
+		write_transcript(tmp.path(), "/tmp/proj", &session);
+		mgr.spawn_with_argv(o, Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]))
+			.unwrap();
+
+		// It has real content, so "new session" must not hijack it.
+		assert_ne!(
+			mgr.next_session_id("proj", Path::new("/tmp/proj"), None, false).unwrap(),
+			session
+		);
+		mgr.kill_all();
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn kill_all_drops_every_terminal() {
+		let (mgr, _data, _exit) = make_manager();
+		for _ in 0..3 {
+			mgr.spawn_with_argv(
+				opts(80, 24),
+				Some(vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()]),
+			)
+			.unwrap();
+		}
+		assert_eq!(mgr.live_count(), 3);
+		mgr.kill_all();
+		// kill_all sleeps 500ms internally before removing; live_count is 0 after.
+		assert_eq!(mgr.live_count(), 0);
+	}
+
+	/// The resync path (F20), which exists for a renderer that reloaded: it
+	/// threw its state away while every bridge carried on.
+	///
+	/// Driven through a real spawn and a real client, because the thing that
+	/// could break is the iteration — a bridge that is attached but not reported
+	/// leaves the header saying Claude has gone from a session it is driving,
+	/// and nothing else would notice.
+	#[test]
+	#[cfg(unix)]
+	fn resync_re_announces_a_bridge_that_has_a_client_on_it() {
+		use tungstenite::client::IntoClientRequest;
+
+		let claude_dir = tempfile::tempdir().unwrap();
+		let (mut mgr, _data, _exit) = make_manager_in(claude_dir.path().to_path_buf());
+
+		let seen: Arc<StdMutex<Vec<IdeStatusEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+		let sink = seen.clone();
+		mgr.set_ide_status_cb(Arc::new(move |e| sink.lock().unwrap().push(e)));
+
+		// `sleep` rather than `echo`: the PTY has to outlive the assertions, or
+		// the handle — and the bridge with it — is gone before we look.
+		mgr.spawn_with_argv(
+			opts(80, 24),
+			Some(vec!["/bin/sh".into(), "-c".into(), "sleep 5".into()]),
+		)
+		.expect("spawn");
+
+		// The port is in the lockfile, which is the only place production reads
+		// it from either.
+		let dir = crate::services::ide::lockfile::dir(claude_dir.path());
+		let entry = std::fs::read_dir(&dir)
+			.expect("the bridge wrote its handle")
+			.flatten()
+			.next()
+			.expect("exactly one lockfile");
+		let port: u16 = entry
+			.path()
+			.file_stem()
+			.unwrap()
+			.to_string_lossy()
+			.parse()
+			.expect("the filename is the port");
+		let lock = crate::services::ide::lockfile::read(&entry.path()).unwrap();
+
+		// Nothing attached yet: resync must say so rather than say nothing.
+		mgr.resync_ide_status();
+		{
+			let events = seen.lock().unwrap();
+			assert_eq!(events.len(), 1);
+			assert!(!events[0].connected, "no client has connected yet");
+		}
+		seen.lock().unwrap().clear();
+
+		let mut request = format!("ws://127.0.0.1:{port}").into_client_request().unwrap();
+		request
+			.headers_mut()
+			.insert("x-claude-code-ide-authorization", lock.auth_token.parse().unwrap());
+		let (_ws, _) = tungstenite::connect(request).expect("a client attaches");
+
+		// The attach edge is asynchronous, so wait for it rather than racing it.
+		for _ in 0..100 {
+			if seen.lock().unwrap().iter().any(|e| e.connected) {
+				break;
+			}
+			std::thread::sleep(Duration::from_millis(20));
+		}
+		seen.lock().unwrap().clear();
+
+		mgr.resync_ide_status();
+
+		let events = seen.lock().unwrap();
+		assert_eq!(events.len(), 1, "one announcement per bridge");
+		assert!(events[0].connected, "a bridge with a client on it must say so");
+		assert_eq!(events[0].session_id, opts(80, 24).session_id);
+	}
+
+	// Baseline for specs/10-performance.md P9: what the in-process PTY path costs
+	// today, so the qursor-core extraction can be compared against it. Run with
+	// `cargo test -p qursor-core --release --lib baseline_ -- --ignored --nocapture --test-threads=1`.
+	type Stamps = Arc<StdMutex<Vec<(Instant, usize)>>>;
+	type ExitStamp = Arc<StdMutex<Option<(Instant, Option<i32>)>>>;
+
+	fn baseline_request() -> PtyRequest {
+		PtyRequest {
+			session_id: None,
+			client_key: Some("baseline".into()),
+			project_id: "baseline".into(),
+			cwd: None,
+			cols: 80,
+			rows: 24,
+			initial_prompt: None,
+			kind: TerminalKind::Shell,
+			agent: None,
+		}
+	}
+
+	/// A manager whose data events are stamped on arrival, and whose exit is too.
+	/// The sink is an in-process closure that base64-encodes (what `TauriSink`
+	/// does) and decodes (what the renderer does) each data event, i.e. today's
+	/// cost, not Tauri IPC.
+	fn baseline_manager() -> (TerminalManager, Stamps, ExitStamp) {
+		let data: Stamps = Arc::new(StdMutex::new(Vec::new()));
+		let exit = Arc::new(StdMutex::new(None));
+		let (dc, ec) = (data.clone(), exit.clone());
+		let mgr = TerminalManager::with_callbacks(
+			PathBuf::from(NO_STORE),
+			Arc::new(move |e: TerminalDataEvent| {
+				use base64::Engine;
+				let b64 = base64::engine::general_purpose::STANDARD.encode(&e.bytes);
+				let n =
+					base64::engine::general_purpose::STANDARD.decode(b64).map_or(0, |b| b.len());
+				dc.lock().unwrap().push((Instant::now(), n));
+			}),
+			Arc::new(|_| {}),
+			Arc::new(move |e: TerminalExitEvent| {
+				*ec.lock().unwrap() = Some((Instant::now(), e.code))
+			}),
+			crate::test_support::handle(),
+		);
+		(mgr, data, exit)
+	}
+
+	#[test]
+	#[ignore = "baseline measure, see specs/10-performance.md P9"]
+	fn baseline_throughput() {
+		const SIZE: usize = 50 * 1024 * 1024;
+		let _spawn = crate::test_support::spawn_lock();
+		let dir = tempfile::TempDir::new().unwrap();
+		let file = dir.path().join("50mb.txt");
+		let line = "0123456789abcdef".repeat(4) + "\n";
+		let lines = SIZE / line.len();
+		std::fs::write(&file, line.repeat(lines)).unwrap();
+		let path = file.to_string_lossy().into_owned();
+		#[cfg(windows)]
+		let argv = vec!["cmd".into(), "/c".into(), "type".into(), path];
+		#[cfg(not(windows))]
+		let argv = vec!["/bin/cat".into(), path];
+
+		let (mgr, data, exit) = baseline_manager();
+		let start = Instant::now();
+		let id = mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
+		// Measured on screen, the window today's renderer watches in.
+		mgr.ui.show(&id);
+		let (exited, code) = loop {
+			if let Some(e) = *exit.lock().unwrap() {
+				break e;
+			}
+			assert!(start.elapsed() < Duration::from_secs(120), "the child never exited");
+			std::thread::sleep(Duration::from_millis(5));
+		};
+		assert_eq!(code, Some(0), "the child failed, the number would be meaningless");
+		// The exit callback is not ordered after the final flush: the clock stops
+		// at the last byte, and the quiet wait below is not counted.
+		// POSIX: the tty adds a CR to every line.
+		#[cfg(not(windows))]
+		let expected = Some(lines * (line.len() + 1));
+		#[cfg(windows)]
+		let expected: Option<usize> = None;
+		let quiet_since = Instant::now();
+		let (last, received) = loop {
+			std::thread::sleep(Duration::from_millis(100));
+			let d = data.lock().unwrap();
+			let received: usize = d.iter().map(|(_, n)| n).sum();
+			let last = d.last().map_or(exited, |(t, _)| *t);
+			let complete = expected.is_none_or(|n| received >= n);
+			if last.elapsed() >= Duration::from_millis(100) && complete {
+				break (last, received);
+			}
+			assert!(
+				quiet_since.elapsed() < Duration::from_secs(30),
+				"output never completed: {received}"
+			);
+		};
+		if let Some(n) = expected {
+			assert_eq!(received, n, "bytes lost or duplicated");
+		}
+		#[cfg(windows)]
+		assert!(received > 0, "nothing arrived");
+		println!("bytes_received={received}");
+		println!("throughput_50mb_ms={}", exited.max(last).duration_since(start).as_millis());
+		mgr.kill_all();
+	}
+
+	#[test]
+	#[ignore = "baseline measure, see specs/10-performance.md P9"]
+	fn baseline_echo() {
+		const SAMPLES: usize = 400;
+		let _spawn = crate::test_support::spawn_lock();
+		// The simplest child that echoes what it is typed: `cat` on a tty, the
+		// console's own line editor under ConPTY.
+		#[cfg(windows)]
+		let argv = vec!["cmd".into(), "/q".into()];
+		#[cfg(not(windows))]
+		let argv = vec!["/bin/cat".into()];
+
+		let (mgr, data, _exit) = baseline_manager();
+		let id = mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
+		mgr.ui.show(&id);
+		let mut lat = Vec::new();
+		std::thread::sleep(Duration::from_millis(500));
+		for i in 0..SAMPLES {
+			// Let the previous echo drain. The jitter keeps the probe from locking
+			// onto one phase of the flusher's tick, which would hide added delay.
+			std::thread::sleep(Duration::from_millis(100 + (i as u64 * 7919) % 32));
+			let seen = data.lock().unwrap().len();
+			let t0 = Instant::now();
+			mgr.write(&id, b"a").expect("write");
+			let at = loop {
+				if let Some((t, _)) = data.lock().unwrap().get(seen) {
+					break *t;
+				}
+				assert!(t0.elapsed() < Duration::from_secs(5), "no echo");
+				std::thread::sleep(Duration::from_micros(50));
+			};
+			assert!(at >= t0, "an echo stamped before its write is a stale event");
+			lat.push(at.duration_since(t0).as_micros());
+		}
+		lat.sort_unstable();
+		println!("echo_p50_us={}", lat[lat.len() / 2]);
+		println!("echo_p95_us={}", lat[lat.len() * 95 / 100]);
+		mgr.kill_all();
+	}
+}
+#[cfg(all(test, windows))]
+mod windows_tests {
+	use super::*;
+	use std::sync::{Arc, Mutex as StdMutex};
+
+	type DataLog = Arc<StdMutex<Vec<TerminalDataEvent>>>;
+
+	fn make_manager(claude_dir: &Path) -> (TerminalManager, DataLog) {
+		let data: DataLog = Arc::new(StdMutex::new(Vec::new()));
+		let data_callback = data.clone();
+		let manager = TerminalManager::with_callbacks(
+			claude_dir.to_path_buf(),
+			Arc::new(move |event| data_callback.lock().unwrap().push(event)),
+			Arc::new(|_| {}),
+			Arc::new(|_| {}),
+			crate::test_support::handle(),
+		);
+		(manager, data)
+	}
+
+	fn shell_request(cwd: &Path) -> PtyRequest {
+		PtyRequest {
+			session_id: None,
+			client_key: Some("windows-native-test".into()),
+			project_id: "windows-native-test".into(),
+			cwd: Some(cwd.to_string_lossy().into_owned()),
+			cols: 80,
+			rows: 24,
+			initial_prompt: None,
+			kind: TerminalKind::Shell,
+			agent: None,
+		}
+	}
+
+	fn powershell_literal(value: &str) -> String {
+		format!("'{}'", value.replace('\'', "''"))
+	}
+
+	fn spawn_powershell(
+		manager: &TerminalManager,
+		cwd: &Path,
+		script: &str,
+	) -> AppResult<TerminalId> {
+		let shell = crate::services::shell_path::user_shell();
+		let mut argv = vec![shell.to_string_lossy().into_owned()];
+		argv.extend([
+			"-NoLogo".into(),
+			"-NoProfile".into(),
+			"-NonInteractive".into(),
+			"-Command".into(),
+			script.into(),
+		]);
+		manager.spawn_inner(shell_request(cwd), Some(argv))
+	}
+
+	fn output_for(data: &DataLog, id: &str) -> Vec<u8> {
+		data.lock()
+			.unwrap()
+			.iter()
+			.filter(|event| event.id == id)
+			.flat_map(|event| event.bytes.clone())
+			.collect()
+	}
+
+	fn wait_for_output(data: &DataLog, id: &str, needle: &[u8], timeout: Duration) -> bool {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if output_for(data, id).windows(needle.len()).any(|window| window == needle) {
+				return true;
+			}
+			if Instant::now() >= deadline {
+				return false;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		}
+	}
+
+	fn wait_for_pid_file(path: &Path, timeout: Duration) -> Option<u32> {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if let Ok(contents) = std::fs::read_to_string(path) {
+				if let Ok(pid) = contents.trim().parse() {
+					return Some(pid);
+				}
+			}
+			if Instant::now() >= deadline {
+				return None;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		}
+	}
+
+	fn process_is_running(pid: u32) -> bool {
+		let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+		if snapshot == INVALID_HANDLE_VALUE {
+			return false;
+		}
+		let snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot) };
+		let mut entry = PROCESSENTRY32W {
+			dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+			..Default::default()
+		};
+		let mut found =
+			unsafe { Process32FirstW(snapshot.as_raw_handle() as HANDLE, &mut entry) != 0 };
+		while found {
+			if entry.th32ProcessID == pid {
+				return true;
+			}
+			found = unsafe { Process32NextW(snapshot.as_raw_handle() as HANDLE, &mut entry) != 0 };
+		}
+		false
+	}
+
+	fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+		let deadline = Instant::now() + timeout;
+		loop {
+			if !process_is_running(pid) {
+				return true;
+			}
+			if Instant::now() >= deadline {
+				return false;
+			}
+			std::thread::sleep(Duration::from_millis(25));
+		}
+	}
+
+	#[test]
+	fn powershell_runs_in_conpty_and_streams_output() {
+		let _spawn = crate::test_support::spawn_lock();
+		let temp = tempfile::Builder::new()
+			.prefix("factorai ConPTY ü ")
+			.tempdir()
+			.expect("temporary directory");
+		let (manager, data) = make_manager(temp.path());
+		let id = spawn_powershell(
+			&manager,
+			temp.path(),
+			"Write-Output 'WINDOWS_CONPTY_OK'; Start-Sleep -Milliseconds 150",
+		)
+		.expect("spawn PowerShell in ConPTY");
+
+		assert!(
+			wait_for_output(&data, &id, b"WINDOWS_CONPTY_OK", Duration::from_secs(10)),
+			"PowerShell output did not reach the terminal data stream"
+		);
+		manager.kill_all();
+	}
+
+	#[test]
+	fn killing_a_conpty_terminates_a_real_child_process() {
+		let _spawn = crate::test_support::spawn_lock();
+		let temp = tempfile::TempDir::new().expect("temporary directory");
+		let (manager, _data) = make_manager(temp.path());
+		let powershell = crate::services::shell_path::user_shell();
+		let pid_file = temp.path().join("child process pid.txt");
+		let script = format!(
+			"$child = Start-Process -FilePath {} -ArgumentList '-NoLogo -NoProfile -NonInteractive -Command Start-Sleep -Seconds 120' -PassThru -WindowStyle Hidden; [System.IO.File]::WriteAllText({}, [string]$child.Id); Start-Sleep -Seconds 120",
+			powershell_literal(&powershell.to_string_lossy()),
+			powershell_literal(&pid_file.to_string_lossy()),
+		);
+		let id = spawn_powershell(&manager, temp.path(), &script).expect("spawn process tree");
+
+		let child_pid = wait_for_pid_file(&pid_file, Duration::from_secs(10))
+			.expect("PowerShell child wrote its process id");
+		assert!(
+			process_is_running(child_pid),
+			"the synthetic child must still be alive before kill"
+		);
+		manager.kill(&id).expect("kill the ConPTY root");
+		assert!(
+			wait_for_process_exit(child_pid, Duration::from_secs(10)),
+			"the Job Object must terminate the child PowerShell process too"
+		);
+	}
+}

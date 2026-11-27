@@ -17,6 +17,8 @@ target/
 # Tauri
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/schemas/
+# The qursor-core sidecar, built by `pnpm core:build --bundle`.
+apps/desktop/src-tauri/binaries/
 apps/desktop/dist/
 
 # Editors / OS

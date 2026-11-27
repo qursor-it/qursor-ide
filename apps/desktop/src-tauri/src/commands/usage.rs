@@ -13,7 +13,8 @@ use crate::error::{AppError, AppResult};
 use crate::models::{PlanItem, ProviderUsage, SessionUsage};
 use crate::platform::taskbar_widget::config::WidgetConfig;
 use crate::services::session_plan;
-use crate::services::usage::{mcp::GoKeyUpdate, session_cost};
+use crate::services::usage::mcp::{GoKeyUpdate, GoReport};
+use crate::services::usage::session_cost;
 use crate::state::AppState;
 
 /// The latest known limits per profile, with any window that has passed its
@@ -23,14 +24,11 @@ pub fn get_usage(state: State<'_, AppState>) -> AppResult<Vec<ProviderUsage>> {
 	Ok(state.usage.snapshot(crate::services::usage::now_ms()))
 }
 
-/// Which credential source is configured. The key stays in the backend.
+/// Which credential source is configured. The key stays in the core, which
+/// owns the vault (docs/superpowers/specs/2026-11-26-local-core-design.md §5a).
 #[tauri::command]
 pub async fn open_code_go_key_source(state: State<'_, AppState>) -> AppResult<GoKeyUpdate> {
-	let (db, store, go) = (state.db.clone(), state.usage.clone(), state.go_usage.clone());
-	crate::commands::off_main(move || {
-		Ok(GoKeyUpdate { source: go.key_source(), status: go.sync(&db, &store) })
-	})
-	.await
+	go_report(&state, "usage.go", serde_json::Value::Null).await
 }
 
 #[tauri::command]
@@ -38,14 +36,24 @@ pub async fn set_open_code_go_key(
 	state: State<'_, AppState>,
 	key: Option<String>,
 ) -> AppResult<GoKeyUpdate> {
-	let (db, store) = (state.db.clone(), state.usage.clone());
-	let go = state.go_usage.clone();
 	let key = key.map(Zeroizing::new);
-	crate::commands::off_main(move || {
-		let source = go.set_key(key.as_deref().map(String::as_str), &store)?;
-		Ok(GoKeyUpdate { source, status: go.sync(&db, &store) })
-	})
-	.await
+	go_report(&state, "usage.setGoKey", serde_json::json!({ "key": key.as_deref() })).await
+}
+
+/// Ask the core about the Go key, and put the reading it reports in this
+/// app's usage store, where the panel and the taskbar widget read it.
+async fn go_report(
+	state: &AppState,
+	method: &str,
+	params: serde_json::Value,
+) -> AppResult<GoKeyUpdate> {
+	let link = state.core.link().await?;
+	let reply =
+		link.request(method, params).await.map_err(|e| AppError::Process(format!("{e:#}")))?;
+	let report: GoReport =
+		serde_json::from_value(reply).map_err(|e| AppError::Process(e.to_string()))?;
+	state.usage.put_go(report.usage);
+	Ok(GoKeyUpdate { source: report.source, status: report.status })
 }
 
 /// How the taskbar widget is laid out, or the defaults when nothing was saved.

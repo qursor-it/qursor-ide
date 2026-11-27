@@ -16,15 +16,15 @@
 
 use std::collections::HashSet;
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, OptionalExtension};
 use serde::Deserialize;
 use tauri::State;
 
-use crate::commands::projects::list_projects_in;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::models::{Project, SidebarChild, SidebarRow};
+use crate::models::SidebarRow;
 use crate::state::AppState;
+pub use qursor_core::services::workspace::{ensure_project_row, list_sidebar_in};
 
 /// The name a group gets before the user types one. The renderer opens the
 /// inline editor with this selected, so it is a starting point rather than a
@@ -83,91 +83,6 @@ fn log_first_answer(rows: usize) {
 	ANSWERED.call_once(|| {
 		tracing::info!(rows, "first sidebar answer — the renderer can paint");
 	});
-}
-
-/// The tree, already ordered.
-///
-/// Two queries and an in-memory assembly rather than one recursive CTE: the rows
-/// are counted in tens, the project payload is the same `PROJECT_SELECT` every
-/// other command uses (so the shape cannot drift), and a CTE that had to carry
-/// those aggregate subqueries through a join would be harder to read than this
-/// is to write.
-///
-/// The `display_name` tie-break is doing real work — see this module's header on
-/// sparse ordinals.
-pub fn list_sidebar_in(conn: &Connection) -> AppResult<Vec<SidebarRow>> {
-	let projects = list_projects_in(conn)?;
-	let by_id: std::collections::HashMap<&str, &Project> =
-		projects.iter().map(|p| (p.id.as_str(), p)).collect();
-
-	let mut stmt = conn.prepare(
-		"SELECT r.id, r.kind, r.parent_id, r.name, r.project_id
-		   FROM sidebar_rows r
-		   LEFT JOIN projects p ON p.id = r.project_id
-		  ORDER BY r.sort_order, COALESCE(p.display_name, r.name) COLLATE NOCASE",
-	)?;
-	let rows: Vec<RawRow> = stmt
-		.query_map([], |r| {
-			Ok(RawRow {
-				id: r.get(0)?,
-				kind: r.get(1)?,
-				parent_id: r.get(2)?,
-				name: r.get(3)?,
-				project_id: r.get(4)?,
-			})
-		})?
-		.collect::<rusqlite::Result<_>>()?;
-	drop(stmt);
-
-	// Two passes so a child can be attached whatever order the flat result
-	// arrived in — the ORDER BY above sorts within each scope, but a group's rows
-	// and its children are interleaved in one result set.
-	let mut out: Vec<SidebarRow> = Vec::new();
-	let mut group_index: std::collections::HashMap<String, usize> =
-		std::collections::HashMap::new();
-	for row in rows.iter().filter(|r| r.parent_id.is_none()) {
-		if row.kind == "group" {
-			group_index.insert(row.id.clone(), out.len());
-			out.push(SidebarRow::Group {
-				row_id: row.id.clone(),
-				// NOT NULL for a group row by CHECK; the fallback is for a
-				// database somebody edited by hand.
-				name: row.name.clone().unwrap_or_default(),
-				children: Vec::new(),
-			});
-			continue;
-		}
-		// A row whose project is gone should be impossible — ON DELETE CASCADE
-		// retires it — so skipping is a guard, not a branch the UI depends on.
-		let Some(project) = row.project(&by_id) else { continue };
-		out.push(SidebarRow::Project { row_id: row.id.clone(), project });
-	}
-	for row in &rows {
-		let Some(parent) = row.parent_id.as_deref() else { continue };
-		let Some(&index) = group_index.get(parent) else { continue };
-		let Some(project) = row.project(&by_id) else { continue };
-		if let Some(SidebarRow::Group { children, .. }) = out.get_mut(index) {
-			children.push(SidebarChild { row_id: row.id.clone(), project });
-		}
-	}
-	Ok(out)
-}
-
-/// One `sidebar_rows` row as the database hands it back, before it becomes a
-/// [`SidebarRow`]. A named struct rather than a five-wide tuple, which clippy
-/// objects to and which nobody could read at the call site anyway.
-struct RawRow {
-	id: String,
-	kind: String,
-	parent_id: Option<String>,
-	name: Option<String>,
-	project_id: Option<String>,
-}
-
-impl RawRow {
-	fn project(&self, by_id: &std::collections::HashMap<&str, &Project>) -> Option<Project> {
-		self.project_id.as_deref().and_then(|pid| by_id.get(pid)).map(|p| (*p).clone())
-	}
 }
 
 // ── Writing the order ───────────────────────────────────────────────────────
@@ -402,32 +317,4 @@ fn normalise_name(name: &str) -> AppResult<String> {
 		return Err(AppError::InvalidInput("a group needs a name".into()));
 	}
 	Ok(trimmed.to_string())
-}
-
-/// Give a project a row at the top of the sidebar, or leave the one it has.
-///
-/// Called by `add_project`, which is idempotent by path — so this has to be too,
-/// or re-adding a folder would give it a second row and `list_sidebar` would
-/// draw it twice. The UNIQUE index on `project_id` would catch that; returning
-/// early is what stops it becoming an error the user sees for doing something
-/// reasonable.
-pub fn ensure_project_row(tx: &Transaction<'_>, project_id: &str) -> AppResult<()> {
-	let exists: bool = tx
-		.query_row("SELECT 1 FROM sidebar_rows WHERE project_id = ?1", params![project_id], |_| {
-			Ok(true)
-		})
-		.optional()?
-		.unwrap_or(false);
-	if exists {
-		return Ok(());
-	}
-	tx.execute(
-		"INSERT INTO sidebar_rows(id, kind, parent_id, sort_order, project_id, name)
-		 VALUES(?1, 'project', NULL,
-		        (SELECT COALESCE(MIN(sort_order), 0) - 1
-		           FROM sidebar_rows WHERE parent_id IS NULL),
-		        ?2, NULL)",
-		params![uuid::Uuid::new_v4().to_string(), project_id],
-	)?;
-	Ok(())
 }

@@ -1,5 +1,49 @@
 # Backend (Rust / Tauri)
 
+## Where the code lives (ADR-0127)
+
+`crates/qursor-core` holds the terminal manager, SSH pool/tunnels/SFTP, vault,
+agent policy, servers and workspace listings, attention decisions, the
+`usage.json` read, the DB opener and the protocol. It has no Tauri dependency;
+events leave through `EventSink` / `CoreEvent`. The app re-exports the module
+paths it still uses (not the vault, SSH, WSL or server-files ones: the core is
+their only user) and adds `CoreLink` (spawns and talks to the sidecar). The core never
+migrates: `Db::open_existing` requires the `_meta` `migration:*` ledger to match
+exactly, otherwise exit 4; a ledger it cannot read (busy, corrupt) is exit 1.
+`qursor-core --data-dir <path> [--parent-pid <pid>]` prints
+`{"ready":true,"port":N}`; exit 2 bad arguments, 3 lock held, 4 DB not ready,
+1 anything else. The first frame of a
+connection is a hello with the 32-byte hex secret (compared in constant time,
+redacted in `Debug`); `Origin` must be allowlisted or absent. Control traffic is
+JSON envelopes; terminal bytes are binary frames `op u8 | slot u16 BE |
+payload` (Output 1, Input 2, Resize 3; 4-6 reserved for snapshots). A client
+whose queue passes 8 MiB is closed. Output flushes every 16 ms for a visible
+client and 100 ms otherwise. Clients ping every 10 s and the core drops one
+silent for 20 s. The wire method `core.shutdown` (`keepTerminals: false`; a
+confirmed or idle quit sends it through `CoreLink`) kills every PTY and stops
+the core. `core_shutdown` is the separate Tauri command the updater invokes
+before its relaunch, and it sends the same `core.shutdown`. With the last client
+gone the core waits 10 s, kills its PTYs and exits. With `--parent-pid` it polls the
+parent every 500 ms, and once the parent is gone it shuts down at once, with no
+10 s wait. The app's link re-links whenever it drops, backing off from 100 ms to
+2 s, until the quit stops it; the quit guard waits up to 1 s for it and
+otherwise decides on the last counts heard.
+
+The core keeps its files in `<data_dir>/core/`: `core.json` (pid, protocol and
+app version, port, secret; written to a temp file and renamed over, 0600 on Unix,
+removed on exit), `core.lock` (the one-core-per-data-folder lock, held for the
+life of the process), `host-id` (minted on the first start, the same after) and
+`core.log` (the core's log, no secrets; a detached process has no stderr). A
+recorded core that is alive but does not answer may be one on its way out, still
+holding the lock while it kills its terminals: `CoreLink` then retries the start,
+which exits 3, every 250 ms for up to 10 s until that holder is gone. On Windows
+the NSIS pre-install hook (`windows/hooks.nsh`) stops a `qursor-core.exe` still
+running from this install's own path before it overwrites the binary; a core of
+another install is left alone.
+
+The terminal commands and `terminal:*` events below moved to this protocol and
+are listed only until the table is rewritten.
+
 ## Module layout (`apps/desktop/src-tauri/src/`)
 
 ```
@@ -328,7 +372,7 @@ routine_pending_fires() -> Vec<FireEvent>
 // prompt field is its only caller.
 list_skills(project_id: String) -> Vec<SkillInfo>
 
-// terminal
+// terminal: `terminal_*` and `shell_spawn` moved to the core protocol (ADR-0127)
 start_session(project_id: String, agent: Option<AgentId>, fresh: Option<bool>) -> SessionId  // see "Session ids" below
 terminal_spawn(opts: SpawnOpts) -> Spawned              // session_id, project_id, cwd?, cols, rows, initial_prompt?, agent? → { id, agent } (F30)
 terminal_write(id: TerminalId, data: String) -> ()
@@ -571,6 +615,8 @@ session_usage(session_id: String) -> Option<SessionUsage>
 ```
 
 ## Tauri events (Rust → JS only)
+
+`terminal:data/status/exit` now arrive over the core protocol (ADR-0127).
 
 | Event                  | Payload                              | Source              |
 | ---------------------- | ------------------------------------ | ------------------- |

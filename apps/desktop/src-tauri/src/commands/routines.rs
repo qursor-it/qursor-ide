@@ -20,6 +20,7 @@ use crate::error::AppResult;
 use crate::models::{Routine, RoutineInput};
 use crate::services::routines::{self, FireEvent, RoutinePatch, RunNowResult};
 use crate::state::AppState;
+use crate::tauri_sink::TauriSink;
 
 /// A project's routines, oldest first.
 #[tauri::command]
@@ -38,7 +39,7 @@ pub fn create_routine(
 	input: RoutineInput,
 ) -> AppResult<Routine> {
 	let now = crate::epoch_ms();
-	routines::create_and_announce(&state.db, &app, &input, None, now)
+	routines::create_and_announce(&state.db, &TauriSink::new(app), &input, None, now)
 }
 
 /// Rewrite a routine's configuration.
@@ -54,7 +55,14 @@ pub fn update_routine(
 	input: RoutineInput,
 ) -> AppResult<Routine> {
 	let now = crate::epoch_ms();
-	routines::update_and_announce(&state.db, &app, &id, &RoutinePatch::whole(&input), None, now)
+	routines::update_and_announce(
+		&state.db,
+		&TauriSink::new(app),
+		&id,
+		&RoutinePatch::whole(&input),
+		None,
+		now,
+	)
 }
 
 /// Delete a routine. **Leaves a running session alone** (F22): the caller
@@ -67,7 +75,7 @@ pub fn delete_routine(
 	id: String,
 ) -> AppResult<()> {
 	let now = crate::epoch_ms();
-	routines::delete_and_announce(&state.db, &app, &id, now)
+	routines::delete_and_announce(&state.db, &TauriSink::new(app), &id, now)
 }
 
 /// Stop, or resume, future fires. Never touches a live session.
@@ -81,7 +89,7 @@ pub fn set_routine_enabled(
 	let now = crate::epoch_ms();
 	routines::update_and_announce(
 		&state.db,
-		&app,
+		&TauriSink::new(app),
 		&id,
 		&RoutinePatch::just_enabled(enabled),
 		None,

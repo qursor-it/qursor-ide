@@ -4270,7 +4270,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "qursor-ide"
+name = "qursor-core"
 version = "0.58.0"
 dependencies = [
  "aes-gcm",
@@ -4282,22 +4282,56 @@ dependencies = [
  "dashmap",
  "dirs 5.0.1",
  "dunce",
- "fontdue",
  "futures-util",
+ "getrandom 0.4.2",
  "git2",
  "keyring",
  "libc",
- "notify",
- "notify-debouncer-mini",
  "parking_lot",
  "portable-pty",
- "regex",
+ "qursor-core",
  "rusqlite",
  "russh",
  "russh-sftp",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "tungstenite",
+ "ureq",
+ "url",
+ "uuid",
+ "vt100",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
+name = "qursor-ide"
+version = "0.58.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "dirs 5.0.1",
+ "dunce",
+ "fontdue",
+ "futures-util",
+ "git2",
+ "libc",
+ "notify",
+ "notify-debouncer-mini",
+ "parking_lot",
+ "qursor-core",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
@@ -4308,7 +4342,6 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-updater",
  "tempfile",
- "thiserror 1.0.69",
  "tiny-skia",
  "tokio",
  "tokio-tungstenite",
@@ -4318,7 +4351,6 @@ dependencies = [
  "tungstenite",
  "ureq",
  "uuid",
- "vt100",
  "webkit2gtk",
  "windows-sys 0.61.2",
  "zeroize",

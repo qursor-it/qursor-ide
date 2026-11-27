@@ -17,68 +17,14 @@ use crate::commands::off_main;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::models::{ImportCandidate, Project};
-use crate::services::{git, wsl};
+use crate::services::git;
 use crate::state::AppState;
-
-/// Columns and aggregates for one workspace row, shared by every query that
-/// returns a [`Project`] so the shape can't drift between them.
-const PROJECT_SELECT: &str = "SELECT p.id, p.real_path, p.display_name, p.missing,
-	-- Sub-agents don't count: the number answers how many sessions the project
-	-- has, and an agent run on a session's behalf is part of that session
-	-- rather than another one. Last activity is not filtered the same way --
-	-- an agent working is the project being worked on.
-	(SELECT COUNT(*) FROM sessions s
-	   JOIN discovered_projects d ON d.id = s.discovered_id
-	  WHERE d.project_id = p.id AND s.subagent_of IS NULL
-	    AND s.id NOT IN (SELECT session_id FROM delegate_sessions)),
-	(SELECT MAX(s.updated_at) FROM sessions s
-	   JOIN discovered_projects d ON d.id = s.discovered_id
-	  WHERE d.project_id = p.id
-	    AND s.id NOT IN (SELECT session_id FROM delegate_sessions)),
-	-- The assignment, and NULL meaning the default (F25 slice 3). A LEFT JOIN
-	-- rather than a subquery pair, since both columns come from the one row.
-	pr.id, pr.name
-	FROM projects p
-	LEFT JOIN project_profiles pp ON pp.project_id = p.id AND pp.agent = 'claude'
-	LEFT JOIN profiles pr ON pr.id = pp.profile_id";
-
-fn map_project(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
-	let real_path: String = row.get(1)?;
-	Ok(Project {
-		id: row.get(0)?,
-		// Computed here rather than stored, so it covers every project that was
-		// ever added — including the ones added before this existed, and the
-		// ones added on a machine that was not WSL (ADR-0044).
-		windows_filesystem: wsl::is_windows_filesystem(Path::new(&real_path)),
-		real_path,
-		display_name: row.get(2)?,
-		missing: row.get::<_, i64>(3)? != 0,
-		session_count: row.get(4)?,
-		last_session_at: row.get(5)?,
-		profile_id: row.get(6)?,
-		profile_name: row.get(7)?,
-	})
-}
+pub use qursor_core::services::workspace::{list_projects_in, project_path};
+use qursor_core::services::workspace::{map_project, PROJECT_SELECT};
 
 #[tauri::command]
 pub fn list_projects(state: State<'_, AppState>) -> AppResult<Vec<Project>> {
 	state.db.read(list_projects_in)
-}
-
-/// Every project in the workspace, flat and by name.
-///
-/// **Flat on purpose, and not the sidebar's query.** The sidebar reads
-/// `list_sidebar`, which returns the tree; this one answers "which projects are
-/// in the workspace" for the four surfaces that want exactly that — the tab
-/// strip, the project route, the import dialog and the search route. Since
-/// ADR-0025 the order lives on `sidebar_rows`, so there is nothing here for a
-/// caller to sort by except the name, and a stable alphabetical order beats
-/// whatever SQLite would otherwise hand back.
-pub fn list_projects_in(conn: &Connection) -> AppResult<Vec<Project>> {
-	let sql = format!("{PROJECT_SELECT} ORDER BY p.display_name COLLATE NOCASE");
-	let mut stmt = conn.prepare(&sql)?;
-	let rows = stmt.query_map([], map_project)?.collect::<rusqlite::Result<Vec<_>>>()?;
-	Ok(rows)
 }
 
 /// Add a folder to the workspace, whether or not any agent has ever run in it.
@@ -658,15 +604,6 @@ fn project_by_path(conn: &Connection, real_path: &str) -> AppResult<Project> {
 	let sql = format!("{PROJECT_SELECT} WHERE p.real_path = ?1");
 	conn.query_row(&sql, params![real_path], map_project)
 		.map_err(|_| AppError::NotFound(format!("project at {real_path}")))
-}
-
-/// The folder a project points at, for the commands that need to touch disk.
-pub fn project_path(conn: &Connection, id: &str) -> AppResult<PathBuf> {
-	conn.query_row("SELECT real_path FROM projects WHERE id = ?1", params![id], |r| {
-		r.get::<_, String>(0)
-	})
-	.map(PathBuf::from)
-	.map_err(|_| AppError::NotFound(format!("project {id}")))
 }
 
 #[cfg(test)]
