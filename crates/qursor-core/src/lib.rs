@@ -2,10 +2,12 @@
 //! (docs/superpowers/specs/2026-11-26-local-core-design.md).
 
 pub mod agents;
+pub mod attention;
 pub mod db;
 pub mod error;
 pub mod models;
 pub mod protocol;
+pub mod server;
 pub mod services;
 
 use std::path::PathBuf;

@@ -16,6 +16,7 @@ mod server;
 pub mod terminals;
 mod tools;
 
+pub(crate) use server::tokens_match;
 pub use server::AgentToolsServer;
 pub use tools::{
 	AgentTools, Canvases, CreateRoutine, DelegationTools, ListRoutines, ReadUsageLimits, Routines,

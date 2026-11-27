@@ -230,6 +230,8 @@ pub struct TerminalStatusEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlertContext {
 	pub project_id: String,
+	/// The session the terminal runs, as it answers now; `None` for a shell.
+	pub session_id: Option<String>,
 	pub topic: Option<String>,
 }
 
@@ -1180,6 +1182,7 @@ impl TerminalManager {
 	pub fn alert_context(&self, id: &TerminalId) -> Option<AlertContext> {
 		self.terminals.get(id).map(|h| AlertContext {
 			project_id: h.project_id.clone(),
+			session_id: h.effective_id(),
 			topic: h.topic.lock().clone(),
 		})
 	}
@@ -2678,16 +2681,14 @@ const FLUSH_BYTES: usize = 32 * 1024;
 /// changes the moment its title does.
 const BACKGROUND_FLUSH_WINDOW: Duration = Duration::from_millis(100);
 
-/// How long this PTY's flusher should wait before its next drain.
-///
-/// A shell has no session, and a session the renderer has not named is not in
-/// front — but neither is a reason to slow a terminal the human may well be
-/// looking at, so only a session that is *definitely* someone else's gets the
-/// longer window.
-fn flush_window(ui: &UiState, session_id: Option<&str>) -> Duration {
-	match session_id {
-		Some(id) if ui.is_backgrounded(id) => BACKGROUND_FLUSH_WINDOW,
-		_ => FLUSH_WINDOW,
+/// How long this PTY's flusher should wait before its next drain: the short
+/// window while at least one client has it on screen, the long one otherwise
+/// (docs/superpowers/specs/2026-11-26-local-core-design.md §4).
+fn flush_window(ui: &UiState, terminal_id: &str) -> Duration {
+	if ui.is_visible(terminal_id) {
+		FLUSH_WINDOW
+	} else {
+		BACKGROUND_FLUSH_WINDOW
 	}
 }
 
@@ -2773,11 +2774,11 @@ fn spawn_reader(
 		.spawn(move || {
 			let mut adoption_checked = false;
 			loop {
-				// Re-read per tick rather than per spawn: which session is in front
-				// changes while the PTY runs, and a terminal that was in the
+				// Re-read per tick rather than per spawn: which terminals are on
+				// screen changes while the PTY runs, and a terminal that was in the
 				// background when it started is the common case for the one you
 				// switch to (PERF-14).
-				std::thread::sleep(flush_window(&ui, handle_f.session_id.as_deref()));
+				std::thread::sleep(flush_window(&ui, &id));
 				if let Some(signal) =
 					handle_f.opencode_signal.as_ref().filter(|_| !adoption_checked)
 				{
@@ -3079,21 +3080,14 @@ mod tests {
 	use std::sync::{Arc, Mutex as StdMutex};
 
 	#[test]
-	fn a_background_session_is_flushed_less_often_than_the_one_in_front() {
+	fn a_terminal_no_client_shows_is_flushed_less_often() {
 		let ui = UiState::default();
-		ui.set(crate::services::ide::ui_state::UiSnapshot {
-			active_session: Some("front".into()),
-			open_file: None,
-		});
+		ui.show("front");
 
-		assert_eq!(flush_window(&ui, Some("front")), FLUSH_WINDOW);
-		assert_eq!(flush_window(&ui, Some("behind")), BACKGROUND_FLUSH_WINDOW);
-		// A shell has no session, and nothing named means the renderer has not
-		// said yet — neither is a reason to slow a terminal someone may be
-		// watching. `is_backgrounded` is why this is not `!is_active`.
-		assert_eq!(flush_window(&ui, None), FLUSH_WINDOW);
-		assert_eq!(flush_window(&UiState::default(), None), FLUSH_WINDOW);
-		assert_eq!(flush_window(&UiState::default(), Some("anything")), FLUSH_WINDOW);
+		assert_eq!(flush_window(&ui, "front"), FLUSH_WINDOW);
+		assert_eq!(flush_window(&ui, "behind"), BACKGROUND_FLUSH_WINDOW);
+		ui.hide("front");
+		assert_eq!(flush_window(&ui, "front"), BACKGROUND_FLUSH_WINDOW);
 	}
 
 	type DataLog = Arc<StdMutex<Vec<TerminalDataEvent>>>;
@@ -5171,7 +5165,9 @@ mod tests {
 
 		let (mgr, data, exit) = baseline_manager();
 		let start = Instant::now();
-		mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
+		let id = mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
+		// Measured on screen, the window today's renderer watches in.
+		mgr.ui.show(&id);
 		let (exited, code) = loop {
 			if let Some(e) = *exit.lock().unwrap() {
 				break e;
@@ -5226,6 +5222,7 @@ mod tests {
 
 		let (mgr, data, _exit) = baseline_manager();
 		let id = mgr.spawn_inner(baseline_request(), Some(argv)).expect("spawn");
+		mgr.ui.show(&id);
 		let mut lat = Vec::new();
 		std::thread::sleep(Duration::from_millis(500));
 		for i in 0..SAMPLES {

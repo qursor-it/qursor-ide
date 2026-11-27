@@ -57,6 +57,9 @@ impl EventSink for TauriSink {
 				self.send("routines:changed", ProjectEvent { project_id })
 			}
 			CoreEvent::RoutineFire(e) => self.send("routine:fire", e),
+			// Only the core emits this: the app's own manager decides attention
+			// in `services::attention`.
+			CoreEvent::Attention(e) => self.send("attention", e),
 		}
 	}
 }

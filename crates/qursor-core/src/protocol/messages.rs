@@ -14,7 +14,9 @@ pub enum ClientType {
 	Cli,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `Debug` by hand: `Hello` carries the secret, which never reaches a log
+/// (docs/superpowers/specs/2026-11-26-local-core-design.md §3).
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
 pub enum ClientMsg {
 	Hello {
@@ -29,8 +31,40 @@ pub enum ClientMsg {
 	Request {
 		request_id: u64,
 		method: String,
+		/// Absent means `null`.
+		#[serde(default)]
 		params: serde_json::Value,
 	},
+}
+
+impl std::fmt::Debug for ClientMsg {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Hello {
+				client_id,
+				client_type,
+				protocol_version,
+				app_version,
+				capabilities,
+				..
+			} => f
+				.debug_struct("Hello")
+				.field("secret", &"<redacted>")
+				.field("client_id", client_id)
+				.field("client_type", client_type)
+				.field("protocol_version", protocol_version)
+				.field("app_version", app_version)
+				.field("capabilities", capabilities)
+				.finish(),
+			Self::Ping => f.write_str("Ping"),
+			// Params can carry a vault password (§5a).
+			Self::Request { request_id, method, .. } => f
+				.debug_struct("Request")
+				.field("request_id", request_id)
+				.field("method", method)
+				.finish_non_exhaustive(),
+		}
+	}
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +118,23 @@ mod tests {
 		)
 		.unwrap();
 		assert!(matches!(msg, ClientMsg::Request { request_id: 3, .. }));
+		let bare: ClientMsg =
+			serde_json::from_str(r#"{"type":"request","requestId":4,"method":"terminal.list"}"#)
+				.unwrap();
+		assert!(matches!(bare, ClientMsg::Request { params: serde_json::Value::Null, .. }));
+	}
+
+	#[test]
+	fn debug_never_shows_the_secret() {
+		let hello = ClientMsg::Hello {
+			secret: "s3cr3t".into(),
+			client_id: "c".into(),
+			client_type: ClientType::App,
+			protocol_version: 1,
+			app_version: "0".into(),
+			capabilities: vec![],
+		};
+		assert!(!format!("{hello:?}").contains("s3cr3t"));
 	}
 
 	#[test]

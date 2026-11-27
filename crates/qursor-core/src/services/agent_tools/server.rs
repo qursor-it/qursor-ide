@@ -263,7 +263,7 @@ fn authorised(header: &str, expected: &str) -> bool {
 
 /// Constant time over equal-length inputs. Length is compared first and leaks
 /// only the length, which is fixed for every token we mint.
-fn tokens_match(presented: &str, expected: &str) -> bool {
+pub(crate) fn tokens_match(presented: &str, expected: &str) -> bool {
 	let (a, b) = (presented.as_bytes(), expected.as_bytes());
 	if a.len() != b.len() {
 		return false;

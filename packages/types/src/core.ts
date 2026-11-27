@@ -46,7 +46,16 @@ export type CoreEvent =
 	| { event: 'agentTerminalRun'; payload: AgentRunEvent }
 	| { event: 'agentTerminalConfirm'; payload: ConfirmEvent }
 	| { event: 'routinesChanged'; payload: { projectId: string } }
-	| { event: 'routineFire'; payload: RoutineFireEvent };
+	| { event: 'routineFire'; payload: RoutineFireEvent }
+	| { event: 'attention'; payload: AttentionNotice };
+
+/** A session wants you and no client window is focused (F32); the app shows it. */
+export interface AttentionNotice {
+	sessionId: string | null;
+	terminalId: string;
+	title: string;
+	body: string;
+}
 
 export type ServerMsg =
 	| {

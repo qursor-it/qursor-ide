@@ -403,7 +403,11 @@ mod tests {
 		let sink = Arc::new(FakeSink::default());
 		let n = Arc::new(AttentionNotifier::new(sink.clone(), Duration::from_millis(200)));
 		n.set_focused(false);
-		let ctx = AlertContext { project_id: "p1".into(), topic: Some("Fix login".into()) };
+		let ctx = AlertContext {
+			project_id: "p1".into(),
+			session_id: None,
+			topic: Some("Fix login".into()),
+		};
 		*sink.ctx.lock() = Some(ctx.clone());
 		n.observe(&ev("t", Working));
 		n.on_status(&ev("t", Stopped));

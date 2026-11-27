@@ -6,6 +6,7 @@
 
 use serde::Serialize;
 
+use crate::attention::AttentionNotice;
 use crate::services::agent_policy::ConfirmEvent as AgentConfirmEvent;
 use crate::services::routines::FireEvent;
 use crate::services::terminal::{
@@ -47,4 +48,6 @@ pub enum CoreEvent {
 		project_id: String,
 	},
 	RoutineFire(FireEvent),
+	/// A session wants you and no client window is focused (F32): shown by the app.
+	Attention(AttentionNotice),
 }

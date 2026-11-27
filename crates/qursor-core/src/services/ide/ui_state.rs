@@ -15,6 +15,8 @@
 //! reads it. Small enough to hold under a lock: the write is a route change and
 //! the read is one MCP call.
 
+use std::collections::HashMap;
+
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -32,17 +34,22 @@ pub struct UiSnapshot {
 }
 
 /// The snapshot, shared between the command that writes it and the bridges that
-/// read it.
+/// read it, and which terminals some client has on screen.
 #[derive(Debug, Default)]
-pub struct UiState(Mutex<UiSnapshot>);
+pub struct UiState {
+	snapshot: Mutex<UiSnapshot>,
+	/// Terminal id → how many clients say it is visible: each client of the core
+	/// reports its own (docs/superpowers/specs/2026-11-26-local-core-design.md §4).
+	visible: Mutex<HashMap<String, usize>>,
+}
 
 impl UiState {
 	pub fn set(&self, snapshot: UiSnapshot) {
-		*self.0.lock() = snapshot;
+		*self.snapshot.lock() = snapshot;
 	}
 
 	pub fn get(&self) -> UiSnapshot {
-		self.0.lock().clone()
+		self.snapshot.lock().clone()
 	}
 
 	/// Is this the session the human is looking at?
@@ -52,24 +59,34 @@ impl UiState {
 	/// counts as "not this one": nothing is in front, so nothing may take the
 	/// window.
 	pub fn is_active(&self, session_id: &str) -> bool {
-		self.0.lock().active_session.as_deref() == Some(session_id)
+		self.snapshot.lock().active_session.as_deref() == Some(session_id)
 	}
 
-	/// Is some **other** session the one in front?
-	///
-	/// Not the negation of [`UiState::is_active`], and the difference is the
-	/// case where the renderer has named nothing: on the project list, in
-	/// settings, or before the first `ide_report_ui` of a run. `is_active`
-	/// answers "may this bridge take the window", where no answer means no; this
-	/// answers "is this session definitely not the one being watched", where no
-	/// answer means it might be (PERF-14).
-	pub fn is_backgrounded(&self, session_id: &str) -> bool {
-		matches!(self.0.lock().active_session.as_deref(), Some(active) if active != session_id)
+	/// One more client has this terminal on screen.
+	pub fn show(&self, terminal_id: &str) {
+		*self.visible.lock().entry(terminal_id.to_string()).or_default() += 1;
+	}
+
+	/// One client fewer has it on screen.
+	pub fn hide(&self, terminal_id: &str) {
+		let mut visible = self.visible.lock();
+		if let Some(n) = visible.get_mut(terminal_id) {
+			*n -= 1;
+			if *n == 0 {
+				visible.remove(terminal_id);
+			}
+		}
+	}
+
+	/// Does at least one client have it on screen? What picks its flush window
+	/// (PERF-14): a terminal nobody reported is nobody's.
+	pub fn is_visible(&self, terminal_id: &str) -> bool {
+		self.visible.lock().contains_key(terminal_id)
 	}
 
 	/// What `getOpenEditors` answers.
 	pub fn open_files(&self) -> Vec<String> {
-		self.0.lock().open_file.iter().cloned().collect()
+		self.snapshot.lock().open_file.iter().cloned().collect()
 	}
 }
 
@@ -111,5 +128,21 @@ mod tests {
 
 		ui.set(UiSnapshot { active_session: Some("a".into()), open_file: None });
 		assert!(ui.open_files().is_empty());
+	}
+
+	#[test]
+	fn visible_while_any_client_shows_it() {
+		let ui = UiState::default();
+		assert!(!ui.is_visible("t"));
+		ui.show("t");
+		ui.show("t");
+		ui.hide("t");
+		assert!(ui.is_visible("t"));
+		ui.hide("t");
+		assert!(!ui.is_visible("t"));
+		// A hide nobody matched is not a negative count.
+		ui.hide("t");
+		ui.show("t");
+		assert!(ui.is_visible("t"));
 	}
 }

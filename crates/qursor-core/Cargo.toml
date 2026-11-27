@@ -61,6 +61,9 @@ sha2 = "0.10"
 # directory, `persist`ed over it. Doing this by hand means inventing a unique
 # name, cleaning it up on every early return, and getting the rename right.
 tempfile = "3"
+# The core's secret (design §1): 32 bytes from the OS CSPRNG. Already in the tree
+# through uuid; named here because we call it directly.
+getrandom = "0.4"
 # Server sessions over SSH (F45, ADR-0105): one connection per server carrying
 # every shell tab, SFTP and tunnels as channels. `ring` instead of the default
 # `aws-lc-rs`, which needs cmake and NASM to build on Windows; `ring` is already
@@ -87,4 +90,6 @@ dunce = "1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Registry", "Win32_System_Environment"] }
 
 [dev-dependencies]
+# The integration tests in `tests/` share the spawn lock and runtime.
+qursor-core = { path = ".", features = ["test-support"] }
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
