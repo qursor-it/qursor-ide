@@ -98,11 +98,11 @@ pub fn run() {
 				}
 			}
 
-			// Built before anything spawns a child: it takes the Go key out of the
-			// environment so no child inherits it.
-			let vault =
-				Arc::new(services::vault::open_or_set_aside(data_dir.join("secrets.vault")));
-			let go_usage = Arc::new(services::usage::mcp::GoUsage::new(vault.clone()));
+			// Before anything spawns a child: the OpenCode Go key leaves the
+			// environment so no child inherits it, and goes to the core, which
+			// owns the vault it is kept in (docs/superpowers/specs/
+			// 2026-11-26-local-core-design.md §5a).
+			let go_key = services::usage::mcp::take_environment_key();
 
 			// Ask the user's login shell what their PATH is, on its own thread.
 			// A GUI process has never run an rc file, so ours has no Homebrew and
@@ -141,8 +141,11 @@ pub fn run() {
 			// 2026-11-26-local-core-design.md §1). Found or started off the main
 			// thread: the window does not wait for it, and `core_endpoint` does.
 			// The database is migrated above, which the core needs before it starts.
-			let core =
-				Arc::new(CoreCell::new(data_dir.clone(), app.package_info().version.to_string()));
+			let core = Arc::new(CoreCell::new(
+				data_dir.clone(),
+				app.package_info().version.to_string(),
+				go_key,
+			));
 			{
 				let (core, app) = (core.clone(), app.handle().clone());
 				tauri::async_runtime::spawn(async move {
@@ -152,7 +155,7 @@ pub fn run() {
 						.get_webview_window("main")
 						.and_then(|w| w.is_focused().ok())
 						.unwrap_or(false);
-					tell_focus(link, focused);
+					tell_focus(&link, focused);
 				});
 			}
 			let live = core.clone();
@@ -172,7 +175,7 @@ pub fn run() {
 					// scan is the trigger because it is already the pass that stats
 					// the filesystem — see `ReapShellsCb`.
 					.with_shell_reap(Arc::new(move || {
-						let Some(link) = reap.ready().cloned() else { return };
+						let Some(link) = reap.ready() else { return };
 						tauri::async_runtime::spawn(async move {
 							if let Err(error) =
 								link.request("shell.reapMissingCwd", Value::Null).await
@@ -249,7 +252,7 @@ pub fn run() {
 			app.manage(AppState {
 				db,
 				indexer: indexer.clone(),
-				core,
+				core: core.clone(),
 				claude_dir: cd,
 				data_dir,
 				routines: routines.clone(),
@@ -260,7 +263,6 @@ pub fn run() {
 				webview_health,
 				intelligence,
 				usage: usage.clone(),
-				go_usage: go_usage.clone(),
 				taskbar_widget: taskbar_widget.clone(),
 			});
 			// On unless the setting says `off`; a no-op off Windows.
@@ -275,7 +277,7 @@ pub fn run() {
 				usage_poll_store,
 				usage_db,
 				statusline_dir,
-				go_usage,
+				core.clone(),
 			);
 			spawn_initial_scan(indexer.clone());
 			watcher::spawn(indexer, watch.clone());
@@ -308,9 +310,7 @@ pub fn run() {
 			if let WindowEvent::Focused(focused) = event {
 				// The core's notifier only notifies a window that is not in front,
 				// and cannot see the window itself (F32).
-				if let Some(link) =
-					window.try_state::<AppState>().and_then(|s| s.core.ready().cloned())
-				{
+				if let Some(link) = window.try_state::<AppState>().and_then(|s| s.core.ready()) {
 					tell_focus(&link, *focused);
 				}
 				if *focused {
@@ -323,10 +323,22 @@ pub fn run() {
 					// with the window whether or not a session is asking to be kept.
 					state.intelligence.cancel_all();
 					let link = state.core.ready();
+					// Asked now, not the last counts heard: a terminal that has not
+					// changed status since it started has sent no event.
+					if let Some(link) = &link {
+						let asked = tauri::async_runtime::block_on(async {
+							tokio::time::timeout(COUNTS_AT_CLOSE, link.refresh()).await
+						});
+						match asked {
+							Ok(Ok(())) => {}
+							Ok(Err(error)) => warn!("quit guard: no fresh counts: {error:#}"),
+							Err(_) => warn!("quit guard: qursor-core did not answer in time"),
+						}
+					}
 					// **What is working decides whether we ask; what is live decides
 					// what dies** (ADR-0020). Both go to the renderer so the dialog
 					// can say the second thing rather than imply it.
-					let (live, working) = link.map(CoreLink::counts).unwrap_or((0, 0));
+					let (live, working) = link.as_ref().map(CoreLink::counts).unwrap_or((0, 0));
 					if working > 0 {
 						api.prevent_close();
 						// Emit via the AppHandle, NOT `window.emit`: in Tauri v2 the
@@ -340,18 +352,17 @@ pub fn run() {
 							"app:quit-requested",
 							json!({ "liveCount": live, "workingCount": working }),
 						);
-					} else if let Some(link) = link {
+					} else if link.is_some() {
 						// Nothing is working, so nothing is asked — but kill-on-quit
 						// is still non-optional (ADR-0005): the core stops with every
 						// terminal it holds, footer shells included.
 						//
 						// Synchronous on purpose, and the close proceeds when it
-						// returns: `kill_all`'s 500ms SIGTERM grace has to finish
-						// before the process goes or the grace period is a no-op. The
-						// core would also follow us out through `--parent-pid`.
-						if let Err(error) = tauri::async_runtime::block_on(link.shutdown()) {
-							warn!("qursor-core did not stop cleanly: {error:#}");
-						}
+						// returns: the core's shutdown waits out the terminals' grace
+						// before it closes the connection, which a process already
+						// gone could not. The core would also follow us out through
+						// `--parent-pid`, after that grace.
+						tauri::async_runtime::block_on(state.core.shutdown());
 					}
 					// The close goes ahead: the widget goes with it.
 					if working == 0 {
@@ -363,6 +374,7 @@ pub fn run() {
 		.invoke_handler(tauri::generate_handler![
 			commands::core::core_endpoint,
 			commands::core::attention_show,
+			commands::core::core_shutdown,
 			commands::servers::create_server_folder,
 			commands::servers::rename_server_folder,
 			commands::servers::delete_server_folder,
@@ -485,6 +497,9 @@ pub fn run() {
 		.run(tauri::generate_context!())
 		.expect("error while running factorai");
 }
+
+/// How long the quit guard waits for fresh counts before it uses the last ones.
+const COUNTS_AT_CLOSE: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Tell the core whether the window is in front; best effort, like an emit.
 fn tell_focus(link: &CoreLink, focused: bool) {

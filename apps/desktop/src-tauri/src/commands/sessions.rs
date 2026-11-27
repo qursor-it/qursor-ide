@@ -537,7 +537,14 @@ pub async fn delete_session(
 	state: State<'_, AppState>,
 	session_id: String,
 ) -> AppResult<()> {
-	let is_live = state.core.live_session_ids().contains(&session_id);
+	// Asked now: the last counts may predate a session started a moment ago.
+	let is_live = match state.core.ready() {
+		Some(link) => {
+			link.refresh().await.map_err(|e| crate::error::AppError::Process(format!("{e:#}")))?;
+			link.live_session_ids().contains(&session_id)
+		}
+		None => false,
+	};
 	// Off the main thread (PERF-07): moving a transcript to the OS trash is a
 	// filesystem operation on a directory we do not own the speed of.
 	let project_id = {

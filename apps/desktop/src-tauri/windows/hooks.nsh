@@ -34,7 +34,19 @@
   ${EndIf}
 !macroend
 
+; qursor-core.exe runs beside the app (bundle.externalBin) and is locked while
+; it runs. The app stops it before its own update relaunch; one still running
+; from this install (an update applied as the app exits) is stopped here, and
+; its job object takes its terminals with it. Only this install's binary:
+; another build's core has another path.
+!macro QURSOR_STOP_INSTALLED_CORE
+  nsExec::ExecToLog 'powershell -NoProfile -NonInteractive -Command "Get-Process qursor-core -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq $\'$INSTDIR\qursor-core.exe$\' } | Stop-Process -Force"'
+  Pop $0
+  Sleep 500
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro QURSOR_STOP_INSTALLED_CORE
   !insertmacro QURSOR_REMOVE_LEGACY_FACTORAI_INSTALL
   ; Written by qursor-ide installs made under the old identifier (ADR-0088).
   DeleteRegKey HKCU "Software\factorai\qursor-ide"

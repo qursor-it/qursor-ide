@@ -1,5 +1,4 @@
 use tauri::{AppHandle, Manager};
-use tracing::warn;
 
 use crate::error::AppResult;
 use crate::state::AppState;
@@ -22,11 +21,7 @@ pub fn shell_name() -> String {
 pub async fn app_quit_confirmed(app: AppHandle) -> AppResult<()> {
 	if let Some(state) = app.try_state::<AppState>() {
 		state.intelligence.cancel_all();
-		if let Some(link) = state.core.ready() {
-			if let Err(error) = link.shutdown().await {
-				warn!("qursor-core did not stop cleanly: {error:#}");
-			}
-		}
+		state.core.shutdown().await;
 		state.taskbar_widget.stop();
 	}
 	app.exit(0);

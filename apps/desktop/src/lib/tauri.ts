@@ -625,6 +625,9 @@ export const cmd = {
 	 *  chip (F23 as amended by F24). One value per app, asked once at boot. */
 	shellName: () => invoke<string>('shell_name'),
 	appQuitConfirmed: () => invoke<void>('app_quit_confirmed'),
+	/** Stop qursor-core and every terminal in it, for the updater's relaunch,
+	 *  which no quit guard sees. Ask `RestartConfirm`'s question first. */
+	coreShutdown: () => invoke<void>('core_shutdown'),
 	/** One sentence if this renderer is running because the last one crashed and
 	 *  was reloaded under the reader (F7, ADR-0059), and `null` otherwise — which
 	 *  is what almost every boot gets. Asked once on mount; the backend clears it

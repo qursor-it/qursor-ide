@@ -326,6 +326,8 @@ fn vault_and_servers_answer_over_rpc() {
 		assert_eq!(err["error"]["kind"], "NotFound", "{err}");
 		let counts = request(&mut ws, 7, "core.counts", Value::Null).await;
 		assert_eq!(counts, json!({"live":0,"working":0,"sessionIds":[]}));
+		let go = request(&mut ws, 8, "usage.go", Value::Null).await;
+		assert_eq!(go, json!({"source":null,"status":"noKey","usage":null}));
 		shutdown(&mut ws, server).await;
 	});
 }

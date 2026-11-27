@@ -154,8 +154,10 @@ export function restart(): void {
 	}
 	void (async () => {
 		const { relaunch } = await import('@tauri-apps/plugin-process');
-		// No kill_all() here: relaunch tears the process down, and `Drop` on
-		// TerminalManager takes the PTYs with it (ADR-0005).
+		// The terminals live in qursor-core, which a relaunch would leave holding
+		// its data folder (and its binary, for an installer): stop it first, as
+		// the confirmed quit does (ADR-0005).
+		await cmd.coreShutdown();
 		await relaunch();
 	})();
 }

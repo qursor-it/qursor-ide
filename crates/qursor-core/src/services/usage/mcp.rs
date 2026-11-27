@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
@@ -12,16 +12,16 @@ use super::{now_ms, store::UsageStore, STALE_MS};
 use crate::agents;
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
-use crate::models::{ModelLimit, UsageReading, UsageSource, UsageWindow};
+use crate::models::{ModelLimit, ProviderUsage, UsageReading, UsageSource, UsageWindow};
 use crate::services::{profiles, vault::Vault};
 
 const GO_USAGE_URL: &str = "https://opencode.ai/inference/go/v1/usage";
 const GO_CACHE_MS: i64 = 5 * 60 * 1000;
 
 const GO_VAULT_ID: &str = "usage:opencode-go";
-const GO_KEY_ENV: &str = "QURSOR_OPENCODE_GO_API_KEY";
+pub const GO_KEY_ENV: &str = "QURSOR_OPENCODE_GO_API_KEY";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GoKeySource {
 	Saved,
@@ -33,14 +33,15 @@ fn valid_key(key: &str) -> bool {
 }
 
 /// Taken out of the process environment so no child (git, an agent, a version
-/// probe) inherits it.
-fn take_environment_key() -> Option<Zeroizing<String>> {
+/// probe) inherits it. The app takes it before it spawns anything and hands it
+/// to the core it starts, which takes it again for its own children.
+pub fn take_environment_key() -> Option<Zeroizing<String>> {
 	let key = std::env::var(GO_KEY_ENV).ok().map(Zeroizing::new);
 	std::env::remove_var(GO_KEY_ENV);
 	key.filter(|key| valid_key(key.trim()))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GoStatus {
 	NoKey,
@@ -50,11 +51,22 @@ pub enum GoStatus {
 	Unavailable,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GoKeyUpdate {
 	pub source: Option<GoKeySource>,
 	pub status: GoStatus,
+}
+
+/// What the core tells the app about the Go key: the key state, and the
+/// reading it produced for the app's own usage store (design §5a: only the
+/// core holds the vault the key is in).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoReport {
+	pub source: Option<GoKeySource>,
+	pub status: GoStatus,
+	pub usage: Option<ProviderUsage>,
 }
 
 pub struct GoUsage {
@@ -90,6 +102,14 @@ impl GoUsage {
 		*cache = None;
 		store.clear_go_except(None);
 		Ok(self.key_source())
+	}
+
+	/// `sync`, then where the key comes from and the reading `store` now holds.
+	pub fn report(&self, db: &Db, store: &UsageStore) -> GoReport {
+		let status = self.sync(db, store);
+		let usage =
+			store.observed_snapshot().into_iter().find(|u| u.source == UsageSource::OpenCodeGo);
+		GoReport { source: self.key_source(), status, usage }
 	}
 
 	pub fn sync(&self, db: &Db, store: &UsageStore) -> GoStatus {
@@ -289,6 +309,28 @@ mod tests {
 		go.set_key(None, &store).expect("remove");
 		assert!(go.cache.lock().is_none());
 		assert_ne!(GoUsage::new(open()).key_source(), Some(GoKeySource::Saved));
+	}
+
+	/// Two vault instances on one file each rewrite it whole from their own
+	/// cache, so one writer's secret vanishes under the other's; the core is the
+	/// only writer (design §5a). Saving the Go key keeps a server's password
+	/// saved before it, and the other way round.
+	#[test]
+	fn the_go_key_and_server_secrets_share_one_vault() {
+		let dir = tempfile::tempdir().expect("temporary directory");
+		let path = dir.path().join("secrets.vault");
+		let store = UsageStore::load(dir.path().join("usage.json"));
+		let vault = Arc::new(Vault::open(path.clone(), Box::new(TestKeychain)).expect("vault"));
+		let go = GoUsage::new(vault.clone());
+		let password = crate::services::servers::secret_id("s1", "password");
+		vault.put(&password, b"hunter2").expect("server secret");
+		go.set_key(Some("qa-opencode-token"), &store).expect("go key");
+		let other = crate::services::servers::secret_id("s2", "password");
+		vault.put(&other, b"hunter3").expect("second server secret");
+		let reopened = Vault::open(path, Box::new(TestKeychain)).expect("reopen");
+		assert!(reopened.has(&password), "the Go key dropped a server secret saved before it");
+		assert!(reopened.has(&other));
+		assert!(reopened.has(GO_VAULT_ID), "a server secret dropped the Go key saved before it");
 	}
 
 	#[test]

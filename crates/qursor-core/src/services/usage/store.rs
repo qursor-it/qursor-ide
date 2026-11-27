@@ -84,6 +84,28 @@ impl UsageStore {
 		true
 	}
 
+	/// The core's Go reading, as the app's store holds it: replaces whatever Go
+	/// entry is here (design §5a — the key lives in the core's vault).
+	pub fn put_go(&self, usage: Option<ProviderUsage>) {
+		let changed = {
+			let mut map = self.entries.lock();
+			let before: Vec<ProviderUsage> =
+				map.values().filter(|u| u.source == UsageSource::OpenCodeGo).cloned().collect();
+			if before.as_slice() == usage.as_slice() {
+				false
+			} else {
+				map.retain(|_, u| u.source != UsageSource::OpenCodeGo);
+				if let Some(u) = usage {
+					map.insert(key(&u), u);
+				}
+				true
+			}
+		};
+		if changed {
+			self.persist_and_notify();
+		}
+	}
+
 	/// A Go reading belongs to the currently configured key and default profile.
 	pub fn clear_go_except(&self, profile_id: Option<&str>) {
 		let changed = {

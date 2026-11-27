@@ -23,7 +23,7 @@ let identityVerified = false;
 let fixturePath;
 let projectId;
 let terminalId;
-let eventId;
+let core;
 let failure;
 
 async function connect() {
@@ -119,20 +119,88 @@ async function invoke(command, args = {}, timeoutMs = 30000) {
 
 const pause = (ms) => new Promise((resolvePause) => setTimeout(resolvePause, ms));
 
-async function waitFor(expression, timeoutMs = 30000) {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (await evaluate(expression)) return;
-		await pause(200);
-	}
-	throw new Error(`Timed out waiting for ${expression}`);
+/** A client of qursor-core, which owns every terminal: the app hands out its
+ *  endpoint, and the wire is JSON for control and binary frames
+ *  `opcode | slot (u16 BE) | bytes` for terminal bytes
+ *  (docs/superpowers/specs/2026-11-26-local-core-design.md §3). */
+async function openCore({ url, secret }) {
+	const ws = new WebSocket(url);
+	ws.binaryType = 'arraybuffer';
+	const calls = new Map();
+	const outputs = new Map();
+	let next = 1;
+	let ready;
+	const handshake = new Promise((resolveReady, rejectReady) => {
+		ready = { resolve: resolveReady, reject: rejectReady };
+	});
+	ws.addEventListener('open', () =>
+		ws.send(
+			JSON.stringify({
+				type: 'hello',
+				secret,
+				clientId: `windows-smoke-${process.pid}`,
+				clientType: 'cli',
+				protocolVersion: 1,
+				appVersion: 'windows-smoke',
+				capabilities: [],
+			}),
+		),
+	);
+	ws.addEventListener('message', (event) => {
+		if (typeof event.data !== 'string') {
+			const bytes = new Uint8Array(event.data);
+			const slot = (bytes[1] << 8) | bytes[2];
+			if (bytes[0] === 1) outputs.get(slot)?.(new TextDecoder().decode(bytes.subarray(3)));
+			return;
+		}
+		const msg = JSON.parse(event.data);
+		if (msg.type === 'server_info') {
+			if (msg.protocolVersion === 1) ready.resolve();
+			else ready.reject(new Error(`qursor-core speaks protocol ${msg.protocolVersion}`));
+		} else if (msg.type === 'response' || msg.type === 'rpc_error') {
+			const call = calls.get(msg.requestId);
+			calls.delete(msg.requestId);
+			if (msg.type === 'response') call?.resolve(msg.result);
+			else call?.reject(new Error(JSON.stringify(msg.error)));
+		}
+	});
+	ws.addEventListener('close', () => {
+		ready.reject(new Error('qursor-core closed the connection'));
+		for (const call of calls.values()) call.reject(new Error('qursor-core closed the connection'));
+		calls.clear();
+	});
+	await handshake;
+	return {
+		request(method, params = null) {
+			const requestId = next++;
+			return new Promise((resolveCall, rejectCall) => {
+				calls.set(requestId, { resolve: resolveCall, reject: rejectCall });
+				ws.send(JSON.stringify({ type: 'request', requestId, method, params }));
+			});
+		},
+		onOutput(slot, cb) {
+			outputs.set(slot, cb);
+		},
+		write(slot, text) {
+			const data = new TextEncoder().encode(text);
+			const frame = new Uint8Array(3 + data.length);
+			frame[0] = 2;
+			frame[1] = slot >> 8;
+			frame[2] = slot & 0xff;
+			frame.set(data, 3);
+			ws.send(frame);
+		},
+		close() {
+			ws.close();
+		},
+	};
 }
 
 async function waitForTerminalCleanup(id, timeoutMs = 20000) {
 	const deadline = Date.now() + timeoutMs;
 	let terminals = [];
 	while (Date.now() < deadline) {
-		terminals = await invoke('terminal_list');
+		terminals = await core.request('terminal.list');
 		if (!terminals.some((terminal) => terminal.id === id)) {
 			report.remainingTerminals = terminals.length;
 			if (terminals.length !== 0) {
@@ -146,7 +214,7 @@ async function waitForTerminalCleanup(id, timeoutMs = 20000) {
 		}
 		await pause(200);
 	}
-	throw new Error('Terminal ' + id + ' remained in terminal_list after kill');
+	throw new Error('Terminal ' + id + ' remained in terminal.list after kill');
 }
 
 async function run() {
@@ -194,39 +262,28 @@ async function run() {
 	}
 	report.fileRoundTrip = true;
 
-	eventId = await evaluate(`(() => {
-    window.__windowsSmokeOutput = "";
-    const handler = window.__TAURI_INTERNALS__.transformCallback((event) => {
-      if (event.payload.id !== window.__windowsSmokeTerminalId) return;
-      const binary = atob(event.payload.bytesB64);
-      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-      window.__windowsSmokeOutput += new TextDecoder().decode(bytes);
-    });
-    return window.__TAURI_INTERNALS__.invoke("plugin:event|listen", {
-      event: "terminal:data", target: { kind: "Any" }, handler,
-    });
-  })()`);
-
-	terminalId = await invoke('shell_spawn', {
-		opts: {
-			clientKey: `shell:windows-smoke-${process.pid}`,
-			projectId,
-			cwd: fixturePath,
-			cols: 100,
-			rows: 30,
-		},
+	core = await openCore(await invoke('core_endpoint'));
+	const shell = await core.request('shell.spawn', {
+		clientKey: `shell:windows-smoke-${process.pid}`,
+		projectId,
+		cwd: fixturePath,
+		cols: 100,
+		rows: 30,
 	});
-	await evaluate(`window.__windowsSmokeTerminalId = ${JSON.stringify(terminalId)}; true`);
-	await invoke('terminal_write', {
-		id: terminalId,
-		data: "Write-Output ('FACTORAI_WINDOWS_SMOKE:' + $PSVersionTable.PSEdition + ':' + (Get-Location).Path)\r",
+	terminalId = shell.id;
+	let output = '';
+	core.onOutput(shell.slot, (text) => {
+		output += text;
 	});
-	const markerExpression =
-		'new RegExp(' +
-		JSON.stringify(powershellMarkerPattern.source) +
-		", 'i').test(window.__windowsSmokeOutput)";
-	await waitFor(markerExpression);
-	const output = await evaluate('window.__windowsSmokeOutput');
+	core.write(
+		shell.slot,
+		"Write-Output ('FACTORAI_WINDOWS_SMOKE:' + $PSVersionTable.PSEdition + ':' + (Get-Location).Path)\r",
+	);
+	const deadline = Date.now() + 30000;
+	while (!powershellMarkerPattern.test(output)) {
+		if (Date.now() > deadline) throw new Error(`Timed out waiting for the marker in ${output}`);
+		await pause(200);
+	}
 	const marker = output.split(/\r?\n/).find((line) => powershellMarkerPattern.test(line)) || '';
 	if (
 		!powershellMarkerPattern.test(marker) ||
@@ -252,13 +309,15 @@ try {
 	failure = error;
 } finally {
 	if (identityVerified) {
-		if (eventId !== undefined)
-			await cleanupInvoke('plugin:event|unlisten', { event: 'terminal:data', eventId });
 		if (terminalId && projectId) {
 			try {
-				await invoke('terminal_kill', { id: terminalId });
-			} catch {
-				await cleanupInvoke('shell_kill_for_project', { projectId });
+				await core.request('terminal.kill', { id: terminalId });
+			} catch (error) {
+				try {
+					await core.request('shell.killForProject', { projectId });
+				} catch {
+					cleanupWarnings.push(`terminal.kill: ${String(error)}`);
+				}
 			}
 			try {
 				await waitForTerminalCleanup(terminalId);
@@ -276,6 +335,7 @@ try {
 			cleanupWarnings.push(`fixture cleanup: ${String(error)}`);
 		}
 	}
+	core?.close();
 	try {
 		socket?.close();
 	} catch (error) {

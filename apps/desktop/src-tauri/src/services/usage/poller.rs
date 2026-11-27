@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tauri::AppHandle;
 
 use super::claude_api::{self, Backoff, TokenState};
-use super::mcp::GoUsage;
+use super::mcp::GoReport;
 use super::store::UsageStore;
 use super::{codex_app_server, codex_log, now_ms, statusline};
 use crate::agents::{CLAUDE, CODEX};
@@ -37,7 +37,7 @@ pub fn spawn(
 	store: Arc<UsageStore>,
 	db: Db,
 	statusline_dir: PathBuf,
-	go: Arc<GoUsage>,
+	core: Arc<crate::core_link::CoreCell>,
 ) {
 	let _ = app;
 	let (poll_store, poll_db) = (store.clone(), db.clone());
@@ -56,9 +56,7 @@ pub fn spawn(
 				&mut unmatched,
 				&mut backoff,
 			);
-			guarded("OpenCode Go", || {
-				go.sync(&poll_db, &poll_store);
-			});
+			guarded("OpenCode Go", || go_step(&poll_store, &core));
 			std::thread::sleep(TICK);
 		}
 	});
@@ -77,6 +75,18 @@ pub fn spawn(
 		});
 	if let Err(e) = spawned {
 		tracing::warn!("codex app-server poller did not start: {e}");
+	}
+}
+
+/// The OpenCode Go reading, from the core that holds its key (design §5a).
+/// Nothing to read until the core is up.
+fn go_step(store: &UsageStore, core: &crate::core_link::CoreCell) {
+	let Some(link) = core.ready() else { return };
+	let reply = tauri::async_runtime::block_on(link.request("usage.go", serde_json::Value::Null));
+	match reply.map(serde_json::from_value::<GoReport>) {
+		Ok(Ok(report)) => store.put_go(report.usage),
+		Ok(Err(error)) => tracing::warn!(%error, "qursor-core's Go report did not parse"),
+		Err(error) => tracing::warn!("could not read the Go usage from qursor-core: {error:#}"),
 	}
 }
 

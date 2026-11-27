@@ -123,6 +123,31 @@ fn a_core_that_answers_is_reused() {
 	});
 }
 
+/// An app relaunching into itself: its core is stopping, refuses new clients
+/// and holds the lock until its terminals are dead. `ensure` waits it out.
+#[test]
+fn a_core_on_its_way_out_is_waited_for() {
+	runtime().block_on(async {
+		let tmp = tempfile::TempDir::new().unwrap();
+		let dir = data_dir(tmp.path());
+		let first = ensure(&dir).await;
+		// A terminal, so the holder spends the kill grace on its way out.
+		first
+			.request(
+				"shell.spawn",
+				json!({"clientKey":"shell:t","projectId":"p1","cwd":tmp.path(),"cols":80,"rows":24}),
+			)
+			.await
+			.unwrap();
+		first.request("core.shutdown", json!({"keepTerminals": false})).await.unwrap();
+		let second = ensure(&dir).await;
+		assert_ne!(second.pid(), first.pid());
+		assert!(!pid_is_alive(first.pid()) || first.is_closed());
+		second.request("core.counts", Value::Null).await.unwrap();
+		second.shutdown().await.unwrap();
+	});
+}
+
 #[cfg(windows)]
 const PRINT_PID: &str = "echo \"PID=$PID\"";
 #[cfg(not(windows))]

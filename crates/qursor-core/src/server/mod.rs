@@ -582,6 +582,30 @@ impl Shared {
 				self.core.vault.set_master_password(password.as_deref().map(String::as_str))?;
 				to_value(self.core.vault.status())
 			}
+			// The OpenCode Go key lives in this vault; the app asks here for its
+			// source, its status and the reading for its usage panel (§5a).
+			"usage.go" => {
+				let me = self.clone();
+				to_value(
+					blocking(move || Ok(me.core.go.report(&me.core.db, &me.core.usage))).await?,
+				)
+			}
+			"usage.setGoKey" => {
+				#[derive(Deserialize)]
+				struct P {
+					key: Option<String>,
+				}
+				let key = parse::<P>(params)?.key.map(Zeroizing::new);
+				let me = self.clone();
+				to_value(
+					blocking(move || {
+						let core = &me.core;
+						core.go.set_key(key.as_deref().map(String::as_str), &core.usage)?;
+						Ok(core.go.report(&core.db, &core.usage))
+					})
+					.await?,
+				)
+			}
 			"attention.focus" => {
 				#[derive(Deserialize)]
 				struct P {

@@ -46,6 +46,10 @@ pub struct Core {
 	pub confirmations: Arc<Confirmations>,
 	/// Running local port forwards (F48).
 	pub tunnels: Arc<Tunnels>,
+	/// The OpenCode Go key and its usage read, on the vault above.
+	pub go: Arc<GoUsage>,
+	/// `usage.json`, read-only, plus the Go reading in memory (§5b).
+	pub usage: Arc<UsageStore>,
 }
 
 pub fn build_manager(data_dir: &Path, sink: Arc<dyn EventSink>) -> anyhow::Result<Core> {
@@ -79,7 +83,8 @@ pub fn build_manager(data_dir: &Path, sink: Arc<dyn EventSink>) -> anyhow::Resul
 	.with_usage_sink_dir(data_dir.join("usage").join("statusline"))
 	.with_usage_limits({
 		let db = db.clone();
-		Arc::new(move |project, filter| mcp::read(&db, &usage, &go_usage, project, filter))
+		let (usage, go) = (usage.clone(), go_usage.clone());
+		Arc::new(move |project, filter| mcp::read(&db, &usage, &go, project, filter))
 	})
 	.with_usage_statusline_enabled({
 		let db = db.clone();
@@ -243,6 +248,8 @@ pub fn build_manager(data_dir: &Path, sink: Arc<dyn EventSink>) -> anyhow::Resul
 		files,
 		confirmations,
 		tunnels: Arc::default(),
+		go: go_usage,
+		usage,
 	})
 }
 

@@ -66,6 +66,32 @@ fn init_log(dir: &std::path::Path) -> anyhow::Result<()> {
 	Ok(())
 }
 
+/// Nobody reads stdout after `ready`: the app drops its end of the pipe, and a
+/// child that inherited it would get EPIPE or SIGPIPE writing there.
+#[cfg(unix)]
+fn stdout_to_null() -> std::io::Result<()> {
+	use std::os::fd::AsRawFd;
+	let null = std::fs::File::options().write(true).open("/dev/null")?;
+	// SAFETY: both descriptors are open; dup2 replaces fd 1 atomically.
+	if unsafe { libc::dup2(null.as_raw_fd(), 1) } < 0 {
+		return Err(std::io::Error::last_os_error());
+	}
+	Ok(())
+}
+
+#[cfg(windows)]
+fn stdout_to_null() -> std::io::Result<()> {
+	use std::os::windows::io::IntoRawHandle;
+	use windows_sys::Win32::System::Console::{SetStdHandle, STD_OUTPUT_HANDLE};
+	let null = std::fs::File::options().write(true).open("NUL")?;
+	// The handle stays open for the life of the process, as stdout's does.
+	// SAFETY: a valid handle we own and hand over.
+	if unsafe { SetStdHandle(STD_OUTPUT_HANDLE, null.into_raw_handle()) } == 0 {
+		return Err(std::io::Error::last_os_error());
+	}
+	Ok(())
+}
+
 fn run(data_dir: PathBuf, parent_pid: Option<u32>) -> anyhow::Result<ExitCode> {
 	let dir = record::core_dir(&data_dir)?;
 	init_log(&dir)?;
@@ -92,6 +118,9 @@ fn run(data_dir: PathBuf, parent_pid: Option<u32>) -> anyhow::Result<ExitCode> {
 		writeln!(out, "{}", serde_json::json!({ "ready": true, "port": server.port }))?;
 		out.flush()?;
 		drop(out);
+		if let Err(error) = stdout_to_null() {
+			tracing::warn!(%error, "could not point stdout at the null device");
+		}
 		let _ = server.exited.await;
 		record::remove(&dir);
 		anyhow::Ok(())

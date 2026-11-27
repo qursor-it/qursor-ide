@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use futures_util::{SinkExt, StreamExt};
@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use qursor_core::protocol::PROTOCOL_VERSION;
 use qursor_core::server::record::{self, Record};
 use qursor_core::services::ide::lockfile::pid_is_alive;
+use qursor_core::services::usage::mcp::GO_KEY_ENV;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::AsyncBufReadExt;
@@ -26,6 +27,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
 
@@ -35,6 +37,11 @@ const HANDSHAKE: Duration = Duration::from_secs(3);
 const READY: Duration = Duration::from_secs(10);
 /// `core.shutdown` until the socket closes.
 const SHUTDOWN: Duration = Duration::from_secs(3);
+/// How long a core on its way out (an app relaunching into itself) may keep
+/// the data folder's lock before `ensure` gives up.
+const HOLDER: Duration = Duration::from_secs(10);
+/// Between two looks at a holder that is going away.
+const HOLDER_POLL: Duration = Duration::from_millis(250);
 /// The core closes a client silent for two of these (§3).
 const PING: Duration = Duration::from_secs(10);
 
@@ -96,28 +103,62 @@ pub struct CoreLink(Arc<Inner>);
 
 impl CoreLink {
 	/// Use the core `core.json` names if it is alive and answers with our
-	/// secret and protocol; otherwise forget that record and start one.
+	/// secret and protocol; otherwise start one.
 	pub async fn ensure(data_dir: &Path, app_version: &str, binary: &Path) -> anyhow::Result<Self> {
+		Self::ensure_with(data_dir, app_version, binary, &[]).await
+	}
+
+	/// `ensure`, giving a core it starts `env` on top of ours.
+	///
+	/// A recorded core that is alive but does not answer may be one on its way
+	/// out (the app that owned it relaunched), and it keeps the lock until it
+	/// has killed its terminals. The core started meanwhile exits 3, and this
+	/// tries again until the holder is gone, for up to [`HOLDER`].
+	pub async fn ensure_with(
+		data_dir: &Path,
+		app_version: &str,
+		binary: &Path,
+		env: &[(&str, &str)],
+	) -> anyhow::Result<Self> {
 		let dir = record::core_dir(data_dir)?;
-		if let Some(rec) = read_record(&dir) {
-			if pid_is_alive(rec.pid) && rec.protocol_version == PROTOCOL_VERSION {
-				match handshake(rec.port, &rec.secret, app_version).await {
-					Ok((ws, host_id)) => return Ok(Self::run(ws, rec, host_id)),
-					Err(error) => {
-						warn!("the recorded core did not answer ({error:#}); starting one")
+		let deadline = Instant::now() + HOLDER;
+		loop {
+			if let Some(rec) = read_record(&dir) {
+				if !pid_is_alive(rec.pid) {
+					record::remove(&dir);
+				} else if rec.protocol_version == PROTOCOL_VERSION {
+					match handshake(rec.port, &rec.secret, app_version).await {
+						Ok((ws, host_id)) => return Ok(Self::run(ws, rec, host_id)),
+						Err(error) => warn!("the recorded core did not answer: {error:#}"),
 					}
 				}
 			}
-			record::remove(&dir);
+			match spawn(binary, data_dir, env).await? {
+				Started::Ready { mut child, pid, port } => {
+					let rec = match read_record(&dir) {
+						Some(rec) if rec.pid == pid && rec.port == port => rec,
+						_ => {
+							let _ = child.start_kill();
+							bail!("qursor-core's record does not name the process just started");
+						}
+					};
+					return match handshake(port, &rec.secret, app_version).await {
+						Ok((ws, host_id)) => {
+							info!(pid, port, "qursor-core started");
+							Ok(Self::run(ws, rec, host_id))
+						}
+						Err(error) => {
+							let _ = child.start_kill();
+							Err(error)
+						}
+					};
+				}
+				Started::LockHeld if Instant::now() < deadline => {
+					tokio::time::sleep(HOLDER_POLL).await;
+				}
+				Started::LockHeld => bail!("{}", exit_reason(Some(3))),
+			}
 		}
-		let (pid, port) = spawn(binary, data_dir).await?;
-		let rec = read_record(&dir).context("qursor-core is ready but wrote no record")?;
-		if rec.pid != pid || rec.port != port {
-			bail!("qursor-core's record names another process");
-		}
-		let (ws, host_id) = handshake(port, &rec.secret, app_version).await?;
-		info!(pid, port, "qursor-core started");
-		Ok(Self::run(ws, rec, host_id))
 	}
 
 	pub fn endpoint(&self) -> CoreEndpoint {
@@ -131,6 +172,17 @@ impl CoreLink {
 	/// One RPC; an `rpc_error` comes back as the error.
 	pub async fn request(&self, method: &str, params: Value) -> anyhow::Result<Value> {
 		request(&self.0, method, params).await
+	}
+
+	/// Whether the core has closed the connection: it stopped or died.
+	pub fn is_closed(&self) -> bool {
+		*self.0.closed.borrow()
+	}
+
+	/// Ask the core for its counts now, for a decision that cannot use the
+	/// last ones (the quit guard, deleting a session's transcript).
+	pub async fn refresh(&self) -> anyhow::Result<()> {
+		refresh(&self.0).await
 	}
 
 	/// `(live, working)`: every terminal, and the agents working now.
@@ -267,20 +319,20 @@ fn on_text(inner: &Arc<Inner>, text: &str) {
 fn refresh_counts(inner: &Arc<Inner>) {
 	let inner = inner.clone();
 	tokio::spawn(async move {
-		let seq = inner.next_id.load(Ordering::Relaxed);
-		match request(&inner, "core.counts", Value::Null).await {
-			Ok(value) => match serde_json::from_value::<Counts>(value) {
-				Ok(counts) => {
-					let mut held = inner.counts.lock();
-					if seq >= held.0 {
-						*held = (seq, counts);
-					}
-				}
-				Err(error) => warn!(%error, "qursor-core's counts did not parse"),
-			},
-			Err(error) => warn!("could not read qursor-core's counts: {error:#}"),
+		if let Err(error) = refresh(&inner).await {
+			warn!("could not read qursor-core's counts: {error:#}");
 		}
 	});
+}
+
+async fn refresh(inner: &Inner) -> anyhow::Result<()> {
+	let seq = inner.next_id.load(Ordering::Relaxed);
+	let counts: Counts = serde_json::from_value(request(inner, "core.counts", Value::Null).await?)?;
+	let mut held = inner.counts.lock();
+	if seq >= held.0 {
+		*held = (seq, counts);
+	}
+	Ok(())
 }
 
 fn read_record(dir: &Path) -> Option<Record> {
@@ -327,14 +379,25 @@ async fn handshake(port: u16, secret: &str, app_version: &str) -> anyhow::Result
 	.context("no server_info within 3 s")?
 }
 
-/// Start the core detached — not the app's child, so a crash of the app does
-/// not take it along (§1) — and read its port off the `ready` line.
-async fn spawn(binary: &Path, data_dir: &Path) -> anyhow::Result<(u32, u16)> {
+enum Started {
+	Ready {
+		child: Box<tokio::process::Child>,
+		pid: u32,
+		port: u16,
+	},
+	/// Exit 3: another core holds the data folder's lock.
+	LockHeld,
+}
+
+/// Start the core detached (not the app's child, so a crash of the app does
+/// not take it along, §1) and read its port off the `ready` line.
+async fn spawn(binary: &Path, data_dir: &Path, env: &[(&str, &str)]) -> anyhow::Result<Started> {
 	let mut cmd = tokio::process::Command::new(binary);
 	cmd.arg("--data-dir")
 		.arg(data_dir)
 		.arg("--parent-pid")
 		.arg(std::process::id().to_string())
+		.envs(env.iter().copied())
 		.stdin(Stdio::null())
 		.stdout(Stdio::piped())
 		// The core logs to `core/core.log`; nobody reads a detached stderr.
@@ -345,7 +408,11 @@ async fn spawn(binary: &Path, data_dir: &Path) -> anyhow::Result<(u32, u16)> {
 	let stdout = child.stdout.take().context("qursor-core's stdout")?;
 	let mut lines = tokio::io::BufReader::new(stdout).lines();
 	let line = match tokio::time::timeout(READY, lines.next_line()).await {
-		Ok(line) => line?,
+		Ok(Ok(line)) => line,
+		Ok(Err(error)) => {
+			let _ = child.start_kill();
+			return Err(error.into());
+		}
 		Err(_) => {
 			let _ = child.start_kill();
 			bail!("qursor-core did not report ready within 10 s");
@@ -353,6 +420,9 @@ async fn spawn(binary: &Path, data_dir: &Path) -> anyhow::Result<(u32, u16)> {
 	};
 	let Some(line) = line else {
 		let status = child.wait().await?;
+		if status.code() == Some(3) {
+			return Ok(Started::LockHeld);
+		}
 		bail!("qursor-core exited before it was ready: {}", exit_reason(status.code()));
 	};
 	#[derive(Deserialize)]
@@ -360,12 +430,17 @@ async fn spawn(binary: &Path, data_dir: &Path) -> anyhow::Result<(u32, u16)> {
 		ready: bool,
 		port: u16,
 	}
-	let ready: Ready = serde_json::from_str(&line)
-		.with_context(|| format!("qursor-core's ready line is not JSON: {line:?}"))?;
-	if !ready.ready {
-		bail!("qursor-core said it is not ready");
+	match serde_json::from_str::<Ready>(&line) {
+		Ok(Ready { ready: true, port }) => Ok(Started::Ready { child: Box::new(child), pid, port }),
+		Ok(_) => {
+			let _ = child.start_kill();
+			bail!("qursor-core said it is not ready")
+		}
+		Err(error) => {
+			let _ = child.start_kill();
+			Err(error).with_context(|| format!("qursor-core's ready line is not JSON: {line:?}"))
+		}
 	}
-	Ok((pid, ready.port))
 }
 
 /// The binary's exit codes (its header in `qursor-core.rs`).
@@ -412,40 +487,77 @@ pub fn sidecar() -> anyhow::Result<PathBuf> {
 	Ok(dir.join(format!("qursor-core{}", std::env::consts::EXE_SUFFIX)))
 }
 
-/// The link once it exists. Setup starts it off the main thread; whoever asks
-/// first waits for it, and a failure is kept so every caller sees the reason.
+/// The link once it exists. Setup starts it off the main thread and whoever
+/// asks waits for it. A failure is not kept: the next ask tries again, and so
+/// does an ask after the core has gone away, until the app stops it on quit.
 pub struct CoreCell {
-	link: tokio::sync::OnceCell<Result<CoreLink, String>>,
+	link: Mutex<Option<CoreLink>>,
+	/// One `ensure` at a time.
+	starting: tokio::sync::Mutex<()>,
+	stopped: std::sync::atomic::AtomicBool,
 	data_dir: PathBuf,
 	app_version: String,
+	/// The OpenCode Go key the app took out of its environment, for the core
+	/// to read (design §5a: the core owns the key).
+	go_key: Option<Zeroizing<String>>,
 }
 
 impl CoreCell {
-	pub fn new(data_dir: PathBuf, app_version: String) -> Self {
-		Self { link: tokio::sync::OnceCell::new(), data_dir, app_version }
+	pub fn new(data_dir: PathBuf, app_version: String, go_key: Option<Zeroizing<String>>) -> Self {
+		Self {
+			link: Mutex::new(None),
+			starting: tokio::sync::Mutex::new(()),
+			stopped: Default::default(),
+			data_dir,
+			app_version,
+			go_key,
+		}
 	}
 
-	pub async fn link(&self) -> AppResult<&CoreLink> {
-		self.link
-			.get_or_init(|| async {
-				let binary = sidecar().map_err(|e| format!("{e:#}"))?;
-				CoreLink::ensure(&self.data_dir, &self.app_version, &binary).await.map_err(|e| {
-					warn!("qursor-core is not available: {e:#}");
-					format!("qursor-core is not available: {e:#}")
-				})
-			})
-			.await
-			.as_ref()
-			.map_err(|e| AppError::Process(e.clone()))
+	pub async fn link(&self) -> AppResult<CoreLink> {
+		if let Some(link) = self.ready() {
+			return Ok(link);
+		}
+		let _one = self.starting.lock().await;
+		if let Some(link) = self.ready() {
+			return Ok(link);
+		}
+		if self.stopped.load(Ordering::SeqCst) {
+			return Err(AppError::Process("qursor-core was stopped for the quit".into()));
+		}
+		let binary = sidecar().map_err(|e| AppError::Process(format!("{e:#}")))?;
+		let env: Vec<(&str, &str)> =
+			self.go_key.iter().map(|key| (GO_KEY_ENV, key.as_str())).collect();
+		match CoreLink::ensure_with(&self.data_dir, &self.app_version, &binary, &env).await {
+			Ok(link) => {
+				*self.link.lock() = Some(link.clone());
+				Ok(link)
+			}
+			Err(error) => {
+				warn!("qursor-core is not available: {error:#}");
+				Err(AppError::Process(format!("qursor-core is not available: {error:#}")))
+			}
+		}
 	}
 
 	/// The link if it is up, without waiting.
-	pub fn ready(&self) -> Option<&CoreLink> {
-		self.link.get().and_then(|r| r.as_ref().ok())
+	pub fn ready(&self) -> Option<CoreLink> {
+		self.link.lock().as_ref().filter(|link| !link.is_closed()).cloned()
+	}
+
+	/// Stop the core with every terminal it holds (kill-on-quit), and start no
+	/// other: the app is going away.
+	pub async fn shutdown(&self) {
+		self.stopped.store(true, Ordering::SeqCst);
+		if let Some(link) = self.ready() {
+			if let Err(error) = link.shutdown().await {
+				warn!("qursor-core did not stop cleanly: {error:#}");
+			}
+		}
 	}
 
 	/// No link yet means no core, and no core has no live sessions.
 	pub fn live_session_ids(&self) -> HashSet<String> {
-		self.ready().map(CoreLink::live_session_ids).unwrap_or_default()
+		self.ready().map(|link| link.live_session_ids()).unwrap_or_default()
 	}
 }
